@@ -61,3 +61,20 @@ def test_render_values_passes_through_strings():
     out = render_values({"trend": "silny wzrost", "market_state": "sesja otwarta"})
     assert out["trend"] == "silny wzrost"
     assert out["market_state"] == "sesja otwarta"
+
+
+def test_discovery_payload_ericsson_uses_sek():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/ericsson_price/config"]
+    assert p["unit_of_measurement"] == "SEK"
+
+
+def test_discovery_payload_alpha_verdict_has_no_unit():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/alpha_verdict/config"]
+    assert "unit_of_measurement" not in p
+
+
+def test_all_entity_slugs_unique():
+    slugs = [e.slug for e in _ENTITIES]
+    assert len(slugs) == len(set(slugs))

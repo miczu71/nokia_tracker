@@ -59,6 +59,20 @@ _ENTITIES: list[_Entity] = [
     _Entity("sensor", "volatility_30d_pct", "Volatility 30D Pct", "%", None, "measurement",
            "mdi:chart-bell-curve"),
     _Entity("sensor", "trend", "Trend", None, None, None, "mdi:trending-up"),
+    # --- benchmark ---
+    _Entity("sensor", "ericsson_price", "Ericsson Price", "SEK", None, "measurement", "mdi:chart-line"),
+    _Entity("sensor", "omxh25_value", "OMXH25 Value", None, None, "measurement", "mdi:finance"),
+    _Entity("sensor", "rel_perf_1d_vs_omxh25", "Rel Perf 1D Vs OMXH25", "%", None, "measurement",
+           "mdi:scale-balance"),
+    _Entity("sensor", "rel_perf_1m_vs_ericsson", "Rel Perf 1M Vs Ericsson", "%", None,
+           "measurement", "mdi:scale-balance"),
+    _Entity("sensor", "beta_60d", "Beta 60D", None, None, "measurement", "mdi:chart-scatter-plot"),
+    _Entity("sensor", "alpha_verdict", "Alpha Verdict", None, None, None, "mdi:magnify-scan"),
+    # --- bliźniaki PLN + ADR ---
+    _Entity("sensor", "eurpln_rate", "EURPLN Rate", None, None, "measurement", "mdi:currency-eur"),
+    _Entity("sensor", "price_pln", "Price PLN", "PLN", None, "measurement", "mdi:cash"),
+    _Entity("sensor", "adr_price_usd", "ADR Price USD", "USD", None, "measurement", "mdi:cash-100"),
+    _Entity("sensor", "spread_vs_adr", "Spread Vs ADR", "%", None, "measurement", "mdi:compare"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

@@ -99,6 +99,17 @@ def week52_high_low(conn: sqlite3.Connection, instrument_id: int
     return (row["h"], row["l"]) if row else (None, None)
 
 
+def store_single_price(conn: sqlite3.Connection, instrument_id: int, price: float,
+                       source: str, ts: str | None = None) -> None:
+    """Zapisuje pojedynczy punkt (np. kurs ECB/NBP albo notowanie ADR z
+    Finnhub) jako świecę dzienną — jedyne miejsce zapisu do `quotes`,
+    żeby downstream (sensors.py) czytało wszystko jednym mechanizmem
+    niezależnie od tego, który provider wygrał."""
+    if ts is None:
+        ts = datetime.now(timezone.utc).isoformat()
+    upsert_candles(conn, instrument_id, "daily", [Candle(ts=ts, close=price)], source=source)
+
+
 def refresh_intraday(conn: sqlite3.Connection, instrument_id: int, symbol: str,
                      provider: QuoteProvider) -> int:
     candles = provider.fetch(symbol, "intraday")

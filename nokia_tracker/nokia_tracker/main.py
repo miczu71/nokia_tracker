@@ -13,14 +13,19 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
-from . import __version__, db as dbm, ha_client
+from . import __version__, db as dbm, fx, ha_client
 from . import quotes, sensors
 from . import settings as settingsm
+from .providers import finnhub as finnhub_provider
 from .providers.yahoo import YahooQuoteProvider
 from .publisher import MQTTPublisher
 from .web import create_app
 
 _PRIMARY_SYMBOL = "NOKIA.HE"
+_ERICSSON_SYMBOL = "ERIC-B.ST"
+_OMXH25_SYMBOL = "^OMXH25"
+_EURUSD_SYMBOL = "EURUSD=X"
+_ADR_SYMBOL = "NOK"
 
 logger = logging.getLogger("nokia_tracker")
 
@@ -83,17 +88,34 @@ def main() -> None:
     history_years = int(settingsm.get_settings(conn)["history_backfill_years"])
     instrument_id = quotes.ensure_instrument(
         conn, _PRIMARY_SYMBOL, "Nokia Oyj", "EUR", "primary")
-    if not quotes.has_history(conn, instrument_id):
-        logger.info("Brak historii dla %s — pełny backfill %d lat",
-                   _PRIMARY_SYMBOL, history_years)
+    ericsson_id = quotes.ensure_instrument(
+        conn, _ERICSSON_SYMBOL, "Ericsson", "SEK", "benchmark")
+    omxh25_id = quotes.ensure_instrument(
+        conn, _OMXH25_SYMBOL, "OMX Helsinki 25", "EUR", "benchmark")
+    eurpln_id = quotes.ensure_instrument(
+        conn, fx.EURPLN_SYMBOL, "EUR/PLN", "PLN", "fx")
+    eurusd_id = quotes.ensure_instrument(
+        conn, _EURUSD_SYMBOL, "EUR/USD", "USD", "fx")
+    adr_id = quotes.ensure_instrument(
+        conn, _ADR_SYMBOL, "Nokia ADR (NYSE)", "USD", "adr")
+
+    # Backfill przy pierwszym starcie — provider ze scope'em TEGO połączenia,
+    # nie przetrwa conn.close() poniżej; publish_sensors() tworzy WŁASNY
+    # provider na swoim własnym połączeniu (sqlite3 + wątki APScheduler).
+    for iid, symbol, name in (
+        (instrument_id, _PRIMARY_SYMBOL, "primary"),
+        (ericsson_id, _ERICSSON_SYMBOL, "ericsson"),
+        (omxh25_id, _OMXH25_SYMBOL, "omxh25"),
+        (eurpln_id, fx.EURPLN_SYMBOL, "eurpln"),
+        (eurusd_id, _EURUSD_SYMBOL, "eurusd"),
+    ):
+        if quotes.has_history(conn, iid):
+            continue
+        logger.info("Brak historii dla %s — pełny backfill %d lat", symbol, history_years)
         try:
-            # Provider ze scope'em TEGO połączenia — nie przetrwa conn.close()
-            # poniżej, więc publish_sensors() poniżej tworzy WŁASNY provider
-            # na swoim własnym połączeniu, a nie reużywa tej instancji.
-            quotes.backfill(conn, instrument_id, _PRIMARY_SYMBOL,
-                           YahooQuoteProvider(conn), history_years)
+            quotes.backfill(conn, iid, symbol, YahooQuoteProvider(conn), history_years)
         except Exception:
-            logger.exception("Backfill nieudany — spróbuje ponownie przy najbliższym pollu")
+            logger.exception("Backfill %s nieudany — spróbuje ponownie przy najbliższym pollu", name)
     conn.close()
 
     mqtt_host = _env("MQTT_HOST", "core-mosquitto")
@@ -113,18 +135,34 @@ def main() -> None:
                              password=mqtt_password, version=__version__)
     mqtt_pub.connect()
 
-    def publish_sensors() -> None:
-        """Odświeża ostatnie dni świec dziennych i publikuje sensory MQTT.
+    finnhub_api_key = _env("FINNHUB_API_KEY")
 
-        Yahoo (primary) nie wymaga klucza, więc świadomie bez bramki
-        is_session_open() na tym providerze — quota-świadomość dotyczy
-        przyszłych providerów z limitem (finnhub/twelvedata, krok 4+).
+    def publish_sensors() -> None:
+        """Odświeża świeże świece + FX + ADR i publikuje komplet sensorów MQTT.
+
+        Yahoo (primary/benchmark/fx) nie wymaga klucza, więc świadomie bez
+        bramki is_session_open() na tych providerach — quota-świadomość
+        dotyczy providerów z realnym limitem (Finnhub, ewentualnie
+        Twelve Data w przyszłości). Finnhub (ADR) jest opcjonalny — bez
+        klucza sensory ADR/spread po prostu zostają 'unknown', bez błędu.
         """
         c = dbm.get_conn(db_path)
         try:
             provider = YahooQuoteProvider(c)
             quotes.refresh_recent_daily(c, instrument_id, _PRIMARY_SYMBOL, provider)
+            quotes.refresh_recent_daily(c, ericsson_id, _ERICSSON_SYMBOL, provider)
+            quotes.refresh_recent_daily(c, omxh25_id, _OMXH25_SYMBOL, provider)
+            quotes.refresh_recent_daily(c, eurusd_id, _EURUSD_SYMBOL, provider)
+            fx.refresh_eurpln(c, eurpln_id)
+
+            if finnhub_api_key:
+                adr = finnhub_provider.fetch_quote(c, _ADR_SYMBOL, finnhub_api_key)
+                if adr:
+                    quotes.store_single_price(c, adr_id, adr["price"], source="finnhub")
+
             values = sensors.market_values(c, instrument_id)
+            values.update(sensors.benchmark_values(
+                c, instrument_id, ericsson_id, omxh25_id, eurpln_id, adr_id, eurusd_id))
             mqtt_pub.publish(values)
         except Exception:
             logger.exception("Publikacja MQTT nieudana")

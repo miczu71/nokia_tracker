@@ -16,6 +16,7 @@ from waitress import serve
 from . import __version__, db as dbm, fx, ha_client
 from . import news, quotes, sensors
 from . import settings as settingsm
+from .ai import scoring as ai_scoring
 from .providers import finnhub as finnhub_provider
 from .providers.yahoo import YahooQuoteProvider
 from .publisher import MQTTPublisher
@@ -165,22 +166,40 @@ def main() -> None:
             values = sensors.market_values(c, instrument_id)
             values.update(sensors.benchmark_values(
                 c, instrument_id, ericsson_id, omxh25_id, eurpln_id, adr_id, eurusd_id))
+            values.update(sensors.ai_values(c))
             mqtt_pub.publish(values)
         except Exception:
             logger.exception("Publikacja MQTT nieudana")
         finally:
             c.close()
 
+    def _ai_cfg(c) -> dict:
+        """Ustawienia AI z tabeli settings + klucze API z ENV — te ostatnie
+        NIE żyją w tabeli settings (patrz settings.py), żeby nie dublować
+        sekretów w dwóch miejscach."""
+        cfg = dict(settingsm.get_settings(c))
+        cfg["local_llm_api_key"] = _env("LOCAL_LLM_API_KEY")
+        cfg["gemini_api_key"] = _env("GEMINI_API_KEY")
+        cfg["anthropic_api_key"] = _env("ANTHROPIC_API_KEY")
+        return cfg
+
     def fetch_news() -> None:
         """Newsy nie potrzebują świeżości co poll_interval_minutes — osobny,
         rzadszy interwał (30 min) niż ceny, głównie żeby nie napytać sobie
-        biedy z ciasnym limitem GDELT (1 zapytanie/5s, zmierzone empirycznie)."""
+        biedy z ciasnym limitem GDELT (1 zapytanie/5s, zmierzone empirycznie).
+        Ocena AI newsów leci od razu po agregacji, na tym samym połączeniu —
+        batchuje wyłącznie nieocenione (ai/scoring.py), więc drugi przebieg
+        bez nowych newsów to tani no-op."""
         c = dbm.get_conn(db_path)
         try:
             news.aggregate(c, finnhub_api_key=finnhub_api_key,
                           marketaux_api_key=marketaux_api_key)
         except Exception:
             logger.exception("Agregacja newsów nieudana")
+        try:
+            ai_scoring.score_pending(c, _ai_cfg(c))
+        except Exception:
+            logger.exception("Ocena AI newsów nieudana")
         finally:
             c.close()
 

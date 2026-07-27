@@ -175,3 +175,69 @@ def test_benchmark_values_no_data_all_none(conn, bench_ids):
     assert v["rel_perf_1d_vs_omxh25"] is None
     assert v["beta_60d"] is None
     assert v["alpha_verdict"] is None
+
+
+# --- ai_values ---
+
+def _insert_scored_news(conn, title, sentiment, impact, hours_ago=1):
+    from datetime import datetime, timedelta, timezone
+    published_at = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).isoformat()
+    cur = conn.execute(
+        "INSERT INTO news (title, url_canonical, title_hash, published_at) VALUES (?, ?, ?, ?)",
+        (title, f"https://example.com/{title}", f"hash-{title}", published_at))
+    news_id = cur.lastrowid
+    conn.execute(
+        "INSERT INTO news_scores (news_id, sentiment, impact, horizon, thesis_pl, tags, model) "
+        "VALUES (?, ?, ?, 'weeks', 'teza', '[\"kontrakt\"]', 'local')",
+        (news_id, sentiment, impact))
+    conn.commit()
+    return news_id
+
+
+def test_ai_values_no_scored_news_returns_none_fields(conn):
+    v = sensors.ai_values(conn)
+    assert v["sentiment_score"] is None
+    assert v["sentiment_label"] is None
+    assert v["impact_score"] is None
+    assert v["news_count_24h"] == 0
+    assert v["top_news"] is None
+    assert v["top_news_attrs"] == {"items": []}
+
+
+def test_ai_values_averages_sentiment_and_impact(conn):
+    _insert_scored_news(conn, "Pozytywny news", 0.8, 3)
+    _insert_scored_news(conn, "Neutralny news", 0.0, 1)
+    v = sensors.ai_values(conn)
+    assert v["sentiment_score"] == pytest.approx(0.4)
+    assert v["impact_score"] == pytest.approx(2.0)
+    assert v["news_count_24h"] == 2
+
+
+def test_ai_values_sentiment_label_thresholds(conn):
+    _insert_scored_news(conn, "Bardzo dobry", 0.5, 2)
+    assert sensors.ai_values(conn)["sentiment_label"] == "pozytywny"
+
+
+def test_ai_values_excludes_news_older_than_24h(conn):
+    _insert_scored_news(conn, "Stary news", 0.9, 3, hours_ago=48)
+    v = sensors.ai_values(conn)
+    assert v["news_count_24h"] == 0
+    assert v["sentiment_score"] is None
+
+
+def test_ai_values_top_news_state_and_attrs(conn):
+    _insert_scored_news(conn, "Ważny news", 0.5, 3)
+    _insert_scored_news(conn, "Mniej ważny news", 0.1, 1)
+    v = sensors.ai_values(conn)
+    assert v["top_news"] == "Ważny news"  # impact DESC -> najważniejszy pierwszy
+    items = v["top_news_attrs"]["items"]
+    assert items[0]["title"] == "Ważny news"
+    assert items[0]["tags"] == ["kontrakt"]
+
+
+def test_ai_values_provider_active_and_calls_today(conn, monkeypatch):
+    monkeypatch.setattr("nokia_tracker.sensors.ai_provider.active_provider", lambda: "gemini")
+    monkeypatch.setattr("nokia_tracker.sensors.ai_usage.calls_today", lambda c: 7)
+    v = sensors.ai_values(conn)
+    assert v["ai_provider_active"] == "gemini"
+    assert v["ai_calls_today"] == 7

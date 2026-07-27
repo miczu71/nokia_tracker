@@ -6,10 +6,14 @@ kolejne funkcje _*_values() łączone tu.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from . import indicators as ind
 from . import market, quotes
+from .ai import provider as ai_provider
+from .ai import usage as ai_usage
 
 # Progi alpha_verdict: rel_perf_1d_vs_omxh25 w punktach procentowych.
 # Świadome uproszczenie: |różnica| liczona wprost, bez normalizacji betą —
@@ -133,4 +137,49 @@ def benchmark_values(conn: sqlite3.Connection, primary_id: int, ericsson_id: int
         "price_pln": price_pln,
         "adr_price_usd": adr_price_usd,
         "spread_vs_adr": spread_vs_adr,
+    }
+
+
+def ai_values(conn: sqlite3.Connection) -> dict:
+    """Sensory grupy 'AI': agregaty z news_scores dla newsów opublikowanych
+    w ostatnich 24h + stan łańcucha providerów (diagnostyka)."""
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    rows = conn.execute(
+        "SELECT n.title, n.url_canonical, n.published_at, s.sentiment, s.impact, "
+        "s.horizon, s.thesis_pl, s.tags "
+        "FROM news n JOIN news_scores s ON s.news_id = n.id "
+        "WHERE n.published_at >= ? ORDER BY s.impact DESC, n.published_at DESC",
+        (since,),
+    ).fetchall()
+
+    sentiments = [r["sentiment"] for r in rows if r["sentiment"] is not None]
+    impacts = [r["impact"] for r in rows if r["impact"] is not None]
+    sentiment_score = sum(sentiments) / len(sentiments) if sentiments else None
+    impact_score = sum(impacts) / len(impacts) if impacts else None
+
+    if sentiment_score is None:
+        sentiment_label = None
+    elif sentiment_score > 0.2:
+        sentiment_label = "pozytywny"
+    elif sentiment_score < -0.2:
+        sentiment_label = "negatywny"
+    else:
+        sentiment_label = "neutralny"
+
+    top = rows[:10]
+    top_items = [{
+        "title": r["title"], "url": r["url_canonical"], "published_at": r["published_at"],
+        "sentiment": r["sentiment"], "impact": r["impact"], "horizon": r["horizon"],
+        "thesis_pl": r["thesis_pl"], "tags": json.loads(r["tags"]) if r["tags"] else [],
+    } for r in top]
+
+    return {
+        "sentiment_score": sentiment_score,
+        "sentiment_label": sentiment_label,
+        "impact_score": impact_score,
+        "news_count_24h": len(rows),
+        "top_news": top[0]["title"][:250] if top else None,
+        "top_news_attrs": {"items": top_items},
+        "ai_provider_active": ai_provider.active_provider(),
+        "ai_calls_today": ai_usage.calls_today(conn),
     }

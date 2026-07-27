@@ -33,6 +33,7 @@ class _Entity(NamedTuple):
     device_class: Optional[str] = None
     state_class: Optional[str] = None
     icon: Optional[str] = None
+    has_attrs: bool = False  # publikuje też json_attributes_topic z values[f'{slug}_attrs']
 
 
 # Kursy: unit EUR BEZ device_class (żeby state_class='measurement' dało
@@ -73,6 +74,21 @@ _ENTITIES: list[_Entity] = [
     _Entity("sensor", "price_pln", "Price PLN", "PLN", None, "measurement", "mdi:cash"),
     _Entity("sensor", "adr_price_usd", "ADR Price USD", "USD", None, "measurement", "mdi:cash-100"),
     _Entity("sensor", "spread_vs_adr", "Spread Vs ADR", "%", None, "measurement", "mdi:compare"),
+    # --- AI ---
+    _Entity("sensor", "sentiment_score", "Sentiment Score", None, None, "measurement",
+           "mdi:emoticon-outline"),
+    _Entity("sensor", "sentiment_label", "Sentiment Label", None, None, None,
+           "mdi:emoticon-outline"),
+    _Entity("sensor", "impact_score", "Impact Score", None, None, "measurement",
+           "mdi:alert-decagram-outline"),
+    _Entity("sensor", "news_count_24h", "News Count 24H", None, None, "measurement",
+           "mdi:newspaper-variant-outline"),
+    _Entity("sensor", "top_news", "Top News", None, None, None, "mdi:newspaper",
+           has_attrs=True),
+    _Entity("sensor", "ai_provider_active", "AI Provider Active", None, None, None,
+           "mdi:robot-outline"),
+    _Entity("sensor", "ai_calls_today", "AI Calls Today", None, None, "measurement",
+           "mdi:counter"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),
@@ -81,6 +97,10 @@ _ENTITIES: list[_Entity] = [
 
 def _state_topic(slug: str) -> str:
     return f"{_STATE_PREFIX}/{slug}/state"
+
+
+def _attrs_topic(slug: str) -> str:
+    return f"{_STATE_PREFIX}/{slug}/attrs"
 
 
 def _disc_topic(domain: str, slug: str) -> str:
@@ -105,6 +125,19 @@ def render_values(values: dict) -> dict[str, str]:
             out[e.slug] = str(round(v, 4))
         else:
             out[e.slug] = str(v)
+    return out
+
+
+def render_attrs(values: dict) -> dict[str, str]:
+    """Mapa slug → JSON atrybutów, tylko dla encji has_attrs z danymi
+    w values pod kluczem f'{slug}_attrs'."""
+    out: dict[str, str] = {}
+    for e in _ENTITIES:
+        if not e.has_attrs:
+            continue
+        attrs = values.get(f"{e.slug}_attrs")
+        if attrs is not None:
+            out[e.slug] = json.dumps(attrs, ensure_ascii=False)
     return out
 
 
@@ -134,6 +167,8 @@ def discovery_payloads(version: str) -> dict[str, dict]:
             p["state_class"] = e.state_class
         if e.icon:
             p["icon"] = e.icon
+        if e.has_attrs:
+            p["json_attributes_topic"] = _attrs_topic(e.slug)
         payloads[_disc_topic(e.domain, e.slug)] = p
     return payloads
 
@@ -206,4 +241,6 @@ class MQTTPublisher:
     def _publish_values(self, values: dict) -> None:
         for slug, payload in render_values(values).items():
             self._client.publish(_state_topic(slug), payload, retain=True)
+        for slug, payload in render_attrs(values).items():
+            self._client.publish(_attrs_topic(slug), payload, retain=True)
         logger.debug("Opublikowano stan sensorów MQTT")

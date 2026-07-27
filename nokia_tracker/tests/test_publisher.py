@@ -1,7 +1,7 @@
 """Testy czystych funkcji publishera — bez żywego brokera MQTT
 (BLUEPRINT §5: zero żywego I/O w testach)."""
 from nokia_tracker.publisher import (_ENTITIES, discovery_payloads,
-                                     render_values)
+                                     render_attrs, render_values)
 
 
 def test_discovery_payloads_has_topic_per_entity():
@@ -78,3 +78,24 @@ def test_discovery_payload_alpha_verdict_has_no_unit():
 def test_all_entity_slugs_unique():
     slugs = [e.slug for e in _ENTITIES]
     assert len(slugs) == len(set(slugs))
+
+
+def test_discovery_payload_top_news_has_json_attributes_topic():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/top_news/config"]
+    assert p["json_attributes_topic"] == "nokia_tracker/sensors/top_news/attrs"
+
+
+def test_discovery_payload_sentiment_score_no_attributes_topic():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/sentiment_score/config"]
+    assert "json_attributes_topic" not in p
+
+
+def test_render_attrs_only_entities_with_has_attrs():
+    out = render_attrs({"top_news_attrs": {"items": [1, 2]}, "sentiment_score_attrs": {"x": 1}})
+    assert out == {"top_news": '{"items": [1, 2]}'}
+
+
+def test_render_attrs_missing_key_omitted():
+    assert render_attrs({}) == {}

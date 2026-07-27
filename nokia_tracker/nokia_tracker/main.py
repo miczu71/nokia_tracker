@@ -14,7 +14,7 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
-from . import __version__, analysis, db as dbm, forecasts, fx, ha_client
+from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
 from . import news, quotes, sensors
 from . import settings as settingsm
 from .ai import scoring as ai_scoring
@@ -178,6 +178,11 @@ def main() -> None:
                 values.update(sensors.ai_values(c))
                 values.update(sensors.forecast_values(c))
                 mqtt_pub.publish(values)
+
+                try:
+                    alerts.check_and_fire(c, settingsm.get_settings(c), values, mqtt_pub)
+                except Exception:
+                    logger.exception("Sprawdzanie alertów nieudane")
             except Exception:
                 logger.exception("Publikacja MQTT nieudana")
             finally:

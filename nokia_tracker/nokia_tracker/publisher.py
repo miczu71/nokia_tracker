@@ -23,6 +23,7 @@ _DEVICE_NAME = "Nokia Tracker"
 _AVAIL_TOPIC = "nokia_tracker/availability"
 _STATE_PREFIX = "nokia_tracker/sensors"
 _DISC_PREFIX = "homeassistant"
+_ALERT_TOPIC = "nokia_tracker/events/alert"
 
 
 class _Entity(NamedTuple):
@@ -247,6 +248,16 @@ class MQTTPublisher:
             return
         self._publish_discovery()
         self._publish_values(values)
+
+    def publish_alert(self, alert: dict) -> None:
+        """Publikuje zdarzenie alertu — NIE retained (BLUEPRINT §2: do
+        konsumpcji przez automatyzacje HA, nie stan trwały). Cichy no-op,
+        gdy MQTT akurat rozłączone — alert i tak trafił do alerts_log."""
+        if not self._connected:
+            logger.debug("MQTT niepołączone — alert %s pominięty (jest w alerts_log)",
+                         alert.get("kind"))
+            return
+        self._client.publish(_ALERT_TOPIC, json.dumps(alert, ensure_ascii=False))
 
     def unpublish(self) -> None:
         """Czyści retained discovery configs — HA usuwa encje urządzenia."""

@@ -1,0 +1,83 @@
+"""Orkiestracja providerów cen -> tabela quotes; backfill historii."""
+from __future__ import annotations
+
+import logging
+import sqlite3
+from datetime import datetime, timedelta, timezone
+
+from .models import Candle
+from .providers.base import QuoteProvider
+
+logger = logging.getLogger(__name__)
+
+
+def ensure_instrument(conn: sqlite3.Connection, symbol: str, name: str,
+                      currency: str, role: str = "benchmark") -> int:
+    """Get-or-create instrumentu; zwraca id."""
+    row = conn.execute("SELECT id FROM instruments WHERE symbol = ?", (symbol,)).fetchone()
+    if row:
+        return row["id"]
+    cur = conn.execute(
+        "INSERT INTO instruments (symbol, name, currency, role) VALUES (?, ?, ?, ?)",
+        (symbol, name, currency, role))
+    conn.commit()
+    return cur.lastrowid
+
+
+def upsert_candles(conn: sqlite3.Connection, instrument_id: int, granularity: str,
+                   candles: list[Candle], source: str = "yahoo") -> int:
+    """UPSERT (nie IGNORE) — dzisiejsza świeca dzienna jest prowizoryczna
+    przed zamknięciem sesji i legalnie zmienia close przy kolejnym fetchu."""
+    n = 0
+    for c in candles:
+        conn.execute(
+            "INSERT INTO quotes (instrument_id, ts, granularity, open, high, low, "
+            "close, volume, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(instrument_id, ts, granularity) DO UPDATE SET "
+            "open=excluded.open, high=excluded.high, low=excluded.low, "
+            "close=excluded.close, volume=excluded.volume, source=excluded.source",
+            (instrument_id, c.ts, granularity, c.open, c.high, c.low, c.close,
+             c.volume, source))
+        n += 1
+    conn.commit()
+    return n
+
+
+def backfill(conn: sqlite3.Connection, instrument_id: int, symbol: str,
+            provider: QuoteProvider, years: int) -> int:
+    """Pobiera i zapisuje historię dzienną za `years` lat wstecz."""
+    since = (datetime.now(timezone.utc) - timedelta(days=365 * years)).date().isoformat()
+    candles = provider.fetch(symbol, "daily", since=since)
+    n = upsert_candles(conn, instrument_id, "daily", candles, source=provider.name)
+    logger.info("Backfill %s: %d świec dziennych (%s lat)", symbol, n, years)
+    return n
+
+
+def refresh_intraday(conn: sqlite3.Connection, instrument_id: int, symbol: str,
+                     provider: QuoteProvider) -> int:
+    candles = provider.fetch(symbol, "intraday")
+    return upsert_candles(conn, instrument_id, "intraday", candles, source=provider.name)
+
+
+def latest_quote(conn: sqlite3.Connection, instrument_id: int,
+                 granularity: str | None = None) -> dict | None:
+    """Najnowsza świeca instrumentu (dowolnej granularności, chyba że podana)."""
+    if granularity:
+        row = conn.execute(
+            "SELECT * FROM quotes WHERE instrument_id = ? AND granularity = ? "
+            "ORDER BY ts DESC LIMIT 1", (instrument_id, granularity)).fetchone()
+    else:
+        row = conn.execute(
+            "SELECT * FROM quotes WHERE instrument_id = ? ORDER BY ts DESC LIMIT 1",
+            (instrument_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def daily_closes(conn: sqlite3.Connection, instrument_id: int, limit: int = 400
+                 ) -> list[float]:
+    """Ostatnie `limit` zamknięć dziennych, chronologicznie (najstarsze pierwsze) —
+    wejście dla indicators.py."""
+    rows = conn.execute(
+        "SELECT close FROM quotes WHERE instrument_id = ? AND granularity = 'daily' "
+        "ORDER BY ts DESC LIMIT ?", (instrument_id, limit)).fetchall()
+    return [r["close"] for r in reversed(rows)]

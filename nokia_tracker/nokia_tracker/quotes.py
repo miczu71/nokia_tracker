@@ -53,6 +53,52 @@ def backfill(conn: sqlite3.Connection, instrument_id: int, symbol: str,
     return n
 
 
+def has_history(conn: sqlite3.Connection, instrument_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM quotes WHERE instrument_id = ? AND granularity = 'daily' LIMIT 1",
+        (instrument_id,)).fetchone()
+    return row is not None
+
+
+def refresh_recent_daily(conn: sqlite3.Connection, instrument_id: int, symbol: str,
+                         provider: QuoteProvider, days: int = 5) -> int:
+    """Lekki odśwież ostatnich `days` dni — tania alternatywa do pełnego
+    backfill(), uruchamiana co poll_interval_minutes: dostarcza świeżą,
+    wciąż-formującą się świecę dzisiejszą (high/low/volume/close rosną
+    w trakcie sesji) bez ciągania 5 lat historii za każdym razem."""
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    candles = provider.fetch(symbol, "daily", since=since)
+    return upsert_candles(conn, instrument_id, "daily", candles, source=provider.name)
+
+
+def today_daily_candle(conn: sqlite3.Connection, instrument_id: int) -> dict | None:
+    """Dzisiejsza świeca dzienna (UTC), jeśli już pobrana."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    row = conn.execute(
+        "SELECT * FROM quotes WHERE instrument_id = ? AND granularity = 'daily' "
+        "AND ts LIKE ? ORDER BY ts DESC LIMIT 1",
+        (instrument_id, f"{today}%")).fetchone()
+    return dict(row) if row else None
+
+
+def prev_daily_close(conn: sqlite3.Connection, instrument_id: int) -> float | None:
+    """Zamknięcie sprzed najnowszej świecy dziennej (drugie od końca)."""
+    rows = conn.execute(
+        "SELECT close FROM quotes WHERE instrument_id = ? AND granularity = 'daily' "
+        "ORDER BY ts DESC LIMIT 2", (instrument_id,)).fetchall()
+    return rows[1]["close"] if len(rows) >= 2 else None
+
+
+def week52_high_low(conn: sqlite3.Connection, instrument_id: int
+                    ) -> tuple[float | None, float | None]:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
+    row = conn.execute(
+        "SELECT MAX(high) h, MIN(low) l FROM quotes WHERE instrument_id = ? AND "
+        "granularity = 'daily' AND ts >= ? AND high IS NOT NULL AND low IS NOT NULL",
+        (instrument_id, cutoff)).fetchone()
+    return (row["h"], row["l"]) if row else (None, None)
+
+
 def refresh_intraday(conn: sqlite3.Connection, instrument_id: int, symbol: str,
                      provider: QuoteProvider) -> int:
     candles = provider.fetch(symbol, "intraday")

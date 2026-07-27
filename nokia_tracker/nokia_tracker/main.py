@@ -1,20 +1,26 @@
-"""Punkt startowy add-onu (krok 1 — szkielet).
+"""Punkt startowy add-onu.
 
-Migracja bazy, seed ustawień, pusty scheduler i minimalny serwer web (waitress),
-żeby kontener miał żywy proces i coś do zweryfikowania na ingressie.
-MQTT/publisher, providery cen/newsów i AI dochodzą w kolejnych krokach.
+Migracja bazy, seed ustawień, MQTT discovery (rynek+technika, krok 3),
+scheduler pollingu i serwer web (waitress). Newsy/AI/portfel dochodzą w
+kolejnych krokach jako kolejne joby schedulera.
 """
 from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
-from . import __version__, db as dbm
+from . import __version__, db as dbm, ha_client
+from . import quotes, sensors
 from . import settings as settingsm
+from .providers.yahoo import YahooQuoteProvider
+from .publisher import MQTTPublisher
 from .web import create_app
+
+_PRIMARY_SYMBOL = "NOKIA.HE"
 
 logger = logging.getLogger("nokia_tracker")
 
@@ -73,12 +79,62 @@ def main() -> None:
         "vest_reminder_days": _env("VEST_REMINDER_DAYS", "7"),
         "tax_year": _env("TAX_YEAR", "0"),
     })
+
+    history_years = int(settingsm.get_settings(conn)["history_backfill_years"])
+    instrument_id = quotes.ensure_instrument(
+        conn, _PRIMARY_SYMBOL, "Nokia Oyj", "EUR", "primary")
+    if not quotes.has_history(conn, instrument_id):
+        logger.info("Brak historii dla %s — pełny backfill %d lat",
+                   _PRIMARY_SYMBOL, history_years)
+        try:
+            # Provider ze scope'em TEGO połączenia — nie przetrwa conn.close()
+            # poniżej, więc publish_sensors() poniżej tworzy WŁASNY provider
+            # na swoim własnym połączeniu, a nie reużywa tej instancji.
+            quotes.backfill(conn, instrument_id, _PRIMARY_SYMBOL,
+                           YahooQuoteProvider(conn), history_years)
+        except Exception:
+            logger.exception("Backfill nieudany — spróbuje ponownie przy najbliższym pollu")
     conn.close()
 
-    # Scheduler pusty na razie — joby (poll cen, dzienna analiza AI, backup)
-    # dochodzą w krokach 2/6/7/9. Trzymamy go żywym już teraz, żeby proces
-    # add-onu nie kończył się od razu po starcie.
+    mqtt_host = _env("MQTT_HOST", "core-mosquitto")
+    mqtt_port = int(_env("MQTT_PORT", "1883") or 1883)
+    mqtt_user = _env("MQTT_USER")
+    mqtt_password = _env("MQTT_PASSWORD")
+    if not mqtt_user:
+        svc = ha_client.get_mqtt_service()
+        if svc:
+            mqtt_host = svc.get("host") or mqtt_host
+            mqtt_port = int(svc.get("port") or mqtt_port)
+            mqtt_user = svc.get("username") or ""
+            mqtt_password = svc.get("password") or ""
+            logger.info("MQTT: dane brokera z usługi Supervisora (%s)", mqtt_host)
+
+    mqtt_pub = MQTTPublisher(host=mqtt_host, port=mqtt_port, user=mqtt_user,
+                             password=mqtt_password, version=__version__)
+    mqtt_pub.connect()
+
+    def publish_sensors() -> None:
+        """Odświeża ostatnie dni świec dziennych i publikuje sensory MQTT.
+
+        Yahoo (primary) nie wymaga klucza, więc świadomie bez bramki
+        is_session_open() na tym providerze — quota-świadomość dotyczy
+        przyszłych providerów z limitem (finnhub/twelvedata, krok 4+).
+        """
+        c = dbm.get_conn(db_path)
+        try:
+            provider = YahooQuoteProvider(c)
+            quotes.refresh_recent_daily(c, instrument_id, _PRIMARY_SYMBOL, provider)
+            values = sensors.market_values(c, instrument_id)
+            mqtt_pub.publish(values)
+        except Exception:
+            logger.exception("Publikacja MQTT nieudana")
+        finally:
+            c.close()
+
+    poll_minutes = int(_env("POLL_INTERVAL_MINUTES", "10") or 10)
     scheduler = BackgroundScheduler(timezone=_env("TZ", "Europe/Warsaw"))
+    scheduler.add_job(publish_sensors, "interval", minutes=poll_minutes,
+                      next_run_time=datetime.now())
     scheduler.start()
 
     app = create_app(db_path=db_path)

@@ -1,0 +1,117 @@
+name: Nokia Tracker
+version: "0.1.0"
+slug: nokia_tracker
+description: >-
+  Osobisty asystent inwestycyjny dla akcji Nokia (NOKIA.HE, Nasdaq Helsinki).
+  Kurs, historia, newsy i sentyment AI, prognozy z weryfikacją trafności,
+  benchmark vs Ericsson/OMXH25, smart alerty, portfel — wszystko przez
+  MQTT Discovery i własne UI. Docelowo: rozliczenie akcji pracowniczych
+  (ESPP/LTI) i dywidend z polskim urzędem skarbowym.
+url: "https://github.com/miczu71/nokia_tracker"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+init: false
+homeassistant_api: true
+services:
+  - mqtt:need
+map:
+  - share:rw
+ingress: true
+ingress_port: 8100
+panel_icon: mdi:chart-timeline-variant-shimmer
+options:
+  # --- rynek ---
+  poll_interval_minutes: 10
+  history_backfill_years: 5
+  display_currency_secondary: "PLN"
+  allow_scrape_fallback: false
+  # --- klucze API (wszystkie opcjonalne; primary działa bez klucza) ---
+  finnhub_api_key: ""
+  marketaux_api_key: ""
+  twelvedata_api_key: ""
+  # --- AI: łańcuch providerów, każdy z WŁASNYM kluczem ---
+  ai_primary: "local"
+  ai_fallback: "gemini"
+  local_llm_base_url: "http://192.168.0.106:3003/v1"
+  local_llm_api_key: ""
+  local_llm_model: "gemini-3.5-flash"
+  gemini_api_key: ""
+  gemini_model: "gemini-3.1-flash-lite"
+  anthropic_api_key: ""
+  anthropic_model: "claude-haiku-4-5-20251001"
+  ai_max_tokens: 4000
+  ai_max_calls_per_day: 40
+  ai_news_batch_size: 15
+  ai_recommendations_enabled: true
+  analysis_time: "19:00"
+  # --- alerty ---
+  notify_service: ""
+  alert_sentiment_drop: 0.5
+  alert_price_move_pct: 3.0
+  alert_on_forecast_break: true
+  alert_min_interval_minutes: 120
+  # --- portfel i podatki (loty edytowane w UI w 0.2.0, tu tylko wartości startowe) ---
+  position_qty: 0.0
+  avg_cost_eur: 0.0
+  broker_fee_pct: 0.0
+  cost_basis_policy: "own_only"
+  espp_match_pct: 50.0
+  finnish_withholding_pct: 35.0
+  treaty_withholding_pct: 15.0
+  pl_capital_gains_tax_pct: 19.0
+  vest_reminder_days: 7
+  tax_year: 0
+  # --- infra ---
+  mqtt_host: "core-mosquitto"
+  mqtt_port: 1883
+  mqtt_user: ""
+  mqtt_password: ""
+  log_level: "info"
+  backup_share: "/share/nokia_tracker"
+  timezone: "Europe/Warsaw"
+schema:
+  poll_interval_minutes: int
+  history_backfill_years: int
+  display_currency_secondary: str?
+  allow_scrape_fallback: bool
+  finnhub_api_key: password
+  marketaux_api_key: password
+  twelvedata_api_key: password
+  ai_primary: "list(local|gemini|anthropic|off)"
+  ai_fallback: "list(gemini|anthropic|none)"
+  local_llm_base_url: str?
+  local_llm_api_key: password
+  local_llm_model: str?
+  gemini_api_key: password
+  gemini_model: str?
+  anthropic_api_key: password
+  anthropic_model: str?
+  ai_max_tokens: int
+  ai_max_calls_per_day: int
+  ai_news_batch_size: int
+  ai_recommendations_enabled: bool
+  analysis_time: str
+  notify_service: str?
+  alert_sentiment_drop: float
+  alert_price_move_pct: float
+  alert_on_forecast_break: bool
+  alert_min_interval_minutes: int
+  position_qty: float
+  avg_cost_eur: float
+  broker_fee_pct: float
+  cost_basis_policy: "list(own_only|own_plus_drip|all_at_acquisition)"
+  espp_match_pct: float
+  finnish_withholding_pct: float
+  treaty_withholding_pct: float
+  pl_capital_gains_tax_pct: float
+  vest_reminder_days: int
+  tax_year: int
+  mqtt_host: str
+  mqtt_port: int
+  mqtt_user: str
+  mqtt_password: password
+  log_level: "list(debug|info|warning|error)?"
+  backup_share: str
+  timezone: str?

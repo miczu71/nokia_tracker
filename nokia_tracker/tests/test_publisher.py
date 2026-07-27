@@ -114,6 +114,16 @@ def test_discovery_payload_ai_recommendation_has_json_attributes_topic():
     assert p["json_attributes_topic"] == "nokia_tracker/sensors/ai_recommendation/attrs"
 
 
+def test_discovery_payload_sets_object_id_to_force_stable_entity_id():
+    # object_id wymusza entity_id = sensor.<object_id> niezależnie od 'name' —
+    # zapobiega klasie błędu z kroku 7 (entity_id ustala się przy pierwszej
+    # rejestracji z device.name+name i już się nie zmienia przy zmianie name).
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/forecast_1w_eur/config"]
+    assert p["object_id"] == "nokia_tracker_forecast_1w_eur"
+    assert p["object_id"] == p["unique_id"]
+
+
 def test_discovery_payload_forecast_accuracy_pct_no_attributes_topic():
     payloads = discovery_payloads("0.1.0")
     p = payloads["homeassistant/sensor/nokia_tracker/forecast_accuracy_pct/config"]

@@ -168,6 +168,12 @@ def discovery_payloads(version: str) -> dict[str, dict]:
         p: dict = {
             "name": e.name,
             "unique_id": f"{_DEVICE_ID}_{e.slug}",
+            # object_id wymusza entity_id = sensor.<object_id> niezależnie od
+            # 'name' — bez tego HA składa entity_id z device.name + name przy
+            # PIERWSZEJ rejestracji i już go nie zmienia (złapane na żywo
+            # w kroku 7: 'Forecast 1W' bez 'EUR' w nazwie dało entity_id bez
+            # _eur mimo slugu forecast_1w_eur; patrz reference_mqtt_entity_naming).
+            "object_id": f"{_DEVICE_ID}_{e.slug}",
             "state_topic": _state_topic(e.slug),
             "availability_topic": _AVAIL_TOPIC,
             "device": device,

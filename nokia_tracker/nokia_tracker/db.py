@@ -207,10 +207,17 @@ _MIGRATIONS = [
 
 
 def get_conn(db_path: str | None = None) -> sqlite3.Connection:
+    """WAL + busy_timeout — bez tego równoległe joby APScheduler (publish_sensors,
+    fetch_news) na osobnych połączeniach dawały 'database is locked' (złapane
+    na żywo po kroku 6, gdy ai/scoring.py dodał więcej zapisów w fetch_news;
+    WAL pozwala na jednoczesny odczyt podczas zapisu, busy_timeout dogrywa
+    resztę kolizji zamiast rzucać natychmiast)."""
     path = db_path or os.environ.get("DB_PATH", "/data/nokia_tracker.db")
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     return conn
 
 

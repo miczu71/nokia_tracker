@@ -25,6 +25,14 @@ def test_migrate_sets_user_version(conn):
     assert version == 1
 
 
+def test_get_conn_enables_wal_and_busy_timeout(conn):
+    # WAL + busy_timeout: bez tego równoległe joby schedulera (publish_sensors,
+    # fetch_news) na osobnych połączeniach dają "database is locked" — złapane
+    # na żywo po kroku 6 (patrz komentarz w db.py::get_conn).
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 30000
+
+
 def test_migrate_is_idempotent(conn):
     # migrate() drugi raz na tym samym połączeniu nie powinno próbować
     # ponownie tworzyć tabel (user_version już na najnowszej wersji).

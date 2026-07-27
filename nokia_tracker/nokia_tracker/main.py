@@ -14,7 +14,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
 from . import __version__, db as dbm, fx, ha_client
-from . import quotes, sensors
+from . import news, quotes, sensors
 from . import settings as settingsm
 from .providers import finnhub as finnhub_provider
 from .providers.yahoo import YahooQuoteProvider
@@ -98,6 +98,7 @@ def main() -> None:
         conn, _EURUSD_SYMBOL, "EUR/USD", "USD", "fx")
     adr_id = quotes.ensure_instrument(
         conn, _ADR_SYMBOL, "Nokia ADR (NYSE)", "USD", "adr")
+    news.seed_default_sources(conn)
 
     # Backfill przy pierwszym starcie — provider ze scope'em TEGO połączenia,
     # nie przetrwa conn.close() poniżej; publish_sensors() tworzy WŁASNY
@@ -136,6 +137,7 @@ def main() -> None:
     mqtt_pub.connect()
 
     finnhub_api_key = _env("FINNHUB_API_KEY")
+    marketaux_api_key = _env("MARKETAUX_API_KEY")
 
     def publish_sensors() -> None:
         """Odświeża świeże świece + FX + ADR i publikuje komplet sensorów MQTT.
@@ -169,9 +171,24 @@ def main() -> None:
         finally:
             c.close()
 
+    def fetch_news() -> None:
+        """Newsy nie potrzebują świeżości co poll_interval_minutes — osobny,
+        rzadszy interwał (30 min) niż ceny, głównie żeby nie napytać sobie
+        biedy z ciasnym limitem GDELT (1 zapytanie/5s, zmierzone empirycznie)."""
+        c = dbm.get_conn(db_path)
+        try:
+            news.aggregate(c, finnhub_api_key=finnhub_api_key,
+                          marketaux_api_key=marketaux_api_key)
+        except Exception:
+            logger.exception("Agregacja newsów nieudana")
+        finally:
+            c.close()
+
     poll_minutes = int(_env("POLL_INTERVAL_MINUTES", "10") or 10)
     scheduler = BackgroundScheduler(timezone=_env("TZ", "Europe/Warsaw"))
     scheduler.add_job(publish_sensors, "interval", minutes=poll_minutes,
+                      next_run_time=datetime.now())
+    scheduler.add_job(fetch_news, "interval", minutes=30,
                       next_run_time=datetime.now())
     scheduler.start()
 

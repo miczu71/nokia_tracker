@@ -4,7 +4,7 @@
 
 <div class="page-head">
   <h1>NOKIA.HE</h1>
-  <form method="post" action="/analyze-now">
+  <form method="post" action="{{ url_for('analyze_now') }}">
     <button class="btn primary" type="submit">🔄 Przeanalizuj teraz</button>
   </form>
 </div>
@@ -69,8 +69,8 @@
     </div>
   </div>
   <p class="muted">Dywidendy netto: {{ '%.0f'|format(dividends.dividends_net_eur) }} EUR ·
-    <a href="/dividends">szczegóły</a></p>
-  <a class="btn small" href="/portfolio">Edytuj stan posiadania</a>
+    <a href="{{ url_for('dividends_get') }}">szczegóły</a></p>
+  <a class="btn small" href="{{ url_for('portfolio_get') }}">Edytuj stan posiadania</a>
 </div>
 
 <div class="card">
@@ -133,7 +133,7 @@
   <p class="muted">Trafność historyczna:
     {{ '%.1f'|format(values.forecast_accuracy_pct) if values.forecast_accuracy_pct is not none else 'brak danych' }}
     {% if values.forecast_accuracy_pct is not none %}%{% endif %}
-    · <a href="/forecasts">historia prognoz</a>
+    · <a href="{{ url_for('forecasts_page') }}">historia prognoz</a>
   </p>
 </div>
 

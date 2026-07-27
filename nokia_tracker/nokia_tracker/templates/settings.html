@@ -7,7 +7,7 @@
   {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
 </div>
 
-<form class="form" method="post" action="/settings">
+<form class="form" method="post" action="{{ url_for('settings_post') }}">
 
   <div class="card">
     <div class="card-title">Łańcuch AI</div>

@@ -50,8 +50,28 @@ def _ai_keys() -> dict:
     }
 
 
+class _IngressPrefixMiddleware:
+    """HA ingress zdejmuje prefiks ścieżki przed przekazaniem requestu do
+    kontenera (Flask widzi czyste '/', '/portfolio' itd.), ale oryginalny
+    prefiks leci w nagłówku X-Ingress-Path. Bez ustawienia SCRIPT_NAME
+    url_for()/redirect() generują URL-e bez prefiksu, które w przeglądarce
+    rozwiązują się pod domeną główną HA zamiast pod ingressem (złapane na
+    żywo Playwrightem: /static/app.css -> 404, bo poszło do
+    homeassistant.local:8123/static/... zamiast pod ingress prefix)."""
+
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+
+    def __call__(self, environ, start_response):
+        prefix = environ.get("HTTP_X_INGRESS_PATH", "")
+        if prefix:
+            environ["SCRIPT_NAME"] = prefix
+        return self.wsgi_app(environ, start_response)
+
+
 def create_app(db_path: str) -> Flask:
     app = Flask(__name__)
+    app.wsgi_app = _IngressPrefixMiddleware(app.wsgi_app)
 
     @app.after_request
     def _no_cache(resp: Response) -> Response:

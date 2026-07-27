@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Nokia Tracker{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css?v={{ version }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}?v={{ version }}">
 <meta name="theme-color" content="#2a78d6">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,20 +14,20 @@
 <nav class="nav">
   <span class="nav-brand">📈 Nokia Tracker</span>
   <div class="nav-links">
-    <a href="/" {% if active == 'dashboard' %}class="active"{% endif %}>Pulpit</a>
-    <a href="/portfolio" {% if active == 'portfolio' %}class="active"{% endif %}>Portfel</a>
-    <a href="/dividends" {% if active == 'dividends' %}class="active"{% endif %}>Dywidendy</a>
-    <a href="/news" {% if active == 'news' %}class="active"{% endif %}>Newsy</a>
-    <a href="/forecasts" {% if active == 'forecasts' %}class="active"{% endif %}>Prognozy</a>
-    <a href="/settings" {% if active == 'settings' %}class="active"{% endif %}>Ustawienia</a>
+    <a href="{{ url_for('dashboard') }}" {% if active == 'dashboard' %}class="active"{% endif %}>Pulpit</a>
+    <a href="{{ url_for('portfolio_get') }}" {% if active == 'portfolio' %}class="active"{% endif %}>Portfel</a>
+    <a href="{{ url_for('dividends_get') }}" {% if active == 'dividends' %}class="active"{% endif %}>Dywidendy</a>
+    <a href="{{ url_for('news_page') }}" {% if active == 'news' %}class="active"{% endif %}>Newsy</a>
+    <a href="{{ url_for('forecasts_page') }}" {% if active == 'forecasts' %}class="active"{% endif %}>Prognozy</a>
+    <a href="{{ url_for('settings_get') }}" {% if active == 'settings' %}class="active"{% endif %}>Ustawienia</a>
   </div>
   <span class="nav-version">v{{ version }}</span>
 </nav>
 <main class="main">
 {% block content %}{% endblock %}
 </main>
-<script src="/static/chart.umd.min.js?v={{ version }}"></script>
-<script src="/static/app.js?v={{ version }}"></script>
+<script src="{{ url_for('static', filename='chart.umd.min.js') }}?v={{ version }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

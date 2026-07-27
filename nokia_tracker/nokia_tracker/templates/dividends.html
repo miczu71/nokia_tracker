@@ -49,7 +49,7 @@
 
 <div class="card">
   <div class="card-title">Dodaj wypłatę dywidendy</div>
-  <form class="form" method="post" action="/dividends">
+  <form class="form" method="post" action="{{ url_for('dividends_post') }}">
     <div class="row3">
       <label>Data wypłaty
         <input type="date" name="pay_date" required>

@@ -13,7 +13,7 @@
     Prosty stan posiadania (ilość + średni koszt) — pełne loty z FIFO i historią
     nabyć dochodzą w wydaniu 0.2.0 razem z rozliczeniem podatkowym.
   </p>
-  <form class="form" method="post" action="/portfolio">
+  <form class="form" method="post" action="{{ url_for('portfolio_post') }}">
     <div class="row2">
       <label>Ilość akcji
         <input type="number" step="0.0001" name="position_qty" value="{{ cfg.position_qty }}" required>

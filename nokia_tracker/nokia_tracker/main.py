@@ -14,7 +14,7 @@ from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
-from . import __version__, db as dbm, fx, ha_client
+from . import __version__, analysis, db as dbm, forecasts, fx, ha_client
 from . import news, quotes, sensors
 from . import settings as settingsm
 from .ai import scoring as ai_scoring
@@ -176,6 +176,7 @@ def main() -> None:
                 values.update(sensors.benchmark_values(
                     c, instrument_id, ericsson_id, omxh25_id, eurpln_id, adr_id, eurusd_id))
                 values.update(sensors.ai_values(c))
+                values.update(sensors.forecast_values(c))
                 mqtt_pub.publish(values)
             except Exception:
                 logger.exception("Publikacja MQTT nieudana")
@@ -213,12 +214,42 @@ def main() -> None:
             finally:
                 c.close()
 
+    def run_daily_analysis() -> None:
+        """Codziennie o analysis_time: rozlicza dojrzałe prognozy (settle_due,
+        do current_price) i — jeśli ai_recommendations_enabled — generuje
+        nowe prognozy 1w/1m/12m + briefing + rekomendację (analysis.py)."""
+        with _db_lock:
+            c = dbm.get_conn(db_path)
+            try:
+                latest = quotes.latest_quote(c, instrument_id)
+                if latest:
+                    settled = forecasts.settle_due(c, latest["close"])
+                    if settled:
+                        logger.info("Rozliczono %d dojrzałych prognoz", settled)
+                cfg = _ai_cfg(c)
+                if cfg["ai_recommendations_enabled"]:
+                    analysis.run_daily_analysis(
+                        c, cfg, instrument_id, ericsson_id, omxh25_id, eurpln_id)
+            except Exception:
+                logger.exception("Dzienna analiza AI nieudana")
+            finally:
+                c.close()
+
     poll_minutes = int(_env("POLL_INTERVAL_MINUTES", "10") or 10)
+    analysis_time = _env("ANALYSIS_TIME", "19:00")
+    try:
+        analysis_hour, analysis_minute = (int(x) for x in analysis_time.split(":", 1))
+    except ValueError:
+        logger.warning("ANALYSIS_TIME=%r nieprawidłowy (oczekiwano HH:MM) — używam 19:00",
+                       analysis_time)
+        analysis_hour, analysis_minute = 19, 0
+
     scheduler = BackgroundScheduler(timezone=_env("TZ", "Europe/Warsaw"))
     scheduler.add_job(publish_sensors, "interval", minutes=poll_minutes,
                       next_run_time=datetime.now())
     scheduler.add_job(fetch_news, "interval", minutes=30,
                       next_run_time=datetime.now())
+    scheduler.add_job(run_daily_analysis, "cron", hour=analysis_hour, minute=analysis_minute)
     scheduler.start()
 
     app = create_app(db_path=db_path)

@@ -10,10 +10,12 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from . import forecasts as forecastsm
 from . import indicators as ind
 from . import market, quotes
 from .ai import provider as ai_provider
 from .ai import usage as ai_usage
+from .ai.prompts import DISCLAIMER
 
 # Progi alpha_verdict: rel_perf_1d_vs_omxh25 w punktach procentowych.
 # Świadome uproszczenie: |różnica| liczona wprost, bez normalizacji betą —
@@ -183,3 +185,49 @@ def ai_values(conn: sqlite3.Connection) -> dict:
         "ai_provider_active": ai_provider.active_provider(),
         "ai_calls_today": ai_usage.calls_today(conn),
     }
+
+
+def forecast_values(conn: sqlite3.Connection) -> dict:
+    """Sensory grupy 'Prognozy i rekomendacja': najnowsza prognoza per
+    horyzont (state=cena, attrs=przedział+pewność), historyczna trafność
+    (MAPE-bazowana), najnowszy briefing dzienny i rekomendacja AI."""
+    out: dict = {}
+    for horizon in ("1w", "1m", "12m"):
+        row = conn.execute(
+            "SELECT predicted_price, ci_low, ci_high, confidence, model, created_at "
+            "FROM forecasts WHERE horizon = ? ORDER BY created_at DESC LIMIT 1", (horizon,)
+        ).fetchone()
+        slug = f"forecast_{horizon}_eur"
+        out[slug] = row["predicted_price"] if row else None
+        out[f"{slug}_attrs"] = {
+            "ci_low": row["ci_low"], "ci_high": row["ci_high"], "confidence": row["confidence"],
+            "model": row["model"], "generated_at": row["created_at"],
+        } if row else {}
+
+    out["forecast_accuracy_pct"] = forecastsm.accuracy_pct(conn)
+
+    briefing = conn.execute(
+        "SELECT * FROM briefings ORDER BY generated_at DESC LIMIT 1"
+    ).fetchone()
+    if briefing:
+        date_label = briefing["generated_at"][:10]
+        out["daily_briefing"] = f"{date_label} · {briefing['verdict'] or ''}".rstrip(" ·")
+        out["daily_briefing_attrs"] = {
+            "text": briefing["text"], "tts_text": briefing["tts_text"],
+            "sentiment_avg": briefing["sentiment_avg"], "news_count": briefing["news_count"],
+            "verdict": briefing["verdict"],
+            "key_risks": json.loads(briefing["key_risks"]) if briefing["key_risks"] else [],
+            "model": briefing["model"], "generated_at": briefing["generated_at"],
+        }
+        out["ai_recommendation"] = briefing["recommendation"]
+        out["ai_recommendation_attrs"] = {
+            "reason_pl": briefing["recommendation_reason_pl"],
+            "confidence": briefing["recommendation_confidence"],
+            "disclaimer": DISCLAIMER,
+        }
+    else:
+        out["daily_briefing"] = None
+        out["daily_briefing_attrs"] = {}
+        out["ai_recommendation"] = None
+        out["ai_recommendation_attrs"] = {}
+    return out

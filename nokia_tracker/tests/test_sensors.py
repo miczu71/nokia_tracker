@@ -241,3 +241,44 @@ def test_ai_values_provider_active_and_calls_today(conn, monkeypatch):
     v = sensors.ai_values(conn)
     assert v["ai_provider_active"] == "gemini"
     assert v["ai_calls_today"] == 7
+
+
+# --- forecast_values ---
+
+def test_forecast_values_no_data_returns_empty_defaults(conn):
+    v = sensors.forecast_values(conn)
+    assert v["forecast_1w_eur"] is None
+    assert v["forecast_1w_eur_attrs"] == {}
+    assert v["forecast_accuracy_pct"] is None
+    assert v["daily_briefing"] is None
+    assert v["daily_briefing_attrs"] == {}
+    assert v["ai_recommendation"] is None
+    assert v["ai_recommendation_attrs"] == {}
+
+
+def test_forecast_values_picks_latest_forecast_per_horizon(conn):
+    from nokia_tracker import forecasts as forecastsm
+    forecastsm.record_forecast(conn, "1w", "2026-08-03", 9.0, 9.2, 8.8, 9.6, 0.6, "local")
+    forecastsm.record_forecast(conn, "1w", "2026-08-04", 9.1, 9.3, 8.9, 9.7, 0.65, "gemini")
+    v = sensors.forecast_values(conn)
+    assert v["forecast_1w_eur"] == 9.3  # nowsza (created_at DESC) wygrywa
+    assert v["forecast_1w_eur_attrs"]["model"] == "gemini"
+    assert v["forecast_1w_eur_attrs"]["ci_low"] == 8.9
+
+
+def test_forecast_values_daily_briefing_and_recommendation(conn):
+    conn.execute(
+        "INSERT INTO briefings (generated_at, text, tts_text, sentiment_avg, news_count, "
+        "verdict, key_risks, recommendation, recommendation_reason_pl, "
+        "recommendation_confidence, model) VALUES "
+        "('2026-07-27T18:00:00+00:00', 'Pełny tekst.', 'Tekst TTS.', 0.3, 5, "
+        "'trend rynkowy', '[\"ryzyko A\"]', 'trzymaj', 'Uzasadnienie.', 0.6, 'local')")
+    conn.commit()
+    v = sensors.forecast_values(conn)
+    assert v["daily_briefing"] == "2026-07-27 · trend rynkowy"
+    assert v["daily_briefing_attrs"]["text"] == "Pełny tekst."
+    assert v["daily_briefing_attrs"]["key_risks"] == ["ryzyko A"]
+    assert v["ai_recommendation"] == "trzymaj"
+    assert v["ai_recommendation_attrs"]["reason_pl"] == "Uzasadnienie."
+    assert v["ai_recommendation_attrs"]["confidence"] == 0.6
+    assert "edukacyjna" in v["ai_recommendation_attrs"]["disclaimer"]

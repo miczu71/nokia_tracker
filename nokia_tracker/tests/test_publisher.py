@@ -99,3 +99,23 @@ def test_render_attrs_only_entities_with_has_attrs():
 
 def test_render_attrs_missing_key_omitted():
     assert render_attrs({}) == {}
+
+
+def test_discovery_payload_forecast_1w_has_json_attributes_topic():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/forecast_1w_eur/config"]
+    assert p["json_attributes_topic"] == "nokia_tracker/sensors/forecast_1w_eur/attrs"
+    assert p["unit_of_measurement"] == "EUR"
+
+
+def test_discovery_payload_ai_recommendation_has_json_attributes_topic():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/ai_recommendation/config"]
+    assert p["json_attributes_topic"] == "nokia_tracker/sensors/ai_recommendation/attrs"
+
+
+def test_discovery_payload_forecast_accuracy_pct_no_attributes_topic():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/forecast_accuracy_pct/config"]
+    assert "json_attributes_topic" not in p
+    assert p["unit_of_measurement"] == "%"

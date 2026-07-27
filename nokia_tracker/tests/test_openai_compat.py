@@ -87,6 +87,26 @@ def test_call_raises_after_502_retries_exhausted(monkeypatch):
     assert len(calls) == 3  # domyślne max_attempts w ratelimit.backoff_retry
 
 
+def test_list_models_returns_id_and_schema_support(monkeypatch):
+    body = {"data": [
+        {"id": "gemini-3.5-flash", "supported_parameters": ["response_format"]},
+        {"id": "auto", "supported_parameters": ["temperature"]},
+    ]}
+    monkeypatch.setattr("nokia_tracker.ai.openai_compat.requests.get",
+                        lambda url, headers=None, timeout=None: _FakeResponse(200, body))
+    models = openai_compat.list_models("http://x/v1", "key")
+    assert models == [
+        {"id": "gemini-3.5-flash", "supports_schema": True},
+        {"id": "auto", "supports_schema": False},
+    ]
+
+
+def test_list_models_empty_on_error(monkeypatch):
+    monkeypatch.setattr("nokia_tracker.ai.openai_compat.requests.get",
+                        lambda url, headers=None, timeout=None: _FakeResponse(500, {}))
+    assert openai_compat.list_models("http://x/v1", "key") == []
+
+
 def test_call_raises_min_max_tokens_still_calls_with_floor(monkeypatch):
     """max_tokens<1500 nie blokuje wywołania — call() podnosi je na czas
     tego wywołania (zmierzone: poniżej progu router obcina JSON)."""

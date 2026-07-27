@@ -8,14 +8,13 @@ from __future__ import annotations
 
 import logging
 import os
-import threading
 from datetime import datetime
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
 from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
-from . import news, quotes, sensors
+from . import news, portfolio, quotes, sensors
 from . import settings as settingsm
 from .ai import scoring as ai_scoring
 from .providers import finnhub as finnhub_provider
@@ -30,13 +29,6 @@ _EURUSD_SYMBOL = "EURUSD=X"
 _ADR_SYMBOL = "NOK"
 
 logger = logging.getLogger("nokia_tracker")
-
-# Serializuje dostęp do SQLite między jobami schedulera (publish_sensors,
-# fetch_news) — na żywo złapane 'database is locked' mimo WAL+busy_timeout
-# w db.py::get_conn() (prawdopodobnie specyfika systemu plików pod /data
-# w tym środowisku Supervisora); blokada w pamięci procesu jest gwarancją
-# niezależną od zachowania locków SQLite na danym systemie plików.
-_db_lock = threading.Lock()
 
 
 def _env(name: str, default: str = "") -> str:
@@ -157,7 +149,7 @@ def main() -> None:
         Twelve Data w przyszłości). Finnhub (ADR) jest opcjonalny — bez
         klucza sensory ADR/spread po prostu zostają 'unknown', bez błędu.
         """
-        with _db_lock:
+        with dbm.WRITE_LOCK:
             c = dbm.get_conn(db_path)
             try:
                 provider = YahooQuoteProvider(c)
@@ -177,10 +169,21 @@ def main() -> None:
                     c, instrument_id, ericsson_id, omxh25_id, eurpln_id, adr_id, eurusd_id))
                 values.update(sensors.ai_values(c))
                 values.update(sensors.forecast_values(c))
+
+                cfg = settingsm.get_settings(c)
+                cost_basis_eur = cfg["position_qty"] * cfg["avg_cost_eur"]
+                dividends = sensors.dividends_values(c, cfg, cost_basis_eur)
+                position = portfolio.position_values(
+                    cfg["position_qty"], cfg["avg_cost_eur"], values.get("price_eur"),
+                    values.get("eurpln_rate"),
+                    dividends_net_total_eur=dividends["dividends_net_eur"])
+                values.update(position)
+                values.update(dividends)
+
                 mqtt_pub.publish(values)
 
                 try:
-                    alerts.check_and_fire(c, settingsm.get_settings(c), values, mqtt_pub)
+                    alerts.check_and_fire(c, cfg, values, mqtt_pub)
                 except Exception:
                     logger.exception("Sprawdzanie alertów nieudane")
             except Exception:
@@ -205,7 +208,7 @@ def main() -> None:
         Ocena AI newsów leci od razu po agregacji, na tym samym połączeniu —
         batchuje wyłącznie nieocenione (ai/scoring.py), więc drugi przebieg
         bez nowych newsów to tani no-op."""
-        with _db_lock:
+        with dbm.WRITE_LOCK:
             c = dbm.get_conn(db_path)
             try:
                 news.aggregate(c, finnhub_api_key=finnhub_api_key,
@@ -223,7 +226,7 @@ def main() -> None:
         """Codziennie o analysis_time: rozlicza dojrzałe prognozy (settle_due,
         do current_price) i — jeśli ai_recommendations_enabled — generuje
         nowe prognozy 1w/1m/12m + briefing + rekomendację (analysis.py)."""
-        with _db_lock:
+        with dbm.WRITE_LOCK:
             c = dbm.get_conn(db_path)
             try:
                 latest = quotes.latest_quote(c, instrument_id)

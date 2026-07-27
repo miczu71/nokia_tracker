@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Newsy — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head"><h1>Newsy</h1></div>
+
+{% if items %}
+<div class="table-wrap">
+  <table class="table">
+    <thead>
+      <tr><th>Data</th><th>Sentyment</th><th>Wpływ</th><th>Tytuł</th><th>Teza</th></tr>
+    </thead>
+    <tbody>
+      {% for n in items %}
+      <tr>
+        <td>{{ n.published_at[:10] if n.published_at else '—' }}</td>
+        <td>
+          {% if n.sentiment is not none %}
+            <span class="sentiment {{ 'pos' if n.sentiment > 0.2 else ('neg' if n.sentiment < -0.2 else '') }}">
+              {{ '%+.2f'|format(n.sentiment) }}
+            </span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td>
+          {% if n.impact is not none %}
+            <span class="impact-dots">{{ '●' * n.impact }}</span>
+          {% else %}<span class="muted">—</span>{% endif %}
+        </td>
+        <td class="wrap"><a href="{{ n.url_canonical }}" target="_blank" rel="noopener">{{ n.title }}</a></td>
+        <td class="wrap muted">{{ n.thesis_pl or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="muted">Brak newsów.</p>
+{% endif %}
+
+{% endblock %}

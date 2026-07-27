@@ -46,6 +46,23 @@ def model_supports_json_schema(base_url: str, api_key: str, model: str,
         return None
 
 
+def list_models(base_url: str, api_key: str, timeout: int = 15) -> list[dict]:
+    """Lista modeli z /v1/models dla selecta w Ustawieniach — id +
+    czy_wspiera_schema, żeby UI mogło ostrzec przed wyborem 'auto'/'fusion'.
+    [] przy błędzie sieci/klucza (formularz i tak pokaże pole tekstowe)."""
+    try:
+        resp = requests.get(f"{base_url}/models", headers=_headers(api_key), timeout=timeout)
+        if resp.status_code != 200:
+            return []
+        return [
+            {"id": m.get("id"),
+             "supports_schema": "response_format" in (m.get("supported_parameters") or [])}
+            for m in resp.json().get("data", []) if m.get("id")
+        ]
+    except requests.RequestException:
+        return []
+
+
 def _headers(api_key: str) -> dict[str, str]:
     h = {"Content-Type": "application/json"}
     if api_key:

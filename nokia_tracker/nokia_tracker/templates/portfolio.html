@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Portfel — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Portfel</h1>
+  {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Stan posiadania</div>
+  <p class="muted">
+    Prosty stan posiadania (ilość + średni koszt) — pełne loty z FIFO i historią
+    nabyć dochodzą w wydaniu 0.2.0 razem z rozliczeniem podatkowym.
+  </p>
+  <form class="form" method="post" action="/portfolio">
+    <div class="row2">
+      <label>Ilość akcji
+        <input type="number" step="0.0001" name="position_qty" value="{{ cfg.position_qty }}" required>
+      </label>
+      <label>Średni koszt zakupu (EUR/akcję)
+        <input type="number" step="0.0001" name="avg_cost_eur" value="{{ cfg.avg_cost_eur }}" required>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Zapisz</button>
+    </div>
+  </form>
+</div>
+
+{% endblock %}

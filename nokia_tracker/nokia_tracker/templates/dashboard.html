@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Pulpit — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>NOKIA.HE</h1>
+  <form method="post" action="/analyze-now">
+    <button class="btn primary" type="submit">🔄 Przeanalizuj teraz</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="grid stats">
+    <div class="stat">
+      <span class="stat-label">Kurs</span>
+      <span class="stat-value">{{ '%.3f'|format(values.price_eur) if values.price_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Zmiana dziś</span>
+      <span class="stat-value {{ 'up' if (values.change_pct_day or 0) > 0 else 'down' }}">
+        {{ '%+.2f'|format(values.change_pct_day) if values.change_pct_day is not none else '—' }}
+        <span class="stat-unit">%</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Sesja</span>
+      <span class="stat-value">{{ values.market_state or '—' }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Trend</span>
+      <span class="stat-value">{{ values.trend or '—' }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">RSI 14</span>
+      <span class="stat-value">{{ '%.1f'|format(values.rsi_14) if values.rsi_14 is not none else '—' }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Werdykt</span>
+      <span class="stat-value" style="font-size:16px">{{ values.alpha_verdict or '—' }}</span>
+    </div>
+  </div>
+  <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
+</div>
+
+<div class="card">
+  <div class="card-title">Portfel</div>
+  <div class="grid stats">
+    <div class="stat">
+      <span class="stat-label">Ilość</span>
+      <span class="stat-value">{{ position.position_qty }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Wartość rynkowa</span>
+      <span class="stat-value">
+        {{ '%.0f'|format(position.market_value_eur) if position.market_value_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Niezrealizowany P&L</span>
+      <span class="stat-value {{ 'up' if (position.unrealized_pnl_eur or 0) > 0 else 'down' }}">
+        {{ '%+.0f'|format(position.unrealized_pnl_eur) if position.unrealized_pnl_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Całkowity zwrot</span>
+      <span class="stat-value {{ 'up' if (position.total_return_pct or 0) > 0 else 'down' }}">
+        {{ '%+.1f'|format(position.total_return_pct) if position.total_return_pct is not none else '—' }}
+        <span class="stat-unit">%</span></span>
+    </div>
+  </div>
+  <p class="muted">Dywidendy netto: {{ '%.0f'|format(dividends.dividends_net_eur) }} EUR ·
+    <a href="/dividends">szczegóły</a></p>
+  <a class="btn small" href="/portfolio">Edytuj stan posiadania</a>
+</div>
+
+<div class="card">
+  <div class="card-title">Sentyment i briefing</div>
+  <p>
+    Sentyment 24h:
+    <strong class="sentiment {{ 'pos' if (values.sentiment_score or 0) > 0.2 else ('neg' if (values.sentiment_score or 0) < -0.2 else '') }}">
+      {{ '%+.2f'|format(values.sentiment_score) if values.sentiment_score is not none else '—' }}
+      ({{ values.sentiment_label or 'brak danych' }})
+    </strong>
+    · {{ values.news_count_24h or 0 }} artykułów w 24h
+  </p>
+  {% if values.daily_briefing_attrs and values.daily_briefing_attrs.text %}
+    <p>{{ values.daily_briefing_attrs.text }}</p>
+    {% if values.daily_briefing_attrs.key_risks %}
+      <p class="muted">Ryzyka:
+        {% for r in values.daily_briefing_attrs.key_risks %}⚠️ {{ r }}{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="muted">Brak jeszcze wygenerowanego briefingu — kliknij „Przeanalizuj teraz” powyżej.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Rekomendacja AI</div>
+  {% if values.ai_recommendation %}
+    <p>
+      <span class="badge rec-{{ values.ai_recommendation }}">{{ values.ai_recommendation|upper }}</span>
+      {{ values.ai_recommendation_attrs.reason_pl or '' }}
+    </p>
+    <p class="disclaimer">⚠️ {{ values.ai_recommendation_attrs.disclaimer }}</p>
+  {% else %}
+    <p class="muted">Brak jeszcze rekomendacji.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Prognozy</div>
+  <div class="row3">
+    <div class="stat">
+      <span class="stat-label">1 tydzień</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(values.forecast_1w_eur) if values.forecast_1w_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">1 miesiąc</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(values.forecast_1m_eur) if values.forecast_1m_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">12 miesięcy</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(values.forecast_12m_eur) if values.forecast_12m_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+  </div>
+  <p class="muted">Trafność historyczna:
+    {{ '%.1f'|format(values.forecast_accuracy_pct) if values.forecast_accuracy_pct is not none else 'brak danych' }}
+    {% if values.forecast_accuracy_pct is not none %}%{% endif %}
+    · <a href="/forecasts">historia prognoz</a>
+  </p>
+</div>
+
+{% if alerts %}
+<div class="card">
+  <div class="card-title">Ostatnie alerty</div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Kiedy</th><th>Typ</th><th>Tytuł</th></tr></thead>
+      <tbody>
+        {% for a in alerts %}
+        <tr><td>{{ a.fired_at[:16] }}</td><td>{{ a.kind }}</td><td class="wrap">{{ a.title }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>NT.initPriceChart("price-chart", {{ chart_closes_json|safe }});</script>
+{% endblock %}

@@ -282,3 +282,48 @@ def test_forecast_values_daily_briefing_and_recommendation(conn):
     assert v["ai_recommendation_attrs"]["reason_pl"] == "Uzasadnienie."
     assert v["ai_recommendation_attrs"]["confidence"] == 0.6
     assert "edukacyjna" in v["ai_recommendation_attrs"]["disclaimer"]
+
+
+# --- dividends_values ---
+
+_TAX_CFG = {"finnish_withholding_pct": 35.0, "treaty_withholding_pct": 15.0,
+           "pl_capital_gains_tax_pct": 19.0}
+
+
+def _insert_dividend(conn, gross_eur, withholding_pct=None, pay_date="2026-06-15"):
+    conn.execute(
+        "INSERT INTO dividends (pay_date, gross_eur, withholding_pct) VALUES (?, ?, ?)",
+        (pay_date, gross_eur, withholding_pct))
+    conn.commit()
+
+
+def test_dividends_values_no_rows_all_zero(conn):
+    v = sensors.dividends_values(conn, _TAX_CFG, cost_basis_eur=800.0)
+    assert v["dividends_gross_eur"] == 0.0
+    assert v["dividends_net_eur"] == 0.0
+    assert v["dividend_yield_on_cost_pct"] == 0.0
+
+
+def test_dividends_values_matches_blueprint_example(conn):
+    _insert_dividend(conn, 100.0, withholding_pct=35.0)
+    v = sensors.dividends_values(conn, _TAX_CFG, cost_basis_eur=None)
+    assert v["dividends_gross_eur"] == pytest.approx(100.0)
+    assert v["dividends_net_eur"] == pytest.approx(65.0)
+    assert v["withholding_paid_eur"] == pytest.approx(35.0)
+    assert v["pl_tax_due_eur"] == pytest.approx(4.0)
+    assert v["reclaimable_from_finland_eur"] == pytest.approx(20.0)
+    assert v["dividend_yield_on_cost_pct"] is None  # brak cost_basis -> brak yieldu
+
+
+def test_dividends_values_sums_multiple_rows(conn):
+    _insert_dividend(conn, 100.0, withholding_pct=35.0, pay_date="2026-01-15")
+    _insert_dividend(conn, 50.0, withholding_pct=35.0, pay_date="2026-06-15")
+    v = sensors.dividends_values(conn, _TAX_CFG, cost_basis_eur=800.0)
+    assert v["dividends_gross_eur"] == pytest.approx(150.0)
+    assert v["dividend_yield_on_cost_pct"] == pytest.approx(150.0 / 800.0 * 100)
+
+
+def test_dividends_values_missing_withholding_pct_uses_settings_default(conn):
+    _insert_dividend(conn, 100.0, withholding_pct=None)
+    v = sensors.dividends_values(conn, _TAX_CFG, cost_basis_eur=None)
+    assert v["withholding_paid_eur"] == pytest.approx(35.0)  # domyślne 35% z ustawień

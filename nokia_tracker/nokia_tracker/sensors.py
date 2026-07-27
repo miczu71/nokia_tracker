@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from . import forecasts as forecastsm
 from . import indicators as ind
 from . import market, quotes
+from . import tax as taxm
 from .ai import provider as ai_provider
 from .ai import usage as ai_usage
 from .ai.prompts import DISCLAIMER
@@ -231,3 +232,38 @@ def forecast_values(conn: sqlite3.Connection) -> dict:
         out["ai_recommendation"] = None
         out["ai_recommendation_attrs"] = {}
     return out
+
+
+def dividends_values(conn: sqlite3.Connection, cfg: dict, cost_basis_eur: float | None) -> dict:
+    """Sensory grupy 'Dywidendy i podatki' — suma po wszystkich zarejestrowanych
+    dywidendach (formularz web UI, krok 9). Kalkulator ORIENTACYJNY na
+    bieżących ustawieniach procentowych — przelicza tax.compute_dividend_tax()
+    per wiersz z zapisanego gross_eur/withholding_pct (jak faktycznie pobrano
+    u źródła) i AKTUALNYCH treaty/Belka z ustawień, nie z zamrożonego kursu
+    NBP D-1 wymaganego przez pełne rozliczenie PIT-38 (dochodzi w kroku 11)."""
+    rows = conn.execute(
+        "SELECT gross_eur, withholding_pct FROM dividends ORDER BY pay_date"
+    ).fetchall()
+    gross = net = withheld = pl_due = reclaimable = 0.0
+    for r in rows:
+        withholding_pct = r["withholding_pct"]
+        if withholding_pct is None:
+            withholding_pct = cfg["finnish_withholding_pct"]
+        t = taxm.compute_dividend_tax(
+            r["gross_eur"], withholding_pct,
+            cfg["treaty_withholding_pct"], cfg["pl_capital_gains_tax_pct"])
+        gross += r["gross_eur"]
+        net += t["net_received_eur"]
+        withheld += t["withholding_paid_eur"]
+        pl_due += t["pl_tax_due_eur"]
+        reclaimable += t["reclaimable_from_finland_eur"]
+
+    return {
+        "dividends_gross_eur": gross,
+        "dividends_net_eur": net,
+        "withholding_paid_eur": withheld,
+        "pl_tax_due_eur": pl_due,
+        "reclaimable_from_finland_eur": reclaimable,
+        "dividend_yield_on_cost_pct": (gross / cost_basis_eur * 100
+                                       if cost_basis_eur else None),
+    }

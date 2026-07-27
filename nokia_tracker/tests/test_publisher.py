@@ -129,3 +129,34 @@ def test_discovery_payload_forecast_accuracy_pct_no_attributes_topic():
     p = payloads["homeassistant/sensor/nokia_tracker/forecast_accuracy_pct/config"]
     assert "json_attributes_topic" not in p
     assert p["unit_of_measurement"] == "%"
+
+
+def test_discovery_payload_market_value_eur_is_monetary_total():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/market_value_eur/config"]
+    assert p["device_class"] == "monetary"
+    assert p["state_class"] == "total"
+    assert p["unit_of_measurement"] == "EUR"
+
+
+def test_discovery_payload_avg_cost_eur_not_monetary():
+    # avg_cost_eur to CENA per akcję (jak price_eur) — measurement, bez
+    # device_class, nie 'wartość portfela' (BLUEPRINT §2 pułapka #2).
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/avg_cost_eur/config"]
+    assert "device_class" not in p
+    assert p["state_class"] == "measurement"
+
+
+def test_discovery_payload_unrealized_pnl_pct_not_monetary():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/unrealized_pnl_pct/config"]
+    assert "device_class" not in p
+    assert p["unit_of_measurement"] == "%"
+
+
+def test_discovery_payload_reclaimable_from_finland_eur_monetary_total():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/reclaimable_from_finland_eur/config"]
+    assert p["device_class"] == "monetary"
+    assert p["state_class"] == "total"

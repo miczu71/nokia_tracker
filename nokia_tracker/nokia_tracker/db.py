@@ -10,6 +10,15 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+
+# Serializuje zapisy między jobami schedulera (main.py) i endpointami
+# zapisu web UI (web.py) — dzielony tu, nie w main.py, żeby uniknąć cyklu
+# importów (main.py importuje web.create_app, web.py importuje db). Na
+# żywo złapane 'database is locked' mimo WAL+busy_timeout w get_conn()
+# (krok 6/7) — blokada w pamięci procesu jest gwarancją niezależną od
+# zachowania locków SQLite na danym systemie plików.
+WRITE_LOCK = threading.Lock()
 
 _MIGRATIONS = [
     # v1 — schemat początkowy: rynek, AI, portfel, podatki, importy

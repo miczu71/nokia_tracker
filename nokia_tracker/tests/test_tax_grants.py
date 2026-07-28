@@ -135,3 +135,123 @@ def test_list_lti_grouped_does_not_mark_future_tranche_as_overdue(conn):
     grants.add_vest(conn, grant_id, "2027-07-05", 633.0, "lti_vest:g2:2027-07-05")
     result = grants.list_lti_grouped(conn, today="2026-07-28")
     assert result[0]["vests"][0]["overdue"] is False
+
+
+# --- reconcile_vesting (krok 14, docs/PLAN_KROK_14_vesting_reconcile.md) ---
+
+def test_reconcile_vesting_resolves_unique_exact_match(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    lot_id = taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import")
+
+    resolved = grants.reconcile_vesting(conn, today="2026-07-28")
+
+    assert resolved == 1
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "vested"
+    assert vest["lot_id"] == lot_id
+
+
+def test_reconcile_vesting_does_not_resolve_when_two_vests_same_quantity(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    grants.add_vest(conn, grant_id, "2024-08-01", 7.33, "espp_vest:y")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import")
+
+    resolved = grants.reconcile_vesting(conn, today="2026-07-28")
+
+    assert resolved == 0
+    rows = conn.execute("SELECT * FROM vests WHERE status = 'pending'").fetchall()
+    assert len(rows) == 2
+
+
+def test_reconcile_vesting_does_not_resolve_when_two_unlinked_lots_same_quantity(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import",
+                    natural_key="other_lot")
+
+    resolved = grants.reconcile_vesting(conn, today="2026-07-28")
+
+    assert resolved == 0
+    vest = conn.execute("SELECT * FROM vests WHERE natural_key = 'espp_vest:x'").fetchone()
+    assert vest["status"] == "pending"
+
+
+def test_reconcile_vesting_does_not_resolve_future_vest_date(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g1")
+    vest_id = grants.add_vest(conn, grant_id, "2027-07-05", 633.0, "lti_vest:g1")
+    taxlots.add_lot(conn, "2026-07-09", "lti", 633.0, 10.22, source="pdf_import")
+
+    resolved = grants.reconcile_vesting(conn, today="2026-07-28")
+
+    assert resolved == 0
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "pending"
+
+
+def test_reconcile_vesting_is_idempotent_on_already_vested(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "lti", "2023-07-06", None, "lti_grant:g1")
+    grants.add_vest(conn, grant_id, "2026-07-06", 2100.0, "lti_vest:g1")
+    taxlots.add_lot(conn, "2026-07-09", "lti", 2100.0, 10.22, source="pdf_import")
+
+    first = grants.reconcile_vesting(conn, today="2026-07-28")
+    second = grants.reconcile_vesting(conn, today="2026-07-28")
+
+    assert first == 1
+    assert second == 0
+
+
+# --- due_for_reminder / mark_reminder_sent (krok 14) ---
+
+def test_due_for_reminder_returns_vest_within_window(conn):
+    grant_id = grants.add_grant(conn, "espp", "2026-04-27", 17.37, "espp_grant:x")
+    grants.add_vest(conn, grant_id, "2026-08-01", 17.37, "espp_vest:x")
+    due = grants.due_for_reminder(conn, vest_reminder_days=7, today="2026-07-28")
+    assert len(due) == 1
+    assert due[0]["vest_date"] == "2026-08-01"
+    assert due[0]["program"] == "espp"
+
+
+def test_due_for_reminder_excludes_vest_too_far_in_future(conn):
+    grant_id = grants.add_grant(conn, "espp", "2026-04-27", 17.37, "espp_grant:x")
+    grants.add_vest(conn, grant_id, "2026-12-01", 17.37, "espp_vest:x")
+    due = grants.due_for_reminder(conn, vest_reminder_days=7, today="2026-07-28")
+    assert due == []
+
+
+def test_due_for_reminder_excludes_vest_already_in_the_past(conn):
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    due = grants.due_for_reminder(conn, vest_reminder_days=7, today="2026-07-28")
+    assert due == []
+
+
+def test_due_for_reminder_excludes_already_reminded_vest(conn):
+    grant_id = grants.add_grant(conn, "espp", "2026-04-27", 17.37, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2026-08-01", 17.37, "espp_vest:x")
+    grants.mark_reminder_sent(conn, vest_id)
+    due = grants.due_for_reminder(conn, vest_reminder_days=7, today="2026-07-28")
+    assert due == []
+
+
+def test_due_for_reminder_includes_lti_participation_description(conn):
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:2025 RS AWARD 07-JUL-2025")
+    grants.add_vest(conn, grant_id, "2026-08-01", 633.0, "lti_vest:x")
+    due = grants.due_for_reminder(conn, vest_reminder_days=7, today="2026-07-28")
+    assert len(due) == 1
+    assert due[0]["participation_description"] == "2025 RS AWARD 07-JUL-2025"
+
+
+def test_mark_reminder_sent_sets_timestamp(conn):
+    grant_id = grants.add_grant(conn, "espp", "2026-04-27", 17.37, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2026-08-01", 17.37, "espp_vest:x")
+    grants.mark_reminder_sent(conn, vest_id)
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["reminder_sent_at"] is not None

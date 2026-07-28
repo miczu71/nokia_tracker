@@ -7,7 +7,7 @@ scheduler kroku 14 (`tax/vesting.py`) — ten moduł tylko utrwala harmonogram w
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def add_grant(conn: sqlite3.Connection, program: str, grant_date: str, quantity: float,
@@ -55,6 +55,37 @@ def find_vest_by_natural_key(conn: sqlite3.Connection, natural_key: str) -> dict
     return dict(row) if row else None
 
 
+def due_for_reminder(conn: sqlite3.Connection, vest_reminder_days: int,
+                     today: str | None = None) -> list[dict]:
+    """Transze 'pending' z vest_date w oknie [dziś, dziś+vest_reminder_days], którym jeszcze
+    nie wysłano przypomnienia (krok 14, docs/PLAN_KROK_14_vesting_reconcile.md). Zwraca też
+    participation_description (LTI) do treści powiadomienia."""
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+    horizon = (datetime.strptime(today, "%Y-%m-%d")
+              + timedelta(days=vest_reminder_days)).strftime("%Y-%m-%d")
+    rows = conn.execute(
+        "SELECT v.*, g.program, g.grant_date, g.natural_key AS grant_natural_key FROM vests v "
+        "JOIN grants g ON g.id = v.grant_id "
+        "WHERE v.status = 'pending' AND v.reminder_sent_at IS NULL "
+        "AND v.vest_date BETWEEN ? AND ?", (today, horizon)).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["participation_description"] = (
+            d["grant_natural_key"].split("lti_grant:", 1)[-1]
+            if d["program"] == "lti" and d["grant_natural_key"] else None)
+        result.append(d)
+    return result
+
+
+def mark_reminder_sent(conn: sqlite3.Connection, vest_id: int) -> None:
+    conn.execute(
+        "UPDATE vests SET reminder_sent_at = ? WHERE id = ?",
+        (datetime.now().isoformat(), vest_id))
+    conn.commit()
+
+
 def list_espp(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
     """ESPP: jeden grant = jedna transza (import_statement zawsze wstawia oba 1:1).
 
@@ -77,6 +108,42 @@ def list_espp(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
         d["overdue"] = d["status"] == "pending" and d["vest_date"] < today
         result.append(d)
     return result
+
+
+_PROGRAM_TO_LOT_TYPE = {"espp": "matched", "lti": "lti"}
+
+
+def reconcile_vesting(conn: sqlite3.Connection, today: str | None = None) -> int:
+    """Dopasowuje loty `matched`/`lti` (utworzone z 'Vested Matching Shares'/Withhold Typ A,
+    krok 13.6) do transz `vests` wciąż oznaczonych 'pending' — TYLKO gdy dopasowanie po
+    (program, ilość) jest DOKŁADNE i JEDNOZNACZNE po obu stronach (dokładnie jeden nierozliczony
+    lot danego typu o tej ilości I dokładnie jedna pasująca oczekująca transza). W przeciwnym
+    razie transza zostaje 'pending' — uczciwie, bo nie potrafimy tego udowodnić z danych PDF
+    (część historycznych dopasowań ESPP sprzed 2022 nigdy nie pojawia się w naszym harmonogramie,
+    więc ich saldo nigdy się nie dopasuje - to jest OK, nie próbujemy zgadywać, patrz
+    docs/PLAN_KROK_14_vesting_reconcile.md). Zwraca liczbę rozwiązanych transz."""
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+    resolved = 0
+    for program, lot_type in _PROGRAM_TO_LOT_TYPE.items():
+        pending_vests = conn.execute(
+            "SELECT v.* FROM vests v JOIN grants g ON g.id = v.grant_id "
+            "WHERE g.program = ? AND v.status = 'pending' AND v.vest_date <= ?",
+            (program, today)).fetchall()
+        unlinked_lots = conn.execute(
+            "SELECT * FROM lots WHERE lot_type = ? AND id NOT IN "
+            "(SELECT lot_id FROM vests WHERE lot_id IS NOT NULL)", (lot_type,)).fetchall()
+        for vest in pending_vests:
+            matches = [l for l in unlinked_lots if abs(l["quantity"] - vest["quantity"]) < 1e-9]
+            vest_matches = [v for v in pending_vests
+                            if abs(v["quantity"] - vest["quantity"]) < 1e-9]
+            if len(matches) == 1 and len(vest_matches) == 1:
+                conn.execute(
+                    "UPDATE vests SET status = 'vested', lot_id = ? WHERE id = ?",
+                    (matches[0]["id"], vest["id"]))
+                resolved += 1
+    conn.commit()
+    return resolved
 
 
 def list_lti_grouped(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:

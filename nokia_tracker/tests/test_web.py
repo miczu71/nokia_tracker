@@ -292,6 +292,42 @@ def test_imports_upload_calls_import_statement_and_redirects(client, monkeypatch
     assert calls[0][0] == "wyciag.pdf"
 
 
+def test_imports_upload_reconciles_vesting_after_import(tmp_path, monkeypatch):
+    # Krok 14: /imports/upload musi wywołać reconcile_vesting() zaraz po
+    # import_statement(), żeby /grants pokazywało rozwiązaną transzę bez
+    # dodatkowego requestu (docs/PLAN_KROK_14_vesting_reconcile.md).
+    from io import BytesIO
+
+    from nokia_tracker.importers import computershare_pdf
+    from nokia_tracker.tax import grants as grantsm
+    from nokia_tracker.tax import lots as taxlots
+
+    db_path = str(tmp_path / "reconcile.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    grant_id = grantsm.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    vest_id = grantsm.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import")
+    conn.close()
+
+    monkeypatch.setattr(
+        computershare_pdf, "import_statement",
+        lambda conn, data, filename, cfg=None: {
+            "import_id": 1, "rows_inserted": 0, "rows_unchanged": 0, "rows_conflict": 0})
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        resp = c.post("/imports/upload", data={
+            "pdf_file": (BytesIO(b"%PDF-fake-content"), "wyciag.pdf"),
+        }, content_type="multipart/form-data")
+        assert resp.status_code == 302
+
+    conn2 = dbm.get_conn(db_path)
+    vest = conn2.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "vested"
+    conn2.close()
+
+
 def test_imports_upload_without_file_redirects_without_calling_import(client, monkeypatch):
     from nokia_tracker.importers import computershare_pdf
 

@@ -161,6 +161,39 @@ def test_import_all_five_real_files_covers_the_784_share_sale(conn, monkeypatch)
     assert sale_id is not None
 
 
+def test_reconcile_vesting_resolves_exactly_the_provable_tranches(conn, monkeypatch):
+    """Krok 14 (docs/PLAN_KROK_14_vesting_reconcile.md): po pełnym imporcie 5 realnych plików,
+    reconcile_vesting() musi rozwiązać DOKŁADNIE te transze, dla których dopasowanie ilości
+    jest jednoznaczne (7.33 i 33.36 z ESPP Matching Shares, 634 i 2100 z LTI RS Award) —
+    24.42/29.24/28.99/17.37 (ESPP) i 633/633 (LTI 2027/2028) muszą zostać 'pending', bo albo
+    nie mają dokładnego odpowiednika w saldzie (24.42), albo ich data jeszcze nie nadeszła."""
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.30, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.30, "stub"))
+
+    for pdf_path in _pdf_files():
+        cp.import_statement(conn, pdf_path.read_bytes(), pdf_path.name)
+
+    from nokia_tracker.tax import grants as grantsm
+    resolved = grantsm.reconcile_vesting(conn, today="2026-07-28")
+    assert resolved == 4
+
+    vested_qty = {
+        r["quantity"] for r in conn.execute(
+            "SELECT quantity FROM vests WHERE status = 'vested'").fetchall()
+    }
+    assert vested_qty == {7.33, 33.36, 634.0, 2100.0}
+
+    pending_rows = conn.execute(
+        "SELECT quantity FROM vests WHERE status = 'pending'").fetchall()
+    still_pending_qty = [r["quantity"] for r in pending_rows]
+    # 633.0 występuje DWA razy (transze LTI 2027 i 2028, obie wciąż w przyszłości)
+    assert sorted(still_pending_qty) == sorted([24.42, 29.24, 28.99, 17.37, 633.0, 633.0])
+
+
 def test_import_statement_full_pipeline_on_real_files_reimport_gives_zero_inserted(conn, monkeypatch):
     """Pełny pipeline (BLUEPRINT §5 DoD kroku 13): import_statement() na realnym pliku
     parsuje bez błędów i zapisuje do bazy; ponowny import TEGO SAMEGO pliku daje

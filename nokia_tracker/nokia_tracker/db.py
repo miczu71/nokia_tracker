@@ -212,6 +212,10 @@ _MIGRATIONS = [
     );
     CREATE INDEX idx_alerts_kind_fired ON alerts_log(kind, fired_at);
     """,
+    # v2 — krok 14: przypomnienia o vestingu (docs/PLAN_KROK_14_vesting_reconcile.md)
+    """
+    ALTER TABLE vests ADD COLUMN reminder_sent_at TEXT;
+    """,
 ]
 
 

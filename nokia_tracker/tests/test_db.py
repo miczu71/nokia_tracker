@@ -22,7 +22,7 @@ def test_migrate_creates_all_tables(conn):
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 1
+    assert version == 2  # v2: krok 14 - vests.reminder_sent_at
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):
@@ -47,6 +47,13 @@ def test_lots_lot_type_check_constraint(conn):
         conn.execute(
             "INSERT INTO lots (acquired_date, lot_type, quantity, price_eur) "
             "VALUES ('2026-01-01', 'nieznany_typ', 1.0, 1.0)")
+
+
+def test_vests_has_reminder_sent_at_column(conn):
+    # Krok 14 (migracja v2): kolumna do znaczenia, że przypomnienie o
+    # nadchodzącym vestingu już wysłane - żeby nie przypominać drugi raz.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(vests)").fetchall()}
+    assert "reminder_sent_at" in cols
 
 
 def test_lots_natural_key_unique(conn):

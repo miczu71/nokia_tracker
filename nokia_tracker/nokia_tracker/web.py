@@ -310,6 +310,7 @@ def create_app(db_path: str) -> Flask:
             with dbm.WRITE_LOCK:
                 report = computershare_pdf.import_statement(
                     conn, data, uploaded.filename, cfg)
+                grantsm.reconcile_vesting(conn)
             return redirect(url_for(
                 "imports_get",
                 report=f"{report['rows_inserted']}/{report['rows_unchanged']}/"

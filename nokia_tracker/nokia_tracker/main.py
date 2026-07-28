@@ -19,6 +19,7 @@ from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
 from . import news, portfolio, quotes, sensors
 from . import settings as settingsm
 from .importers import computershare_pdf
+from .tax import grants as grantsm
 from .tax import lots as taxlots
 from .ai import scoring as ai_scoring
 from .providers import avanza as avanza_provider
@@ -265,6 +266,7 @@ def main() -> None:
                     try:
                         report = computershare_pdf.import_statement(
                             c, pdf_file.read_bytes(), pdf_file.name, cfg)
+                        grantsm.reconcile_vesting(c)
                         logger.info("Auto-import %s: %s", pdf_file.name, report)
                         done_dir.mkdir(parents=True, exist_ok=True)
                         shutil.move(
@@ -289,6 +291,34 @@ def main() -> None:
                     logger.info("Backfill kursów NBP: uzupełniono %d lotów", filled)
             except Exception:
                 logger.exception("Backfill kursów NBP nieudany")
+            finally:
+                c.close()
+
+    def check_vest_reminders() -> None:
+        """Codziennie: reconciliation (loty -> transze, patrz reconcile_vesting) + przypomnienie
+        o nadchodzącym vestingu (cfg['vest_reminder_days'] przed datą, krok 14). Reconciliation
+        też wywoływane od razu po każdym imporcie (web.py/auto_import_pdf_share) — ten job to
+        siatka bezpieczeństwa, ten sam wzorzec co backfill_nbp_rates."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                resolved = grantsm.reconcile_vesting(c)
+                if resolved:
+                    logger.info("Reconciliation vestingu: rozwiązano %d transz", resolved)
+                cfg = settingsm.get_settings(c)
+                notify_service = cfg.get("notify_service", "")
+                if notify_service:
+                    for vest in grantsm.due_for_reminder(c, cfg["vest_reminder_days"]):
+                        label = (f"LTI ({vest['participation_description']})"
+                                if vest["program"] == "lti" else "ESPP (dopasowanie)")
+                        ha_client.notify(
+                            notify_service.replace(".", "/", 1),
+                            "Zbliża się vesting akcji Nokia",
+                            f"{vest['quantity']:.4f} akcji {label} — "
+                            f"data vestingu {vest['vest_date']}.")
+                        grantsm.mark_reminder_sent(c, vest["id"])
+            except Exception:
+                logger.exception("Reconciliation/przypomnienia vestingu nieudane")
             finally:
                 c.close()
 
@@ -329,6 +359,7 @@ def main() -> None:
                       next_run_time=datetime.now())
     scheduler.add_job(run_daily_analysis, "cron", hour=analysis_hour, minute=analysis_minute)
     scheduler.add_job(backfill_nbp_rates, "cron", hour=6, minute=15)
+    scheduler.add_job(check_vest_reminders, "cron", hour=6, minute=30)
     scheduler.add_job(auto_import_pdf_share, "interval", minutes=30)
     scheduler.start()
 

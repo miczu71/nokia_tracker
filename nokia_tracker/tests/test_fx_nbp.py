@@ -17,6 +17,11 @@ def nbp_range_fixture():
     return json.loads((FIXTURES / "nbp_eur_range.json").read_text())
 
 
+@pytest.fixture
+def nbp_range_fixture_oct2025():
+    return json.loads((FIXTURES / "nbp_eur_range_2025_10.json").read_text())
+
+
 class _FakeResponse:
     def __init__(self, status_code, body):
         self.status_code = status_code
@@ -89,3 +94,27 @@ def test_rate_on_or_before_other_error_raises(conn, monkeypatch):
     monkeypatch.setattr("nokia_tracker.providers.fx_nbp.requests.get", fake_get)
     with pytest.raises(QuoteProviderError):
         fx_nbp.rate_on_or_before(conn, "2026-07-27")
+
+
+def test_rate_for_event_uses_last_business_day_before_event(conn, monkeypatch, nbp_range_fixture_oct2025):
+    """Zdarzenie w poniedziałek 27.10.2025 -> kurs z piątku 24.10.2025
+    (art. 11a: ostatni dzień roboczy POPRZEDZAJĄCY zdarzenie), nie z 27.10
+    nawet gdyby NBP tego dnia publikował."""
+    monkeypatch.setattr(
+        "nokia_tracker.providers.fx_nbp.requests.get",
+        lambda url, params=None, timeout=None: _FakeResponse(200, nbp_range_fixture_oct2025))
+    result = fx_nbp.rate_for_event(conn, "2025-10-27")
+    assert result == (4.2353, "2025-10-24")
+
+
+def test_rate_for_event_window_ends_day_before_event_not_on_it(conn, monkeypatch, nbp_range_fixture_oct2025):
+    seen = {}
+
+    def fake_get(url, params=None, timeout=None):
+        seen["url"] = url
+        return _FakeResponse(200, nbp_range_fixture_oct2025)
+
+    monkeypatch.setattr("nokia_tracker.providers.fx_nbp.requests.get", fake_get)
+    fx_nbp.rate_for_event(conn, "2025-10-27")
+    assert "2025-10-26" in seen["url"]  # okno kończy się na dniu PRZED zdarzeniem
+    assert "2025-10-27" not in seen["url"]

@@ -71,3 +71,18 @@ def rate_on_or_before(conn: sqlite3.Connection, target_date: str) -> tuple[float
         (target_date, rate, effective_date))
     conn.commit()
     return rate, effective_date
+
+
+def rate_for_event(conn: sqlite3.Connection, event_date: str) -> tuple[float, str] | None:
+    """Kurs wg art. 11a ust. 1-2 ustawy o PIT: ostatni dzień roboczy
+    POPRZEDZAJĄCY dzień zdarzenia (uzyskania przychodu / poniesienia kosztu).
+
+    To jest funkcja, której powinny używać loty/sprzedaże/dywidendy (krok 12+)
+    - `rate_on_or_before()` sama w sobie zwraca kurs 'na dzień X lub wcześniej',
+    co dla X = dzień zdarzenia dawałoby o jeden dzień ZA PÓŹNO względem
+    przepisu. Sprzedaż z 27.10.2025 (poniedziałek) musi użyć kursu z
+    24.10.2025 (piątek), nie z 27.10 nawet gdyby NBP tego dnia publikował.
+    """
+    event = date.fromisoformat(event_date)
+    day_before = (event - timedelta(days=1)).isoformat()
+    return rate_on_or_before(conn, day_before)

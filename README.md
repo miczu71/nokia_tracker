@@ -10,8 +10,8 @@ i wystawia wszystko do Home Assistant przez MQTT Discovery — plus pełny web U
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.1.0** — rynek, AI, prosty portfel, web UI. Rozliczenie podatkowe PIT-38
-(0.2.0) w budowie.
+**Status:** wydanie **0.1.2** — rynek, AI, prosty portfel, web UI, odporność na niestabilne źródła
+(GDELT, router LLM). Rozliczenie podatkowe PIT-38 (0.2.0) w budowie.
 
 ## Instalacja
 
@@ -32,6 +32,18 @@ Dodatek wystawia własny interfejs na ingressie (panel „Nokia Tracker” w boc
 | **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza) |
 | **Prognozy** | Historia prognoz 1w/1m/12m vs zrealizowana cena, trafność (MAPE) |
 | **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia (0.2.0) |
+
+## Odporność na niestabilne źródła
+
+Newsy i AI ciągną z zewnętrznych usług, których dostępność nie jest gwarantowana. Od 0.1.2:
+
+- **GDELT** (`providers/news_gdelt.py`): po wyczerpaniu ponowień na HTTP 429/502/503 źródło
+  wchodzi w 6-godzinny cooldown (jeden zapis do cache HTTP w SQLite, przeżywa restart dodatku) —
+  kolejne cykle `fetch_news` pomijają je bez sięgania do sieci, aż cooldown wygaśnie samoistnie.
+  Znane błędy providera logują się jako `WARNING`, nie jako `ERROR` z tracebackiem.
+- **Łańcuch AI** (`ai/provider.py`): każde ogniwo (`local`/`gemini`/`anthropic`) ma circuit breaker
+  — po 3 kolejnych porażkach z rzędu jest pomijane przez 30 minut zamiast wywoływane (i ponawiane)
+  w każdym cyklu ocen newsów. Po 30 minutach obwód sam się zamyka i ogniwo dostaje kolejną szansę.
 
 ## Encje MQTT Discovery
 

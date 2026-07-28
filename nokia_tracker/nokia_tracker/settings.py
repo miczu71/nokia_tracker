@@ -60,7 +60,7 @@ DEFAULTS: dict[str, object] = {
     "ai_primary": "local",
     "ai_fallback": "gemini",
     "local_llm_base_url": "http://192.168.0.106:3003/v1",
-    "local_llm_model": "gemini-3.5-flash",
+    "local_llm_model": "gemini-3.1-flash-lite",
     "gemini_model": "gemini-3.1-flash-lite",
     "anthropic_model": "claude-haiku-4-5-20251001",
     "ai_max_tokens": 4000,

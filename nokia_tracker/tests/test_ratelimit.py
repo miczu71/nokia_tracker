@@ -7,8 +7,10 @@ from nokia_tracker import ratelimit
 def _reset_breaker():
     # Circuit breaker jest w pamięci procesu (współdzielony między testami)
     ratelimit._consecutive_failures.clear()
+    ratelimit._opened_at.clear()
     yield
     ratelimit._consecutive_failures.clear()
+    ratelimit._opened_at.clear()
 
 
 # --- token bucket ---
@@ -64,6 +66,27 @@ def test_success_resets_failure_count():
         ratelimit.record_failure("yahoo")
     ratelimit.record_success("yahoo")
     assert ratelimit.provider_status("yahoo") == "ok"
+
+
+def test_circuit_stays_open_before_cooldown_elapses(monkeypatch):
+    t = [1000.0]
+    monkeypatch.setattr(ratelimit.time, "monotonic", lambda: t[0])
+    for _ in range(3):
+        ratelimit.record_failure("local")
+    t[0] += ratelimit._CIRCUIT_COOLDOWN_SECONDS - 1
+    assert ratelimit.is_circuit_open("local") is True
+
+
+def test_circuit_closes_after_cooldown_elapses(monkeypatch):
+    t = [1000.0]
+    monkeypatch.setattr(ratelimit.time, "monotonic", lambda: t[0])
+    for _ in range(3):
+        ratelimit.record_failure("local")
+    assert ratelimit.is_circuit_open("local") is True
+    t[0] += ratelimit._CIRCUIT_COOLDOWN_SECONDS
+    assert ratelimit.is_circuit_open("local") is False
+    # reset licznika porażek, nie tylko zamknięcie obwodu na ten jeden odczyt
+    assert ratelimit.provider_status("local") == "ok"
 
 
 # --- backoff_retry ---

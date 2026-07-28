@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 
+from .. import ratelimit
 from . import anthropic_api, gemini, openai_compat, usage
 from .errors import AIProviderError
 
@@ -67,12 +68,17 @@ def analyze(conn: sqlite3.Connection, cfg: dict, task: str, prompt: str,
     for name in chain:
         if name == "off":
             continue
+        if ratelimit.is_circuit_open(name):
+            logger.info("AI: ogniwo '%s' w cooldownie (obwód otwarty), pomijam", name)
+            continue
         try:
             parsed, total_tokens = _call(name, cfg, prompt, schema, task, max_tokens)
         except AIProviderError as exc:
+            ratelimit.record_failure(name)
             logger.warning("AI: ogniwo '%s' nieudane (%s), próbuję kolejne", name, exc)
             last_err = exc
             continue
+        ratelimit.record_success(name)
         usage.record_call(conn, name, _model_for(name, cfg), task, total_tokens)
         _active[0] = name
         return parsed

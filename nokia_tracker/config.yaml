@@ -1,5 +1,5 @@
 name: Nokia Tracker
-version: "0.1.1"
+version: "0.1.2"
 slug: nokia_tracker
 description: >-
   Osobisty asystent inwestycyjny dla akcji Nokia (NOKIA.HE, Nasdaq Helsinki).
@@ -37,7 +37,7 @@ options:
   ai_fallback: "gemini"
   local_llm_base_url: "http://192.168.0.106:3003/v1"
   local_llm_api_key: ""
-  local_llm_model: "gemini-3.5-flash"
+  local_llm_model: "gemini-3.1-flash-lite"
   gemini_api_key: ""
   gemini_model: "gemini-3.1-flash-lite"
   anthropic_api_key: ""

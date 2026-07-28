@@ -2,6 +2,7 @@
 limit, automatyczne trzecie ogniwo anthropic (BLUEPRINT §1, krok 6)."""
 import pytest
 
+from nokia_tracker import ratelimit
 from nokia_tracker.ai import anthropic_api, gemini, openai_compat, provider
 from nokia_tracker.ai.errors import AIProviderError
 
@@ -24,8 +25,12 @@ def _cfg(**overrides):
 @pytest.fixture(autouse=True)
 def _reset_active():
     provider._active[0] = "off"
+    ratelimit._consecutive_failures.clear()
+    ratelimit._opened_at.clear()
     yield
     provider._active[0] = "off"
+    ratelimit._consecutive_failures.clear()
+    ratelimit._opened_at.clear()
 
 
 def test_analyze_uses_primary_when_it_succeeds(conn, monkeypatch):
@@ -85,3 +90,37 @@ def test_analyze_skips_fallback_none(conn, monkeypatch):
     with pytest.raises(AIProviderError):
         provider.analyze(conn, _cfg(ai_fallback="none"), "score_news", "prompt", SCHEMA, 2000)
     assert called == []  # 'none' oznacza brak fallbacku, gemini nigdy nie wywołany
+
+
+# --- circuit breaker (martwe ogniwo pomijane bez marnowania czasu na wywołanie) ---
+
+def test_analyze_skips_link_with_open_circuit(conn, monkeypatch):
+    for _ in range(3):
+        ratelimit.record_failure("local")
+    called = []
+    monkeypatch.setattr(openai_compat, "call", lambda *a, **kw: (called.append(1), ({}, 1))[1])
+    monkeypatch.setattr(gemini, "call", lambda *a, **kw: ({"ok": "gemini"}, 5))
+    result = provider.analyze(conn, _cfg(), "score_news", "prompt", SCHEMA, 2000)
+    assert result == {"ok": "gemini"}
+    assert called == []  # obwód 'local' otwarty -> openai_compat.call nigdy nie wywołane
+
+
+def test_analyze_reopens_link_after_cooldown(conn, monkeypatch):
+    t = [1000.0]
+    monkeypatch.setattr(ratelimit.time, "monotonic", lambda: t[0])
+    for _ in range(3):
+        ratelimit.record_failure("local")
+    t[0] += ratelimit._CIRCUIT_COOLDOWN_SECONDS
+    monkeypatch.setattr(openai_compat, "call", lambda *a, **kw: ({"ok": "local"}, 10))
+    result = provider.analyze(conn, _cfg(), "score_news", "prompt", SCHEMA, 2000)
+    assert result == {"ok": "local"}
+    assert provider.active_provider() == "local"
+
+
+def test_analyze_records_failure_and_success_in_breaker(conn, monkeypatch):
+    monkeypatch.setattr(openai_compat, "call",
+                        lambda *a, **kw: (_ for _ in ()).throw(AIProviderError("local down")))
+    monkeypatch.setattr(gemini, "call", lambda *a, **kw: ({"ok": "gemini"}, 5))
+    provider.analyze(conn, _cfg(), "score_news", "prompt", SCHEMA, 2000)
+    assert ratelimit.provider_status("local") == "degraded"
+    assert ratelimit.provider_status("gemini") == "ok"

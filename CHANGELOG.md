@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.1.2] - 2026-07-28
+
+Odporność na niestabilne zewnętrzne źródła po przeglądzie logów produkcyjnych 0.1.1 — dwa
+powtarzalne błędy w każdym cyklu `fetch_news` (co 30 min), żaden nie psuł danych, ale marnowały
+czas i zaśmiecały logi tracebackami.
+
+### Naprawiono — GDELT (HTTP 429) i router LLM (401/502) bez samoczynnego powrotu
+- **GDELT** (`providers/news_gdelt.py`): zmierzone empirycznie z zewnątrz add-onu — 429 to blokada
+  na poziomie IP, nie efekt zbyt szybkich ponowień (curl co 6s, powyżej deklarowanego limitu 1/5s,
+  i tak dostawał 429). Dodano cooldown: po wyczerpanych ponowieniach (429/502/503) źródło zapisuje
+  znacznik w cache HTTP (SQLite, przeżywa restart) i kolejne cykle `fetch_news` pomijają je bez
+  sięgania do sieci przez 6h, zamiast bić głową w tę samą blokadę co 30 min.
+- **`news.py::aggregate()`**: znane błędy providerów (`QuoteProviderError`) logują się teraz jako
+  `WARNING` z krótkim opisem, nie jako `ERROR` z pełnym tracebackiem — realne, nieoczekiwane błędy
+  (`logger.exception`) zostają czytelne w logach zamiast tonąć w szumie.
+- **Łańcuch AI** (`ratelimit.py` + `ai/provider.py`): istniejący circuit breaker
+  (`is_circuit_open`/`record_failure`/`record_success`) był liczony, ale nigdzie nie używany do
+  pomijania ogniw — `analyze()` wołało martwe ogniwo (router LLM zwracający naprzemiennie 401/502
+  na upstreamie mimo poprawnego klucza, zmierzone na żywo) w każdym cyklu. Teraz po 3 kolejnych
+  porażkach ogniwo jest pomijane przez 30 minut, po czym obwód sam się zamyka.
+
+### Zmieniono
+- Domyślny `local_llm_model`: `gemini-3.5-flash` → `gemini-3.1-flash-lite` — pod tym samym
+  ładunkiem (`score_news`, 15 newsów, pełny schemat) zmierzone 2,5× szybciej (4,4s vs 11s) i 2×
+  mniej tokenów (1785 vs 3885), przy tej samej jakości ocen (15/15) i innej trasie upstreamu
+  routera (mniej podatnej na obserwowane 401/502).
+
 ## [0.1.1] - 2026-07-28
 
 Poprawka błędu widocznego na żywo tuż po 0.1.0 + nowe niezależne źródło ceny.

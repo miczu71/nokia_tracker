@@ -14,7 +14,13 @@ logger = logging.getLogger(__name__)
 # restart add-onu ma dać providerowi świeżą szansę zamiast dziedziczyć
 # stan "down" sprzed restartu.
 _FAILURE_THRESHOLD = 3
+_CIRCUIT_COOLDOWN_SECONDS = 1800
 _consecutive_failures: dict[str, int] = {}
+# Znacznik czasu (time.monotonic) momentu, w którym obwód przeszedł na
+# "down" — bez tego, raz otwarty obwód nigdy by się sam nie zamknął
+# (record_success wymaga UDANEGO wywołania, a przy is_circuit_open()
+# pomijamy providera właśnie po to, żeby go nie wywoływać).
+_opened_at: dict[str, float] = {}
 
 
 def _today() -> str:
@@ -47,14 +53,18 @@ def allow(conn: sqlite3.Connection, provider: str, max_per_day: int) -> bool:
 
 def record_success(provider: str) -> None:
     _consecutive_failures[provider] = 0
+    _opened_at.pop(provider, None)
 
 
 def record_failure(provider: str) -> None:
-    _consecutive_failures[provider] = _consecutive_failures.get(provider, 0) + 1
+    n = _consecutive_failures.get(provider, 0) + 1
+    _consecutive_failures[provider] = n
+    if n >= _FAILURE_THRESHOLD and provider not in _opened_at:
+        _opened_at[provider] = time.monotonic()
 
 
 def provider_status(provider: str) -> str:
-    """'ok' | 'degraded' (1-2 porażki z rzędu) | 'down' (>=3)."""
+    """'ok' | 'degraded' (1-2 porażki z rzędu) | 'down' (>=3, w cooldownie)."""
     n = _consecutive_failures.get(provider, 0)
     if n == 0:
         return "ok"
@@ -64,7 +74,17 @@ def provider_status(provider: str) -> str:
 
 
 def is_circuit_open(provider: str) -> bool:
-    return provider_status(provider) == "down"
+    """True, gdy obwód jest 'down' i cooldown jeszcze trwa. Po
+    _CIRCUIT_COOLDOWN_SECONDS resetuje licznik porażek — providerowi
+    znów wolno spróbować (bez tego 'down' trwałoby do restartu procesu)."""
+    if provider_status(provider) != "down":
+        return False
+    opened = _opened_at.get(provider)
+    if opened is not None and time.monotonic() - opened >= _CIRCUIT_COOLDOWN_SECONDS:
+        _consecutive_failures[provider] = 0
+        _opened_at.pop(provider, None)
+        return False
+    return True
 
 
 def backoff_retry(fn, provider: str, max_attempts: int = 3, base_delay: float = 1.0,

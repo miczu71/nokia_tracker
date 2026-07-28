@@ -15,6 +15,7 @@ import sqlite3
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .providers import news_finnhub, news_gdelt, news_marketaux, news_rss
+from .providers.base import QuoteProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,9 @@ def aggregate(conn: sqlite3.Connection, finnhub_api_key: str = "",
             else:
                 logger.warning("Nieznany typ źródła newsów: %s", row["kind"])
                 continue
+        except QuoteProviderError as exc:
+            logger.warning("Źródło %d (%s) niedostępne: %s", row["id"], row["kind"], exc)
+            continue
         except Exception:
             logger.exception("Pobranie newsów ze źródła %d (%s) nieudane",
                             row["id"], row["kind"])
@@ -109,6 +113,9 @@ def aggregate(conn: sqlite3.Connection, finnhub_api_key: str = "",
             continue
         try:
             items = fetcher() or []
+        except QuoteProviderError as exc:
+            logger.warning("%s niedostępny: %s", label, exc)
+            continue
         except Exception:
             logger.exception("Pobranie newsów z %s nieudane", label)
             continue

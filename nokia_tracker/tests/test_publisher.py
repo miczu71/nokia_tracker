@@ -131,6 +131,29 @@ def test_discovery_payload_forecast_accuracy_pct_no_attributes_topic():
     assert p["unit_of_measurement"] == "%"
 
 
+def test_discovery_payload_lots_entities_present_with_object_id():
+    payloads = discovery_payloads("0.1.0")
+    for slug in ("lots_total_qty", "lots_open_count", "lots_cost_basis_pln",
+                 "realized_income_pln", "realized_tax_pln"):
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        assert key in payloads
+        assert payloads[key]["object_id"] == f"nokia_tracker_{slug}"
+        assert payloads[key]["unique_id"] == f"nokia_tracker_{slug}"
+
+
+def test_discovery_payload_lots_open_count_has_json_attributes_topic():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/lots_open_count/config"]
+    assert p["json_attributes_topic"] == "nokia_tracker/sensors/lots_open_count/attrs"
+
+
+def test_discovery_payload_lots_cost_basis_pln_is_monetary_pln():
+    payloads = discovery_payloads("0.1.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/lots_cost_basis_pln/config"]
+    assert p["unit_of_measurement"] == "PLN"
+    assert p["device_class"] == "monetary"
+
+
 def test_discovery_payload_market_value_eur_is_monetary_total():
     payloads = discovery_payloads("0.1.0")
     p = payloads["homeassistant/sensor/nokia_tracker/market_value_eur/config"]

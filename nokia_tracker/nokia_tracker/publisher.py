@@ -139,6 +139,17 @@ _ENTITIES: list[_Entity] = [
            "monetary", "total", "mdi:cash-refund"),
     _Entity("sensor", "dividend_yield_on_cost_pct", "Dividend Yield On Cost Pct", "%", None,
            "measurement", "mdi:percent-box-outline"),
+    # --- loty i FIFO (krok 12, BLUEPRINT §3a) ---
+    _Entity("sensor", "lots_total_qty", "Lots Total Qty", None, None, "measurement",
+           "mdi:layers-outline"),
+    _Entity("sensor", "lots_open_count", "Lots Open Count", None, None, "measurement",
+           "mdi:format-list-numbered", has_attrs=True),
+    _Entity("sensor", "lots_cost_basis_pln", "Lots Cost Basis PLN", "PLN", "monetary",
+           "total", "mdi:cash-multiple"),
+    _Entity("sensor", "realized_income_pln", "Realized Income PLN", "PLN", "monetary",
+           "total", "mdi:cash-check"),
+    _Entity("sensor", "realized_tax_pln", "Realized Tax PLN", "PLN", "monetary",
+           "total", "mdi:bank-outline"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

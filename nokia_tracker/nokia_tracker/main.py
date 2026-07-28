@@ -198,6 +198,7 @@ def main() -> None:
                     dividends_net_total_eur=dividends["dividends_net_eur"])
                 values.update(position)
                 values.update(dividends)
+                values.update(sensors.lots_values(c, cfg))
 
                 mqtt_pub.publish(values)
 

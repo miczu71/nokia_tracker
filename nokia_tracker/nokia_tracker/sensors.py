@@ -14,6 +14,8 @@ from . import forecasts as forecastsm
 from . import indicators as ind
 from . import market, quotes
 from . import tax as taxm
+from .tax import lots as taxlots
+from .tax import policy as taxpolicy
 from .ai import provider as ai_provider
 from .ai import usage as ai_usage
 from .ai.prompts import DISCLAIMER
@@ -266,4 +268,35 @@ def dividends_values(conn: sqlite3.Connection, cfg: dict, cost_basis_eur: float 
         "reclaimable_from_finland_eur": reclaimable,
         "dividend_yield_on_cost_pct": (gross / cost_basis_eur * 100
                                        if cost_basis_eur else None),
+    }
+
+
+def lots_values(conn: sqlite3.Connection, cfg: dict) -> dict:
+    """Sensory grupy 'Loty i FIFO' (krok 12, BLUEPRINT §3a): stan lotów
+    otwartych + dochód/podatek zrealizowany w bieżącym roku podatkowym wg
+    aktywnej polityki kosztu (`cfg['cost_basis_policy']`). Porównanie
+    wszystkich trzech polityk obok siebie jest w web UI (`/lots`), tu tylko
+    ta jedna aktywna, żeby nie mnożyć sensorów bez potrzeby."""
+    open_rows = taxlots.open_lots(conn)
+    active_policy = cfg.get("cost_basis_policy", "own_only")
+    allowed_types = taxpolicy.POLICIES.get(active_policy, {"own"})
+
+    by_type: dict[str, float] = {}
+    cost_basis_pln = 0.0
+    for r in open_rows:
+        by_type[r["lot_type"]] = by_type.get(r["lot_type"], 0.0) + r["qty_remaining"]
+        if r["lot_type"] in allowed_types and r["cost_pln"] is not None and r["quantity"]:
+            cost_basis_pln += r["cost_pln"] / r["quantity"] * r["qty_remaining"]
+
+    tax_year = cfg.get("tax_year") or datetime.now().year
+    policies_result = taxpolicy.compute_all_policies(conn, cfg, year=tax_year)
+    active = policies_result.get(active_policy, policies_result["own_only"])
+
+    return {
+        "lots_total_qty": sum(by_type.values()),
+        "lots_open_count": len(open_rows),
+        "lots_open_count_attrs": {"by_type": by_type},
+        "lots_cost_basis_pln": round(cost_basis_pln, 2),
+        "realized_income_pln": active["income_pln"],
+        "realized_tax_pln": active["tax_pln"],
     }

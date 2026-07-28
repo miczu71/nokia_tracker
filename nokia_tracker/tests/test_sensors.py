@@ -327,3 +327,57 @@ def test_dividends_values_missing_withholding_pct_uses_settings_default(conn):
     _insert_dividend(conn, 100.0, withholding_pct=None)
     v = sensors.dividends_values(conn, _TAX_CFG, cost_basis_eur=None)
     assert v["withholding_paid_eur"] == pytest.approx(35.0)  # domyślne 35% z ustawień
+
+
+# --- lots_values ---
+
+_LOTS_CFG = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0, "tax_year": 2024}
+
+
+@pytest.fixture(autouse=False)
+def _fake_nbp_rate_for_lots(monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+
+
+def test_lots_values_empty_db_all_zero(conn):
+    v = sensors.lots_values(conn, _LOTS_CFG)
+    assert v["lots_total_qty"] == 0.0
+    assert v["lots_open_count"] == 0
+    assert v["lots_cost_basis_pln"] == 0.0
+    assert v["realized_income_pln"] == 0.0
+    assert v["realized_tax_pln"] == 0.0
+
+
+def test_lots_values_open_lots_and_realized_sale(conn, _fake_nbp_rate_for_lots):
+    from nokia_tracker.tax import lots as taxlots
+    taxlots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    taxlots.add_lot(conn, "2024-02-10", "lti", 4, 0.0)
+    taxlots.record_sale(conn, "2024-06-01", 6, 8.0)
+
+    v = sensors.lots_values(conn, _LOTS_CFG)
+
+    # 10 own - 6 sprzedane = 4 zostaje + 4 LTI otwarte = 8 total_qty, 2 loty otwarte
+    assert v["lots_total_qty"] == pytest.approx(8.0)
+    assert v["lots_open_count"] == 2
+    # own_only: uznaje tylko koszt pozostałych 4 własnych akcji (4*5*4=80),
+    # LTI (koszt 0 EUR) nie jest uznawany w own_only mimo że jest otwarty
+    assert v["lots_cost_basis_pln"] == pytest.approx(4 * 5.0 * 4.0)
+    # sprzedano 6 z 10 własnych po 8 EUR -> revenue 6*8*4=192, cost 6*5*4=120
+    assert v["realized_income_pln"] == pytest.approx(192 - 120)
+    assert v["realized_tax_pln"] == pytest.approx((192 - 120) * 0.19, abs=0.01)
+
+
+def test_lots_values_defaults_tax_year_to_current_year_when_unset(conn, _fake_nbp_rate_for_lots, monkeypatch):
+    from datetime import datetime
+    from nokia_tracker.tax import lots as taxlots
+    fixed_now = datetime(2024, 12, 1)
+    monkeypatch.setattr("nokia_tracker.sensors.datetime", type(
+        "FixedDatetime", (), {"now": staticmethod(lambda tz=None: fixed_now)}))
+    taxlots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    taxlots.record_sale(conn, "2024-06-01", 5, 8.0)
+
+    cfg_no_year = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0, "tax_year": 0}
+    v = sensors.lots_values(conn, cfg_no_year)
+    assert v["realized_income_pln"] == pytest.approx((5 * 8.0 - 5 * 5.0) * 4.0)

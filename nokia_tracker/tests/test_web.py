@@ -21,8 +21,8 @@ def client(tmp_path):
 
 # --- smoke: każda strona GET zwraca 200 i ma no-store ---
 
-@pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/dividends", "/imports",
-                                  "/news", "/forecasts", "/settings"])
+@pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/dividends", "/grants",
+                                  "/imports", "/news", "/forecasts", "/settings"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -197,6 +197,56 @@ def test_lots_page_shows_three_policies_comparison(client, _fake_nbp_rate):
     assert "Tylko własne" in html
     assert "Własne + dywidenda" in html
     assert "Wszystkie w wartości nabycia" in html
+
+
+# --- grants (ESPP/LTI) ---
+
+def _make_grants_app(tmp_path):
+    from nokia_tracker import db as dbm
+    from nokia_tracker.tax import grants as grantsm
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "grants.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+
+    # ESPP: grant 1:1 z transzą (jak zapisuje computershare_pdf.import_statement)
+    espp_grant_id = grantsm.add_grant(
+        conn, "espp", "2026-01-06", 12.0, "espp_grant:2026-01-06:12.0", match_pct=20.0)
+    grantsm.add_vest(
+        conn, espp_grant_id, "2026-07-06", 12.0, "espp_vest:2026-01-06:2026-07-06:12.0")
+
+    # LTI: jeden grant, wiele transz (participation_description w natural_key)
+    lti_grant_id = grantsm.add_grant(
+        conn, "lti", "2025-07-07", None, "lti_grant:2025 RS AWARD 07-JUL-2025")
+    grantsm.add_vest(
+        conn, lti_grant_id, "2026-07-06", 634.0,
+        "lti_vest:2025 RS AWARD 07-JUL-2025:2026-07-06:634.0")
+    grantsm.add_vest(
+        conn, lti_grant_id, "2027-07-06", 633.0,
+        "lti_vest:2025 RS AWARD 07-JUL-2025:2027-07-06:633.0")
+    conn.close()
+
+    return create_app(db_path)
+
+
+def test_grants_page_empty_state(client):
+    resp = client.get("/grants")
+    html = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    assert "Brak grantów ESPP" in html
+    assert "Brak grantów LTI" in html
+
+
+def test_grants_page_shows_espp_and_lti_grouped_with_tranches(tmp_path):
+    app = _make_grants_app(tmp_path)
+    with app.test_client() as c:
+        html = c.get("/grants").get_data(as_text=True)
+        assert "2026-01-06" in html
+        assert "2025 RS AWARD 07-JUL-2025" in html
+        assert "634" in html
+        assert "633" in html
+        assert "1267" in html  # suma transz LTI (634+633), bo grants.quantity=NULL
 
 
 # --- imports ---

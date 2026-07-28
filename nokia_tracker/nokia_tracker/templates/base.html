@@ -18,6 +18,7 @@
     <a href="{{ url_for('dashboard') }}" {% if active == 'dashboard' %}class="active"{% endif %}>Pulpit</a>
     <a href="{{ url_for('portfolio_get') }}" {% if active == 'portfolio' %}class="active"{% endif %}>Portfel</a>
     <a href="{{ url_for('lots_get') }}" {% if active == 'lots' %}class="active"{% endif %}>Loty</a>
+    <a href="{{ url_for('grants_get') }}" {% if active == 'grants' %}class="active"{% endif %}>Granty</a>
     <a href="{{ url_for('dividends_get') }}" {% if active == 'dividends' %}class="active"{% endif %}>Dywidendy</a>
     <a href="{{ url_for('imports_get') }}" {% if active == 'imports' %}class="active"{% endif %}>Importy</a>
     <a href="{{ url_for('news_page') }}" {% if active == 'news' %}class="active"{% endif %}>Newsy</a>

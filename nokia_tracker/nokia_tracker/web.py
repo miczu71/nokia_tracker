@@ -17,6 +17,7 @@ from . import quotes, sensors
 from . import settings as settingsm
 from . import tax as taxm
 from .importers import computershare_pdf
+from .tax import grants as grantsm
 from .tax import lots as taxlots
 from .tax import policy as taxpolicy
 from .ai import openai_compat
@@ -260,6 +261,17 @@ def create_app(db_path: str) -> Flask:
                 return redirect(url_for("lots_get", sold="1"))
             except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
                 return redirect(url_for("lots_get", error=str(e)))
+        finally:
+            conn.close()
+
+    @app.get("/grants")
+    def grants_get():
+        conn = _conn()
+        try:
+            espp = grantsm.list_espp(conn)
+            lti = grantsm.list_lti_grouped(conn)
+            return render_template(
+                "grants.html", active="grants", version=__version__, espp=espp, lti=lti)
         finally:
             conn.close()
 

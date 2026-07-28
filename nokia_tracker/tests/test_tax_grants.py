@@ -63,3 +63,36 @@ def test_find_grant_by_natural_key_returns_dict_when_present(conn):
     grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
     found = grants.find_grant_by_natural_key(conn, "espp_grant:x")
     assert found["quantity"] == 29.24
+
+
+def test_list_espp_returns_grant_and_vest_joined_1to1(conn):
+    grant_id = grants.add_grant(
+        conn, "espp", "2025-10-27", 29.24, "espp_grant:2025-10-27:29.24", match_pct=20.0)
+    grants.add_vest(conn, grant_id, "2026-08-01", 29.24, "espp_vest:2025-10-27:2026-08-01:29.24")
+    rows = grants.list_espp(conn)
+    assert len(rows) == 1
+    assert rows[0]["grant_date"] == "2025-10-27"
+    assert rows[0]["vest_date"] == "2026-08-01"
+    assert rows[0]["quantity"] == 29.24
+    assert rows[0]["match_pct"] == 20.0
+
+
+def test_list_espp_empty_when_no_espp_grants(conn):
+    assert grants.list_espp(conn) == []
+
+
+def test_list_lti_grouped_sums_multiple_tranches_and_extracts_description(conn):
+    grant_id = grants.add_grant(
+        conn, "lti", "2025-07-07", None, "lti_grant:2025 RS AWARD 07-JUL-2025")
+    grants.add_vest(conn, grant_id, "2026-07-09", 634.0, "lti_vest:g:2026-07-09:634.0")
+    grants.add_vest(conn, grant_id, "2027-07-05", 633.0, "lti_vest:g:2027-07-05:633.0")
+
+    result = grants.list_lti_grouped(conn)
+    assert len(result) == 1
+    assert result[0]["participation_description"] == "2025 RS AWARD 07-JUL-2025"
+    assert result[0]["total_quantity"] == pytest.approx(1267.0)
+    assert len(result[0]["vests"]) == 2
+
+
+def test_list_lti_grouped_empty_when_no_lti_grants(conn):
+    assert grants.list_lti_grouped(conn) == []

@@ -138,6 +138,8 @@ body {
   border-radius: 8px; padding: 10px 12px; font-size: 13px;
   color: var(--ink-2); margin: 10px 0;
 }
+.disclaimer.error { border-color: var(--bad); color: var(--bad); }
+.table tr.active-policy td { background: var(--page); font-weight: 600; }
 .muted { color: var(--muted); font-size: 13px; }
 .impact-dots { color: var(--series-3); letter-spacing: 1px; }
 .sentiment.pos { color: var(--good); }

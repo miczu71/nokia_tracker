@@ -16,6 +16,8 @@ from . import portfolio as portfoliom
 from . import quotes, sensors
 from . import settings as settingsm
 from . import tax as taxm
+from .tax import lots as taxlots
+from .tax import policy as taxpolicy
 from .ai import openai_compat
 
 logger = logging.getLogger(__name__)
@@ -196,6 +198,58 @@ def create_app(db_path: str) -> Flask:
                      t["withholding_paid_eur"], t["net_received_eur"]))
                 conn.commit()
             return redirect(url_for("dividends_get", saved="1"))
+        finally:
+            conn.close()
+
+    @app.get("/lots")
+    def lots_get():
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            taxlots.backfill_missing_rates(conn)
+            rows = conn.execute(
+                "SELECT * FROM lots ORDER BY acquired_date DESC, id DESC").fetchall()
+            year = cfg.get("tax_year") or None
+            policies = taxpolicy.compute_all_policies(conn, cfg, year=year)
+            return render_template(
+                "lots.html", active="lots", version=__version__,
+                lots=[dict(r) for r in rows], policies=policies, cfg=cfg,
+                saved=request.args.get("saved") == "1",
+                sold=request.args.get("sold") == "1",
+                error=request.args.get("error"))
+        finally:
+            conn.close()
+
+    @app.post("/lots")
+    def lots_post():
+        conn = _conn()
+        try:
+            acquired_date = request.form.get("acquired_date") or ""
+            lot_type = request.form.get("lot_type") or "own"
+            quantity = float(request.form.get("quantity") or 0)
+            price_eur = float(request.form.get("price_eur") or 0)
+            fee_eur = float(request.form.get("fee_eur") or 0)
+            with dbm.WRITE_LOCK:
+                taxlots.add_lot(conn, acquired_date, lot_type, quantity, price_eur,
+                                fee_eur=fee_eur)
+            return redirect(url_for("lots_get", saved="1"))
+        finally:
+            conn.close()
+
+    @app.post("/lots/sell")
+    def lots_sell_post():
+        conn = _conn()
+        try:
+            sale_date = request.form.get("sale_date") or ""
+            quantity = float(request.form.get("sale_quantity") or 0)
+            price_eur = float(request.form.get("sale_price_eur") or 0)
+            fee_eur = float(request.form.get("sale_fee_eur") or 0)
+            try:
+                with dbm.WRITE_LOCK:
+                    taxlots.record_sale(conn, sale_date, quantity, price_eur, fee_eur=fee_eur)
+                return redirect(url_for("lots_get", sold="1"))
+            except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
+                return redirect(url_for("lots_get", error=str(e)))
         finally:
             conn.close()
 

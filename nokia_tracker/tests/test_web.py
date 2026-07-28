@@ -21,7 +21,7 @@ def client(tmp_path):
 
 # --- smoke: każda strona GET zwraca 200 i ma no-store ---
 
-@pytest.mark.parametrize("path", ["/", "/portfolio", "/dividends", "/news",
+@pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/dividends", "/news",
                                   "/forecasts", "/settings"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
@@ -60,6 +60,85 @@ def test_dashboard_reflects_saved_portfolio(client):
     resp = client.get("/")
     html = resp.get_data(as_text=True)
     assert "100.0" in html
+
+
+# --- lots ---
+
+@pytest.fixture
+def _fake_nbp_rate(monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+
+
+def test_lots_page_empty_state(client):
+    resp = client.get("/lots")
+    html = resp.get_data(as_text=True)
+    assert "Brak lotów" in html
+    assert "kalkulator pomocniczy" in html
+
+
+def test_lots_post_adds_lot_and_redirects(client, _fake_nbp_rate):
+    resp = client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    assert resp.status_code == 302
+    assert "saved=1" in resp.headers["Location"]
+
+    resp2 = client.get("/lots")
+    html = resp2.get_data(as_text=True)
+    assert "2024-01-10" in html
+    assert "10.0000" in html
+
+
+def test_lots_sell_post_consumes_fifo_and_redirects(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    resp = client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    assert resp.status_code == 302
+    assert "sold=1" in resp.headers["Location"]
+
+    resp2 = client.get("/lots")
+    html = resp2.get_data(as_text=True)
+    assert "6.0000" in html  # qty_remaining po sprzedaży 4 z 10
+
+
+def test_lots_sell_post_insufficient_quantity_redirects_with_error(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
+    })
+    resp = client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "10",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    assert resp.status_code == 302
+    assert "error=" in resp.headers["Location"]
+
+    resp2 = client.get(resp.headers["Location"])
+    assert "Brak pokrycia" in resp2.get_data(as_text=True)
+
+
+def test_lots_page_shows_three_policies_comparison(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "10",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    resp = client.get("/lots")
+    html = resp.get_data(as_text=True)
+    assert "Tylko własne" in html
+    assert "Własne + dywidenda" in html
+    assert "Wszystkie w wartości nabycia" in html
 
 
 # --- dividends ---

@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Loty — Nokia Tracker{% endblock %}
+{% block content %}
+
+{% set lot_type_labels = {'own': 'własne', 'matched': 'podarowane', 'lti': 'LTI',
+                          'dividend_drip': 'dywidenda'} %}
+{% set policy_labels = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
+                        'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
+
+<div class="page-head">
+  <h1>Loty</h1>
+  {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
+  {% if sold %}<span class="badge saved">Sprzedaż zaksięgowana</span>{% endif %}
+</div>
+
+<p class="disclaimer">
+  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Kursy NBP są zamrożone
+  na dzień roboczy poprzedzający zdarzenie (art. 11a ustawy o PIT) w momencie
+  zapisu i nigdy nie są przeliczane ponownie. Wartości potwierdź z własnym
+  rozliczeniem lub doradcą przed wpisaniem do PIT-38.
+</p>
+
+{% if error %}
+<p class="disclaimer error">⚠️ {{ error }}</p>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Trzy polityki kosztu — porównanie</div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Polityka</th><th class="num">Przychód PLN</th><th class="num">Koszt PLN</th>
+          <th class="num">Dochód PLN</th><th class="num">Podatek PLN</th>
+          <th class="num">Różnica vs aktywna</th><th>Podstawa prawna</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name, data in policies.items() %}
+        <tr {% if name == cfg.cost_basis_policy %}class="active-policy"{% endif %}>
+          <td>{{ policy_labels.get(name, name) }}
+            {% if name == cfg.cost_basis_policy %}<span class="badge saved">aktywna</span>{% endif %}
+          </td>
+          <td class="num">{{ '%.2f'|format(data.revenue_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
+          <td class="muted">{{ data.legal_basis_pl }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Dodaj lot</div>
+  <form class="form" method="post" action="{{ url_for('lots_post') }}">
+    <div class="row3">
+      <label>Data nabycia
+        <input type="date" name="acquired_date" required>
+      </label>
+      <label>Typ
+        <select name="lot_type">
+          <option value="own">własne</option>
+          <option value="matched">podarowane</option>
+          <option value="lti">LTI</option>
+          <option value="dividend_drip">dywidenda</option>
+        </select>
+      </label>
+      <label>Ilość akcji
+        <input type="number" step="0.0001" name="quantity" required>
+      </label>
+    </div>
+    <div class="row2">
+      <label>Cena (EUR/akcję)
+        <input type="number" step="0.0001" name="price_eur" required>
+      </label>
+      <label>Prowizja (EUR, opcjonalnie)
+        <input type="number" step="0.01" name="fee_eur" value="0">
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Dodaj lot</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-title">Zarejestruj sprzedaż</div>
+  <form class="form" method="post" action="{{ url_for('lots_sell_post') }}">
+    <div class="row3">
+      <label>Data sprzedaży
+        <input type="date" name="sale_date" required>
+      </label>
+      <label>Ilość akcji
+        <input type="number" step="0.0001" name="sale_quantity" required>
+      </label>
+      <label>Cena (EUR/akcję)
+        <input type="number" step="0.0001" name="sale_price_eur" required>
+      </label>
+    </div>
+    <div class="row2">
+      <label>Prowizja (EUR, opcjonalnie)
+        <input type="number" step="0.01" name="sale_fee_eur" value="0">
+      </label>
+    </div>
+    <p class="muted">
+      Loty konsumowane metodą FIFO (najstarsza data nabycia pierwsza).
+    </p>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Zarejestruj sprzedaż</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-title">Loty</div>
+  {% if lots %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Data nabycia</th><th>Typ</th><th class="num">Ilość</th>
+          <th class="num">Pozostało</th><th class="num">Cena EUR</th>
+          <th class="num">Kurs NBP</th><th class="num">Koszt PLN</th><th>Źródło</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in lots %}
+        <tr>
+          <td>{{ l.acquired_date }}</td>
+          <td>{{ lot_type_labels.get(l.lot_type, l.lot_type) }}</td>
+          <td class="num">{{ '%.4f'|format(l.quantity) }}</td>
+          <td class="num">{{ '%.4f'|format(l.qty_remaining) }}</td>
+          <td class="num">{{ '%.4f'|format(l.price_eur) }}</td>
+          <td class="num">
+            {% if l.nbp_rate is not none %}
+              {{ '%.4f'|format(l.nbp_rate) }} ({{ l.nbp_rate_date }})
+            {% else %}
+              <span class="badge">kurs do uzupełnienia</span>
+            {% endif %}
+          </td>
+          <td class="num">
+            {{ '%.2f'|format(l.cost_pln) if l.cost_pln is not none else '—' }}
+          </td>
+          <td class="muted">{{ l.source }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Brak lotów — dodaj pierwszy powyżej.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

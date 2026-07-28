@@ -16,6 +16,7 @@ from waitress import serve
 from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
 from . import news, portfolio, quotes, sensors
 from . import settings as settingsm
+from .tax import lots as taxlots
 from .ai import scoring as ai_scoring
 from .providers import avanza as avanza_provider
 from .providers import finnhub as finnhub_provider
@@ -242,6 +243,23 @@ def main() -> None:
             finally:
                 c.close()
 
+    def backfill_nbp_rates() -> None:
+        """Codziennie: uzupełnia kursy NBP lotom zapisanym, gdy NBP było
+        chwilowo niedostępne (tax/lots.py::add_lot nie blokuje zapisu na
+        brak kursu — patrz krok 12). GET /lots też to robi przy każdej
+        wizycie, ten job jest siatką bezpieczeństwa, gdyby nikt strony
+        nie odwiedził."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                filled = taxlots.backfill_missing_rates(c)
+                if filled:
+                    logger.info("Backfill kursów NBP: uzupełniono %d lotów", filled)
+            except Exception:
+                logger.exception("Backfill kursów NBP nieudany")
+            finally:
+                c.close()
+
     def run_daily_analysis() -> None:
         """Codziennie o analysis_time: rozlicza dojrzałe prognozy (settle_due,
         do current_price) i — jeśli ai_recommendations_enabled — generuje
@@ -278,6 +296,7 @@ def main() -> None:
     scheduler.add_job(fetch_news, "interval", minutes=30,
                       next_run_time=datetime.now())
     scheduler.add_job(run_daily_analysis, "cron", hour=analysis_hour, minute=analysis_minute)
+    scheduler.add_job(backfill_nbp_rates, "cron", hour=6, minute=15)
     scheduler.start()
 
     app = create_app(db_path=db_path)

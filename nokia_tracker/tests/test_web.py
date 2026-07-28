@@ -21,8 +21,8 @@ def client(tmp_path):
 
 # --- smoke: każda strona GET zwraca 200 i ma no-store ---
 
-@pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/dividends", "/news",
-                                  "/forecasts", "/settings"])
+@pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/dividends", "/imports",
+                                  "/news", "/forecasts", "/settings"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -139,6 +139,83 @@ def test_lots_page_shows_three_policies_comparison(client, _fake_nbp_rate):
     assert "Tylko własne" in html
     assert "Własne + dywidenda" in html
     assert "Wszystkie w wartości nabycia" in html
+
+
+# --- imports ---
+
+def test_imports_page_empty_state(client):
+    resp = client.get("/imports")
+    html = resp.get_data(as_text=True)
+    assert "Brak historii importów" in html
+    assert "Brak nierozwiązanych konfliktów" in html
+
+
+def test_imports_upload_calls_import_statement_and_redirects(client, monkeypatch):
+    from io import BytesIO
+
+    from nokia_tracker.importers import computershare_pdf
+
+    calls = []
+    monkeypatch.setattr(
+        computershare_pdf, "import_statement",
+        lambda conn, data, filename, cfg=None: (
+            calls.append((filename, len(data))),
+            {"import_id": 1, "rows_inserted": 5, "rows_unchanged": 2, "rows_conflict": 1})[1])
+
+    resp = client.post("/imports/upload", data={
+        "pdf_file": (BytesIO(b"%PDF-fake-content"), "wyciag.pdf"),
+    }, content_type="multipart/form-data")
+
+    assert resp.status_code == 302
+    assert "report=5%2F2%2F1" in resp.headers["Location"] or "report=5/2/1" in resp.headers["Location"]
+    assert len(calls) == 1
+    assert calls[0][0] == "wyciag.pdf"
+
+
+def test_imports_upload_without_file_redirects_without_calling_import(client, monkeypatch):
+    from nokia_tracker.importers import computershare_pdf
+
+    calls = []
+    monkeypatch.setattr(
+        computershare_pdf, "import_statement",
+        lambda *a, **kw: calls.append(1))
+
+    resp = client.post("/imports/upload", data={}, content_type="multipart/form-data")
+    assert resp.status_code == 302
+    assert len(calls) == 0
+
+
+def test_imports_conflicts_queue_shows_unresolved_and_resolve_hides_it(tmp_path):
+    from nokia_tracker import db as dbm
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "conflicts.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, period_start, period_end, as_of_date) "
+        "VALUES ('x.pdf', 'abc', '2026-01-01', '2026-07-26', '2026-07-26')")
+    import_id = conn.execute("SELECT id FROM imports").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json) VALUES (?, 'lot', 'purchase:x', '{}', '{\"quantity\": 5}')",
+        (import_id,))
+    conn.commit()
+    conflict_id = conn.execute("SELECT id FROM import_conflicts").fetchone()["id"]
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        resp = c.get("/imports")
+        assert "purchase:x" in resp.get_data(as_text=True)
+
+        resp2 = c.post(f"/imports/conflicts/{conflict_id}/resolve",
+                       data={"resolution": "wpisano ręcznie"})
+        assert resp2.status_code == 302
+
+        resp3 = c.get("/imports")
+        assert "purchase:x" not in resp3.get_data(as_text=True)
+        assert "Brak nierozwiązanych konfliktów" in resp3.get_data(as_text=True)
 
 
 # --- dividends ---

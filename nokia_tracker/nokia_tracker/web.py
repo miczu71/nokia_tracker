@@ -16,6 +16,7 @@ from . import portfolio as portfoliom
 from . import quotes, sensors
 from . import settings as settingsm
 from . import tax as taxm
+from .importers import computershare_pdf
 from .tax import lots as taxlots
 from .tax import policy as taxpolicy
 from .ai import openai_compat
@@ -250,6 +251,61 @@ def create_app(db_path: str) -> Flask:
                 return redirect(url_for("lots_get", sold="1"))
             except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
                 return redirect(url_for("lots_get", error=str(e)))
+        finally:
+            conn.close()
+
+    @app.get("/imports")
+    def imports_get():
+        conn = _conn()
+        try:
+            history = conn.execute(
+                "SELECT * FROM imports ORDER BY imported_at DESC").fetchall()
+            conflict_rows = conn.execute(
+                "SELECT * FROM import_conflicts WHERE resolved = 0 ORDER BY id DESC"
+            ).fetchall()
+            conflicts = []
+            for r in conflict_rows:
+                d = dict(r)
+                d["existing"] = json.loads(d["existing_json"]) if d["existing_json"] else {}
+                d["incoming"] = json.loads(d["incoming_json"]) if d["incoming_json"] else {}
+                conflicts.append(d)
+            return render_template(
+                "imports.html", active="imports", version=__version__,
+                history=[dict(r) for r in history], conflicts=conflicts,
+                report=request.args.get("report"))
+        finally:
+            conn.close()
+
+    @app.post("/imports/upload")
+    def imports_upload():
+        conn = _conn()
+        try:
+            uploaded = request.files.get("pdf_file")
+            if not uploaded or not uploaded.filename:
+                return redirect(url_for("imports_get"))
+            data = uploaded.read()
+            cfg = settingsm.get_settings(conn)
+            with dbm.WRITE_LOCK:
+                report = computershare_pdf.import_statement(
+                    conn, data, uploaded.filename, cfg)
+            return redirect(url_for(
+                "imports_get",
+                report=f"{report['rows_inserted']}/{report['rows_unchanged']}/"
+                       f"{report['rows_conflict']}"))
+        finally:
+            conn.close()
+
+    @app.post("/imports/conflicts/<int:conflict_id>/resolve")
+    def imports_resolve_conflict(conflict_id: int):
+        conn = _conn()
+        try:
+            resolution = request.form.get("resolution", "")
+            with dbm.WRITE_LOCK:
+                conn.execute(
+                    "UPDATE import_conflicts SET resolved = 1, resolution = ? WHERE id = ?",
+                    (resolution, conflict_id))
+                conn.commit()
+            return redirect(url_for("imports_get"))
         finally:
             conn.close()
 

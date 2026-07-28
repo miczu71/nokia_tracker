@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Importy — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Importy</h1>
+  {% if report %}<span class="badge saved">Zaimportowano (wstawione/niezmienione/konflikty): {{ report }}</span>{% endif %}
+</div>
+
+<p class="disclaimer">
+  ⚠️ Import nigdy nie nadpisuje istniejących danych po cichu. Jeśli ten sam wpis (data +
+  ilość) pojawi się z inną wartością niż już zapisana, ląduje w kolejce konfliktów poniżej
+  — Ty decydujesz, co z tym zrobić. Sekcja „Withhold-to-Cover" z prawdziwą sprzedażą
+  gotówkową (nie zerowym potwierdzeniem podatku) też zawsze trafia tutaj — silnik nigdy
+  nie księguje jej automatycznie.
+</p>
+
+<div class="card">
+  <div class="card-title">Wgraj wyciąg Computershare (PDF)</div>
+  <form class="form" method="post" action="{{ url_for('imports_upload') }}" enctype="multipart/form-data">
+    <div class="row2">
+      <label>Plik PDF
+        <input type="file" name="pdf_file" accept="application/pdf" required>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Importuj</button>
+    </div>
+  </form>
+  <p class="muted">
+    Alternatywnie: wrzuć plik do <code>/share/nokia_tracker/import/</code> — scheduler
+    importuje go automatycznie przy najbliższym cyklu (co 30 min) i przenosi do
+    <code>/share/nokia_tracker/imported/</code>.
+  </p>
+</div>
+
+<div class="card">
+  <div class="card-title">Kolejka konfliktów ({{ conflicts|length }})</div>
+  {% if conflicts %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Typ</th><th>Klucz</th><th>Zapisane</th><th>Z importu</th><th>Akcja</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in conflicts %}
+        <tr>
+          <td>{{ c.entity_type }}</td>
+          <td class="muted">{{ c.natural_key }}</td>
+          <td class="muted">{{ c.existing }}</td>
+          <td class="muted">{{ c.incoming }}</td>
+          <td>
+            <form method="post" action="{{ url_for('imports_resolve_conflict', conflict_id=c.id) }}">
+              <input type="text" name="resolution" placeholder="notatka (opcjonalnie)">
+              <button class="btn small" type="submit">Oznacz rozwiązany</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">
+    Sprzedaż typu „Withhold-to-Cover" (prawdziwa gotówka) wpisz ręcznie przez stronę
+    <a href="{{ url_for('lots_get') }}">Loty</a> → „Zarejestruj sprzedaż", dopiero potem
+    oznacz tu jako rozwiązane.
+  </p>
+  {% else %}
+  <p class="muted">Brak nierozwiązanych konfliktów.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Historia importów</div>
+  {% if history %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Plik</th><th>Okres</th><th>Stan na dzień</th><th>Wgrano</th>
+          <th class="num">Nowe</th><th class="num">Bez zmian</th><th class="num">Konflikty</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for h in history %}
+        <tr>
+          <td>{{ h.filename }}</td>
+          <td>{{ h.period_start }} — {{ h.period_end }}</td>
+          <td>{{ h.as_of_date }}</td>
+          <td class="muted">{{ h.imported_at }}</td>
+          <td class="num">{{ h.rows_inserted }}</td>
+          <td class="num">{{ h.rows_unchanged }}</td>
+          <td class="num">{{ h.rows_conflict }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Brak historii importów — wgraj pierwszy wyciąg powyżej.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 from datetime import datetime
+from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
@@ -16,6 +18,7 @@ from waitress import serve
 from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
 from . import news, portfolio, quotes, sensors
 from . import settings as settingsm
+from .importers import computershare_pdf
 from .tax import lots as taxlots
 from .ai import scoring as ai_scoring
 from .providers import avanza as avanza_provider
@@ -53,6 +56,7 @@ def main() -> None:
     logger.info("Nokia Tracker %s startuje", __version__)
 
     db_path = _env("DB_PATH", "/data/nokia_tracker.db")
+    backup_share = _env("BACKUP_SHARE", "/share/nokia_tracker")
     conn = dbm.get_conn(db_path)
     dbm.migrate(conn)
 
@@ -243,6 +247,34 @@ def main() -> None:
             finally:
                 c.close()
 
+    def auto_import_pdf_share() -> None:
+        """Skanuje <backup_share>/import/*.pdf, importuje przez
+        computershare_pdf.import_statement() i przenosi do
+        <backup_share>/imported/<timestamp>_<nazwa> (port
+        fuel_tracker/main.py::auto_import_share — try/except per plik, żeby jeden
+        zepsuty PDF nie zablokował reszty)."""
+        import_dir = Path(backup_share) / "import"
+        if not import_dir.is_dir():
+            return
+        done_dir = Path(backup_share) / "imported"
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                cfg = settingsm.get_settings(c)
+                for pdf_file in sorted(import_dir.glob("*.pdf")):
+                    try:
+                        report = computershare_pdf.import_statement(
+                            c, pdf_file.read_bytes(), pdf_file.name, cfg)
+                        logger.info("Auto-import %s: %s", pdf_file.name, report)
+                        done_dir.mkdir(parents=True, exist_ok=True)
+                        shutil.move(
+                            str(pdf_file),
+                            done_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{pdf_file.name}")
+                    except Exception:
+                        logger.exception("Auto-import %s nieudany", pdf_file.name)
+            finally:
+                c.close()
+
     def backfill_nbp_rates() -> None:
         """Codziennie: uzupełnia kursy NBP lotom zapisanym, gdy NBP było
         chwilowo niedostępne (tax/lots.py::add_lot nie blokuje zapisu na
@@ -297,6 +329,7 @@ def main() -> None:
                       next_run_time=datetime.now())
     scheduler.add_job(run_daily_analysis, "cron", hour=analysis_hour, minute=analysis_minute)
     scheduler.add_job(backfill_nbp_rates, "cron", hour=6, minute=15)
+    scheduler.add_job(auto_import_pdf_share, "interval", minutes=30)
     scheduler.start()
 
     app = create_app(db_path=db_path)

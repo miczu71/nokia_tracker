@@ -1,0 +1,235 @@
+"""Parser wyciągów Computershare „Plan Holdings Statement" (krok 13, BLUEPRINT §3a).
+
+Strategia: dopasowanie PO KSZTAŁCIE wiersza (regex na liczbę dat/wartości), nie po
+rekonstrukcji nagłówka. Zweryfikowane empirycznie na 5 realnych plikach użytkownika
+(pomiar pozycji znaków, nie zgadywanie z kolejności czytania — patrz docs/PLAN_KROK_13.md):
+nagłówki w `extraction_mode="layout"` bywają zawinięte na 3-4 linie w kolejności, która
+w tekście wypada PO wierszach danych (nie przed), a tytuły sekcji ("Purchases",
+"Withhold-to-Cover") potrafią wystąpić w dowolnym miejscu względem swoich wierszy. Każdy
+typ wiersza ma za to unikalny, stały kształt — rozpoznanie nie zależy od kontekstu wcale.
+
+Kolumny „Purchases" (potwierdzone pomiarem pozycji, nie samą kolejnością w strumieniu PDF —
+tryb `default` pypdf jest w tym mylący): Allocation Date, Contribution Date, Trade Date,
+Settlement Date, Contribution Amount (EUR), Residual Amount Previous (EUR), Fees (EUR),
+Fair Market Value (EUR), Purchase Price (EUR), Purchased Shares (ilość), Residual Amount
+finalne (EUR). `lots.acquired_date` = Trade Date (dzień faktycznego wykonania zakupu).
+
+Withhold-to-Cover ma DWA różne kształty w realnych danych:
+- Typ A (etykieta instrumentu "Nokia Share", `Net Units == Quantity`) — zero-efektowe
+  potwierdzenie odroczenia podatku (art. 24 ust. 11 ustawy o PIT).
+- Typ B (bez etykiety instrumentu, kolumny Sale Proceeds/Net proceeds w EUR) — prawdziwa,
+  gotówkowa sprzedaż. Nigdy nie księgowana automatycznie — zawsze do ręcznego potwierdzenia.
+"""
+from __future__ import annotations
+
+import re
+from datetime import datetime
+from io import BytesIO
+
+from pypdf import PdfReader
+
+# --- prymitywy liczbowe/datowe, wspólne dla wszystkich kształtów wierszy ---
+_DATE = r"\d{1,2}\s*[A-Za-z]{3}\s*\d{4}"
+# Separator tysięcy bywa spacją zwykłą ALBO cienką spacją Unicode U+2009 (zaobserwowane
+# empirycznie w realnych plikach, np. "1 036.84") — \s łapie obie.
+_NUM = r"-?\d+(?:\s\d{3})*\.\d+"              # kwota/ilość z kropką dziesiętną
+_INT = r"-?\d+(?:\s\d{3})*(?:\.\d+)?"         # jak wyżej, ale kropka opcjonalna (Withhold Typ A)
+_SEP = r"[ \t]{2,}"                           # separator kolumn: 2+ zwykłe spacje/taby (odróżnia
+                                               # od pojedynczej spacji separatora tysięcy w liczbie)
+
+
+def _date_iso(raw: str) -> str:
+    """'27 Oct 2025' / '4Feb  2026' -> '2025-10-27'. Toleruje brak spacji dzień/miesiąc."""
+    compact = re.sub(r"\s+", " ", raw.strip())
+    m = re.match(r"(\d{1,2})\s*([A-Za-z]{3})\s*(\d{4})", compact)
+    day, mon, year = m.group(1), m.group(2), m.group(3)
+    dt = datetime.strptime(f"{day} {mon} {year}", "%d %b %Y")
+    return dt.date().isoformat()
+
+
+def _num(raw: str) -> float:
+    return float(re.sub(r"\s", "", raw))
+
+
+def extract_layout_text(pdf_bytes: bytes) -> str:
+    """Tekst wszystkich stron w trybie layout (zachowuje pozycję kolumn), sklejony."""
+    reader = PdfReader(BytesIO(pdf_bytes))
+    return "\n".join(page.extract_text(extraction_mode="layout") for page in reader.pages)
+
+
+_PERIOD_RE = re.compile(rf"({_DATE})\s*-\s*({_DATE})")
+_AS_OF_RE = re.compile(rf"as of\s*({_DATE})", re.IGNORECASE)
+
+
+def parse_document_meta(text: str) -> dict:
+    """period_start/period_end (zakres wyciągu) + as_of_date (dzień wygenerowania)."""
+    period = _PERIOD_RE.search(text)
+    as_of = _AS_OF_RE.search(text)
+    return {
+        "period_start": _date_iso(period.group(1)) if period else None,
+        "period_end": _date_iso(period.group(2)) if period else None,
+        "as_of_date": _date_iso(as_of.group(1)) if as_of else None,
+    }
+
+
+# --- Purchases: 4 daty + 7 wartości (Contribution Amount, Residual Previous, Fees,
+# Fair Market Value, Purchase Price, Purchased Shares, Residual Amount finalne) ---
+_PURCHASE_RE = re.compile(
+    rf"^({_DATE}){_SEP}({_DATE}){_SEP}({_DATE}){_SEP}({_DATE}){_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM}){_SEP}({_NUM})\s*EUR\s*$"
+)
+
+
+def parse_purchases(text: str) -> list[dict]:
+    rows = []
+    for line in text.splitlines():
+        m = _PURCHASE_RE.match(line.strip())
+        if not m:
+            continue
+        g = m.groups()
+        rows.append({
+            "allocation_date": _date_iso(g[0]),
+            "contribution_date": _date_iso(g[1]),
+            "trade_date": _date_iso(g[2]),
+            "settlement_date": _date_iso(g[3]),
+            "contribution_amount_eur": _num(g[4]),
+            "residual_amount_previous_eur": _num(g[5]),
+            "fees_eur": _num(g[6]),
+            "fair_market_value_eur": _num(g[7]),
+            "purchase_price_eur": _num(g[8]),
+            "quantity": _num(g[9]),
+            "residual_amount_eur": _num(g[10]),
+        })
+    return rows
+
+
+# --- Matching Shares (ESPP): label + 3 daty (Allocation/Vesting/Available from) + qty + PLN ---
+_MATCHING_RE = re.compile(
+    rf"^Matching\s+Shares{_SEP}({_DATE}){_SEP}({_DATE}){_SEP}({_DATE}){_SEP}"
+    rf"({_NUM}){_SEP}({_NUM})\s*PLN\s*$"
+)
+
+
+def parse_matching_shares(text: str) -> list[dict]:
+    rows = []
+    for line in text.splitlines():
+        m = _MATCHING_RE.match(line.strip())
+        if not m:
+            continue
+        g = m.groups()
+        rows.append({
+            "allocation_date": _date_iso(g[0]),
+            "vesting_date": _date_iso(g[1]),
+            "available_from": _date_iso(g[2]),
+            "quantity": _num(g[3]),
+            "estimated_value_pln": _num(g[4]),
+        })
+    return rows
+
+
+# --- RS AWARD (LTI): "<rok> RS AWARD <DD-MON(TH)-RRRR>" + 3 daty + qty + PLN ---
+_RS_AWARD_RE = re.compile(
+    rf"^(\d{{4}}\s+RS\s+AWARD\s+[\d\-A-Za-z]+){_SEP}({_DATE}){_SEP}({_DATE}){_SEP}({_DATE}){_SEP}"
+    rf"({_NUM}){_SEP}({_NUM})\s*PLN\s*$"
+)
+
+
+def parse_rs_award(text: str) -> list[dict]:
+    rows = []
+    for line in text.splitlines():
+        m = _RS_AWARD_RE.match(line.strip())
+        if not m:
+            continue
+        g = m.groups()
+        rows.append({
+            "participation_description": re.sub(r"\s+", " ", g[0]).strip(),
+            "allocation_date": _date_iso(g[1]),
+            "vesting_date": _date_iso(g[2]),
+            "available_from": _date_iso(g[3]),
+            "quantity": _num(g[4]),
+            "estimated_value_pln": _num(g[5]),
+        })
+    return rows
+
+
+# --- Dividend (Reinvested): 2 daty + entitled qty + 7 wartości (Gross Dividend Payment,
+# Taxes, Fees, Dividend Reinvested, Purchase Price, Purchased shares, Residual Amount) ---
+_DIVIDEND_RE = re.compile(
+    rf"^({_DATE}){_SEP}({_DATE}){_SEP}({_NUM}){_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM}){_SEP}({_NUM})\s*EUR\s*$"
+)
+
+
+def parse_dividends(text: str) -> list[dict]:
+    rows = []
+    for line in text.splitlines():
+        m = _DIVIDEND_RE.match(line.strip())
+        if not m:
+            continue
+        g = m.groups()
+        rows.append({
+            "record_date": _date_iso(g[0]),
+            "purchase_date": _date_iso(g[1]),
+            "entitled_quantity": _num(g[2]),
+            "gross_dividend_payment_eur": _num(g[3]),
+            "taxes_eur": _num(g[4]),
+            "fees_eur": _num(g[5]),
+            "dividend_reinvested_eur": _num(g[6]),
+            "purchase_price_eur": _num(g[7]),
+            "purchased_shares": _num(g[8]),
+            "residual_amount_eur": _num(g[9]),
+        })
+    return rows
+
+
+# --- Withhold-to-Cover Typ A: data + "Nokia Share" + qty + Sale Price + Taxes + Fees + Net Units
+# (zero-efektowe potwierdzenie, Net Units == Quantity) ---
+_WITHHOLD_A_RE = re.compile(
+    rf"^({_DATE}){_SEP}Nokia\s+Share{_SEP}({_INT}){_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_INT})\s*$"
+)
+
+# --- Withhold-to-Cover Typ B: data + qty + Sale Price + Sale Proceeds + Taxes + Fees +
+# Net proceeds (prawdziwa sprzedaż gotówkowa — NIGDY nie księgowana automatycznie) ---
+_WITHHOLD_B_RE = re.compile(
+    rf"^({_DATE}){_SEP}({_INT}){_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}"
+    rf"({_NUM})\s*EUR\s*$"
+)
+
+
+def parse_withhold_to_cover(text: str) -> tuple[list[dict], list[dict]]:
+    """Zwraca (type_a_confirmations, type_b_real_sales). Typ B nigdy nie jest księgowany
+    automatycznie — wywołujący (import_statement) ma go zawsze kierować do kolejki
+    ręcznego potwierdzenia (import_conflicts)."""
+    type_a: list[dict] = []
+    type_b: list[dict] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        m = _WITHHOLD_A_RE.match(stripped)
+        if m:
+            g = m.groups()
+            type_a.append({
+                "execution_date": _date_iso(g[0]),
+                "quantity": _num(g[1]),
+                "sale_price_eur": _num(g[2]),
+                "taxes_eur": _num(g[3]),
+                "fees_eur": _num(g[4]),
+                "net_units": _num(g[5]),
+            })
+            continue
+        m = _WITHHOLD_B_RE.match(stripped)
+        if m:
+            g = m.groups()
+            type_b.append({
+                "execution_date": _date_iso(g[0]),
+                "quantity": _num(g[1]),
+                "sale_price_eur": _num(g[2]),
+                "sale_proceeds_eur": _num(g[3]),
+                "taxes_eur": _num(g[4]),
+                "fees_eur": _num(g[5]),
+                "net_proceeds_eur": _num(g[6]),
+            })
+    return type_a, type_b

@@ -281,7 +281,8 @@ def create_app(db_path: str) -> Flask:
             return render_template(
                 "imports.html", active="imports", version=__version__,
                 history=[dict(r) for r in history], conflicts=conflicts,
-                report=request.args.get("report"))
+                report=request.args.get("report"), sold=request.args.get("sold") == "1",
+                error=request.args.get("error"))
         finally:
             conn.close()
 
@@ -315,6 +316,34 @@ def create_app(db_path: str) -> Flask:
                     (resolution, conflict_id))
                 conn.commit()
             return redirect(url_for("imports_get"))
+        finally:
+            conn.close()
+
+    @app.post("/imports/conflicts/<int:conflict_id>/confirm-sale")
+    def imports_confirm_sale(conflict_id: int):
+        """Zatwierdza jednym kliknięciem sprzedaż wykrytą w PDF (Withhold-to-Cover Typ B /
+        „Sell (Shares)"), bez ręcznego przepisywania liczb do /lots/sell — czyta dane wprost
+        z `incoming_json` zapisanego przy imporcie (krok 13)."""
+        conn = _conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM import_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+            if row is None:
+                return redirect(url_for("imports_get"))
+            incoming = json.loads(row["incoming_json"])
+            try:
+                with dbm.WRITE_LOCK:
+                    sale_id = taxlots.record_sale(
+                        conn, incoming["execution_date"], incoming["quantity"],
+                        incoming["sale_price_eur"], fee_eur=incoming.get("fees_eur", 0.0))
+                    conn.execute(
+                        "UPDATE import_conflicts SET resolved = 1, resolution = ? WHERE id = ?",
+                        (f"zaksięgowano automatycznie jako sprzedaż (sale_id={sale_id})",
+                         conflict_id))
+                    conn.commit()
+                return redirect(url_for("imports_get", sold="1"))
+            except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
+                return redirect(url_for("imports_get", error=str(e)))
         finally:
             conn.close()
 

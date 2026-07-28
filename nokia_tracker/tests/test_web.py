@@ -243,6 +243,94 @@ def test_imports_upload_without_file_redirects_without_calling_import(client, mo
     assert len(calls) == 0
 
 
+def _make_withhold_conflict_app(tmp_path, monkeypatch, quantity=784.0, sale_price_eur=5.31,
+                                fees_eur=8.32, lot_quantity=1000.0):
+    from nokia_tracker import db as dbm
+    from nokia_tracker.tax import lots as taxlots
+    from nokia_tracker.web import create_app
+    import json as _json
+
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+
+    db_path = str(tmp_path / "confirm_sale.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    taxlots.add_lot(conn, "2022-01-01", "own", lot_quantity, 5.0)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, period_start, period_end, as_of_date) "
+        "VALUES ('x.pdf', 'abc', '2025-01-01', '2026-01-01', '2026-01-01')")
+    import_id = conn.execute("SELECT id FROM imports").fetchone()["id"]
+    incoming = {
+        "execution_date": "2025-10-27", "quantity": quantity, "sale_price_eur": sale_price_eur,
+        "sale_proceeds_eur": quantity * sale_price_eur, "taxes_eur": 0.0, "fees_eur": fees_eur,
+        "net_proceeds_eur": quantity * sale_price_eur - fees_eur,
+    }
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json) VALUES (?, 'withhold_to_cover_sale', 'wtc:x', '{}', ?)",
+        (import_id, _json.dumps(incoming)))
+    conn.commit()
+    conflict_id = conn.execute("SELECT id FROM import_conflicts").fetchone()["id"]
+    conn.close()
+
+    app = create_app(db_path)
+    return app, conflict_id, db_path
+
+
+def test_imports_page_shows_prefilled_sale_details_and_confirm_button(tmp_path, monkeypatch):
+    app, conflict_id, _ = _make_withhold_conflict_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/imports").get_data(as_text=True)
+        assert "784" in html
+        assert "5.31" in html
+        assert "Zatwierdź jako sprzedaż" in html
+        assert f"/imports/conflicts/{conflict_id}/confirm-sale" in html
+
+
+def test_imports_confirm_sale_books_real_sale_and_resolves_conflict(tmp_path, monkeypatch):
+    app, conflict_id, db_path = _make_withhold_conflict_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        resp = c.post(f"/imports/conflicts/{conflict_id}/confirm-sale")
+        assert resp.status_code == 302
+        assert "sold=1" in resp.headers["Location"]
+
+    from nokia_tracker import db as dbm
+    conn = dbm.get_conn(db_path)
+    conflict = conn.execute(
+        "SELECT * FROM import_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+    assert conflict["resolved"] == 1
+    assert "sale_id" in conflict["resolution"]
+    sale = conn.execute("SELECT * FROM sales").fetchone()
+    assert sale is not None
+    assert sale["quantity"] == pytest.approx(784.0)
+    assert sale["price_eur"] == pytest.approx(5.31)
+    conn.close()
+
+
+def test_imports_confirm_sale_insufficient_lots_does_not_resolve_conflict(tmp_path, monkeypatch):
+    # Lot dostępny tylko 10 szt, konflikt mówi o sprzedaży 784 - brak pokrycia.
+    app, conflict_id, db_path = _make_withhold_conflict_app(tmp_path, monkeypatch, lot_quantity=10.0)
+    with app.test_client() as c:
+        resp = c.post(f"/imports/conflicts/{conflict_id}/confirm-sale")
+        assert resp.status_code == 302
+        assert "error=" in resp.headers["Location"]
+
+    from nokia_tracker import db as dbm
+    conn = dbm.get_conn(db_path)
+    conflict = conn.execute(
+        "SELECT * FROM import_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+    assert conflict["resolved"] == 0  # nie oznaczony rozwiązany przy błędzie
+    assert conn.execute("SELECT COUNT(*) c FROM sales").fetchone()["c"] == 0
+    conn.close()
+
+
+def test_imports_confirm_sale_unknown_conflict_id_redirects_safely(client):
+    resp = client.post("/imports/conflicts/999/confirm-sale")
+    assert resp.status_code == 302
+
+
 def test_imports_conflicts_queue_shows_unresolved_and_resolve_hides_it(tmp_path):
     from nokia_tracker import db as dbm
     from nokia_tracker.web import create_app

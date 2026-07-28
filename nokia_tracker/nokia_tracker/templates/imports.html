@@ -36,6 +36,8 @@
 
 <div class="card">
   <div class="card-title">Kolejka konfliktów ({{ conflicts|length }})</div>
+  {% if sold %}<span class="badge saved">Sprzedaż zaksięgowana</span>{% endif %}
+  {% if error %}<p class="disclaimer error">⚠️ {{ error }}</p>{% endif %}
   {% if conflicts %}
   <div class="table-wrap">
     <table class="table">
@@ -47,6 +49,22 @@
       <tbody>
         {% for c in conflicts %}
         <tr>
+          {% if c.entity_type == 'withhold_to_cover_sale' %}
+          <td>sprzedaż (Sell/Withhold)</td>
+          <td class="muted">{{ c.natural_key }}</td>
+          <td class="muted">—</td>
+          <td>
+            {{ c.incoming.execution_date }} · {{ '%.4f'|format(c.incoming.quantity) }} akcji ·
+            {{ '%.2f'|format(c.incoming.sale_price_eur) }} EUR/szt ·
+            prowizja {{ '%.2f'|format(c.incoming.fees_eur) }} EUR ·
+            netto {{ '%.2f'|format(c.incoming.net_proceeds_eur) }} EUR
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('imports_confirm_sale', conflict_id=c.id) }}">
+              <button class="btn small primary" type="submit">Zatwierdź jako sprzedaż</button>
+            </form>
+          </td>
+          {% else %}
           <td>{{ c.entity_type }}</td>
           <td class="muted">{{ c.natural_key }}</td>
           <td class="muted">{{ c.existing }}</td>
@@ -57,6 +75,7 @@
               <button class="btn small" type="submit">Oznacz rozwiązany</button>
             </form>
           </td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>

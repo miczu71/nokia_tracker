@@ -5,6 +5,13 @@ niestabilne — stąd cache.py (TTL) i ratelimit.backoff_retry (429/502).
 Kształt odpowiedzi zweryfikowany na żywym NOKIA.HE 2026-07-27, patrz
 tests/fixtures/yahoo_chart_nokia_5d.json (prawdziwa odpowiedź) i
 yahoo_chart_error_404.json (kształt błędu dla złego symbolu).
+
+UWAGA (0.1.1): najnowsza dzienna świeca bywa zwracana z close=null (Yahoo
+jeszcze jej nie domknęło) — zweryfikowane na żywo 2026-07-28 dla
+NOKIA.HE/ERIC-B.ST/EURUSD=X jednocześnie. `_parse()` dla TYLKO ostatniego
+punktu serii podstawia w tym wypadku `meta.regularMarketPrice`, inaczej
+`price_eur` i pochodne (ericsson_price, omxh25_value, eurpln_rate,
+last_quote_ts, wskaźniki) zamrażają się na starym zamknięciu na wiele dni.
 """
 from __future__ import annotations
 
@@ -98,13 +105,24 @@ class YahooQuoteProvider(QuoteProvider):
         lows = quote.get("low", [])
         closes = quote.get("close", [])
         volumes = quote.get("volume", [])
+        meta_price = result.get("meta", {}).get("regularMarketPrice")
 
         candles: list[Candle] = []
+        last_index = len(timestamps) - 1
         for i, ts in enumerate(timestamps):
             close = closes[i] if i < len(closes) else None
+            if close is None and i == last_index and meta_price is not None:
+                # Yahoo czasem nie zdążył jeszcze domknąć dzisiejszej/wczorajszej
+                # świecy (close=null), ale ta sama odpowiedź niesie
+                # meta.regularMarketPrice — aktualną cenę z tego samego momentu.
+                # Podstawiamy ją TYLKO dla najnowszego punktu (zweryfikowane na
+                # żywo 2026-07-28: dotyczyło NOKIA.HE/ERIC-B.ST/EURUSD=X — bez
+                # tego price_eur potrafi zamrozić się na wiele dni, patrz
+                # docs/BLUEPRINT.md i CHANGELOG 0.1.1).
+                close = meta_price
             if close is None:
-                # Dziura w danych (częste na granicach sesji/świąt) —
-                # świeca bez close jest bezużyteczna, pomijamy.
+                # Dziura w danych w środku serii (częste na granicach
+                # sesji/świąt) — świeca bez close jest bezużyteczna, pomijamy.
                 continue
             candles.append(Candle(
                 ts=datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(),

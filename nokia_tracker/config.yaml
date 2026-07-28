@@ -1,5 +1,5 @@
 name: Nokia Tracker
-version: "0.1.0"
+version: "0.1.1"
 slug: nokia_tracker
 description: >-
   Osobisty asystent inwestycyjny dla akcji Nokia (NOKIA.HE, Nasdaq Helsinki).
@@ -27,6 +27,7 @@ options:
   history_backfill_years: 5
   display_currency_secondary: "PLN"
   allow_scrape_fallback: false
+  avanza_live_price_enabled: true
   # --- klucze API (wszystkie opcjonalne; primary działa bez klucza) ---
   finnhub_api_key: ""
   marketaux_api_key: ""
@@ -76,6 +77,7 @@ schema:
   history_backfill_years: int
   display_currency_secondary: str?
   allow_scrape_fallback: bool
+  avanza_live_price_enabled: bool
   finnhub_api_key: password
   marketaux_api_key: password
   twelvedata_api_key: password

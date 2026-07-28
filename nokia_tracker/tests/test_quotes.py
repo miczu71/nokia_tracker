@@ -76,3 +76,39 @@ def test_latest_quote_returns_most_recent(conn):
 def test_latest_quote_none_when_empty(conn):
     iid = quotes.ensure_instrument(conn, "NOKIA.HE", "Nokia", "EUR", "primary")
     assert quotes.latest_quote(conn, iid) is None
+
+
+def test_refresh_live_price_updates_close_preserves_ohlc(conn):
+    from datetime import datetime, timezone
+    iid = quotes.ensure_instrument(conn, "NOKIA.HE", "Nokia", "EUR", "primary")
+    today_ts = datetime.now(timezone.utc).date().isoformat() + "T07:00:00+00:00"
+    quotes.upsert_candles(conn, iid, "daily", [
+        Candle(ts=today_ts, close=8.222, open=8.5, high=8.6, low=8.1, volume=12345.0)
+    ], source="yahoo")
+
+    quotes.refresh_live_price(conn, iid, 7.93, source="avanza")
+
+    row = conn.execute(
+        "SELECT * FROM quotes WHERE instrument_id = ? AND granularity = 'daily'", (iid,)
+    ).fetchone()
+    assert row["close"] == 7.93
+    assert row["source"] == "avanza"
+    # OHLC/volume zebrane przez Yahoo muszą przetrwać — to jest cały sens
+    # częściowego UPDATE zamiast upsert_candles().
+    assert row["open"] == 8.5
+    assert row["high"] == 8.6
+    assert row["low"] == 8.1
+    assert row["volume"] == 12345.0
+    # jeden wiersz na dzień — brak duplikatu
+    n = conn.execute("SELECT COUNT(*) c FROM quotes WHERE instrument_id = ?", (iid,)).fetchone()["c"]
+    assert n == 1
+
+
+def test_refresh_live_price_inserts_when_no_today_row(conn):
+    iid = quotes.ensure_instrument(conn, "NOKIA.HE", "Nokia", "EUR", "primary")
+    quotes.refresh_live_price(conn, iid, 7.93, source="avanza")
+
+    latest = quotes.latest_quote(conn, iid, granularity="daily")
+    assert latest["close"] == 7.93
+    assert latest["source"] == "avanza"
+    assert latest["open"] is None  # brak OHLC — Yahoo jeszcze nie odświeżył

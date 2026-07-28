@@ -116,3 +116,43 @@ def test_candle_skips_null_close(conn, monkeypatch, fixture_ok):
     candles = provider.fetch("NOKIA.HE", "daily")
 
     assert len(candles) == 4  # 5 - 1 dziura
+
+
+def test_last_candle_null_close_falls_back_to_meta_price(conn, monkeypatch, fixture_ok):
+    # Realny scenariusz zweryfikowany na żywo 2026-07-28: Yahoo jeszcze nie
+    # domknęło dzisiejszej świecy (close=null), ale meta.regularMarketPrice
+    # ma aktualną cenę. Musi się podstawić TYLKO dla ostatniego punktu.
+    broken = json.loads(json.dumps(fixture_ok))
+    closes = broken["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+    closes[-1] = None
+    broken["chart"]["result"][0]["meta"]["regularMarketPrice"] = 7.93
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return _FakeResponse(200, broken)
+
+    monkeypatch.setattr("nokia_tracker.providers.yahoo.requests.get", fake_get)
+    provider = YahooQuoteProvider(conn)
+    candles = provider.fetch("NOKIA.HE", "daily")
+
+    assert len(candles) == 5  # nic nie zniknęło — ostatni punkt podstawiony, nie pominięty
+    assert candles[-1].close == pytest.approx(7.93)
+    # ts zostaje bucketem dnia z oryginalnej odpowiedzi (nie meta.regularMarketTime)
+    original_ts = broken["chart"]["result"][0]["timestamp"][-1]
+    from datetime import datetime, timezone
+    assert candles[-1].ts == datetime.fromtimestamp(original_ts, tz=timezone.utc).isoformat()
+
+
+def test_last_candle_null_close_without_meta_price_still_skipped(conn, monkeypatch, fixture_ok):
+    broken = json.loads(json.dumps(fixture_ok))
+    closes = broken["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+    closes[-1] = None
+    broken["chart"]["result"][0]["meta"].pop("regularMarketPrice", None)
+
+    def fake_get(url, params=None, headers=None, timeout=None):
+        return _FakeResponse(200, broken)
+
+    monkeypatch.setattr("nokia_tracker.providers.yahoo.requests.get", fake_get)
+    provider = YahooQuoteProvider(conn)
+    candles = provider.fetch("NOKIA.HE", "daily")
+
+    assert len(candles) == 4  # brak meta price -> nadal pomijamy, jak dotychczas

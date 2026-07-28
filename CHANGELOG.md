@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.1.1] - 2026-07-28
+
+Poprawka błędu widocznego na żywo tuż po 0.1.0 + nowe niezależne źródło ceny.
+
+### Naprawiono — zamrożona cena (price_eur i pochodne)
+- Yahoo Finance czasem zwraca najnowszą dzienną świecę z `close: null` (jeszcze niedomknięta) —
+  parser (`providers/yahoo.py`) po prostu ją odrzucał zamiast sięgnąć po `meta.regularMarketPrice`
+  z tej samej odpowiedzi. Efekt: `price_eur` (i pochodne: `change_pct_day`, `ericsson_price`,
+  `omxh25_value`, `eurpln_rate`, `rel_perf_1d_vs_omxh25`, `rel_perf_1m_vs_ericsson`, `beta_60d`,
+  `alpha_verdict`, `sma_20/50`, `rsi_14`, `trend`, `last_quote_ts`) potrafiły zamrozić się na
+  wiele dni mimo poprawnie działającego pollera co `poll_interval_minutes`.
+- Fix: dla **ostatniego** punktu serii, gdy `close` jest puste, podstawiana jest
+  `meta.regularMarketPrice` (ts zostaje bucketem dnia, jak dotychczas — bez tworzenia duplikatu
+  wiersza). Dziury w środku serii (prawdziwe braki danych, np. święta) nadal pomijane bez zmian.
+
+### Dodano — Avanza jako dodatkowe, niezależne źródło żywej ceny
+- Nowy `providers/avanza.py`: publiczne, bezkluczowe API Avanzy (`_api/market-guide/stock/{id}`),
+  używane wyłącznie do odświeżania bieżącej ceny instrumentu głównego (nie zastępuje Yahoo jako
+  źródła historii/backfillu/benchmarków). Zero nowych zależności w `requirements.txt`.
+- Nowa `quotes.refresh_live_price()`: częściowy `UPDATE` samego `close`, zachowujący
+  `open`/`high`/`low`/`volume` zebrane przez Yahoo dla tego samego dnia (nie zeruje `day_high`/
+  `day_low`/`volume`).
+- Nowa opcja `avanza_live_price_enabled` (domyślnie włączona) — wyłącznik awaryjny bez przebudowy
+  obrazu, gdyby ten nieoficjalny endpoint kiedyś zmienił kształt lub zablokował ruch. Awaria Avanzy
+  nigdy nie przerywa reszty publikacji sensorów (osobny `try/except` w `main.py`).
+
 ## [0.1.0] - 2026-07-28
 
 Pierwsze wydanie: śledzenie rynku, warstwa AI, prosty portfel, pełny web UI.

@@ -110,6 +110,30 @@ def store_single_price(conn: sqlite3.Connection, instrument_id: int, price: floa
     upsert_candles(conn, instrument_id, "daily", [Candle(ts=ts, close=price)], source=source)
 
 
+def refresh_live_price(conn: sqlite3.Connection, instrument_id: int, price: float,
+                       source: str, fallback_ts_hour: int = 7) -> None:
+    """Aktualizuje TYLKO close dzisiejszej świecy niezależnym, żywym źródłem
+    (np. Avanza, patrz providers/avanza.py) — świadomie częściowy UPDATE, nie
+    upsert_candles()/store_single_price(): te nadpisują open/high/low/volume
+    na NULL przy konflikcie klucza, co dla FX/ADR jest nieszkodliwe (nikt nie
+    czyta ich OHLC), ale dla instrumentu głównego zerowałoby day_high/day_low/
+    volume zebrane przez Yahoo. Gdy dzisiejsza świeca jeszcze nie istnieje
+    (np. Avanza zdążyła pierwsza), wstawia nową z samym close — Yahoo dopełni
+    OHLC przy najbliższym własnym odświeżeniu (upsert_candles i tak nadpisuje
+    tylko pola, które faktycznie dostarcza)."""
+    today = today_daily_candle(conn, instrument_id)
+    if today:
+        conn.execute(
+            "UPDATE quotes SET close = ?, source = ? "
+            "WHERE instrument_id = ? AND ts = ? AND granularity = 'daily'",
+            (price, source, instrument_id, today["ts"]))
+        conn.commit()
+    else:
+        ts = (datetime.now(timezone.utc).date().isoformat()
+             + f"T{fallback_ts_hour:02d}:00:00+00:00")
+        upsert_candles(conn, instrument_id, "daily", [Candle(ts=ts, close=price)], source=source)
+
+
 def refresh_intraday(conn: sqlite3.Connection, instrument_id: int, symbol: str,
                      provider: QuoteProvider) -> int:
     candles = provider.fetch(symbol, "intraday")

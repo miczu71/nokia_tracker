@@ -14,6 +14,7 @@ SETTINGS_TYPES: dict[str, type] = {
     "history_backfill_years": int,
     "display_currency_secondary": str,
     "allow_scrape_fallback": int,
+    "avanza_live_price_enabled": int,
     # --- AI ---
     "ai_primary": str,
     "ai_fallback": str,
@@ -55,6 +56,7 @@ DEFAULTS: dict[str, object] = {
     "history_backfill_years": 5,
     "display_currency_secondary": "PLN",
     "allow_scrape_fallback": 0,
+    "avanza_live_price_enabled": 1,
     "ai_primary": "local",
     "ai_fallback": "gemini",
     "local_llm_base_url": "http://192.168.0.106:3003/v1",

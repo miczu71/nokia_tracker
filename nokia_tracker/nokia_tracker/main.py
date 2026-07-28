@@ -17,6 +17,7 @@ from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
 from . import news, portfolio, quotes, sensors
 from . import settings as settingsm
 from .ai import scoring as ai_scoring
+from .providers import avanza as avanza_provider
 from .providers import finnhub as finnhub_provider
 from .providers.yahoo import YahooQuoteProvider
 from .publisher import MQTTPublisher
@@ -27,6 +28,9 @@ _ERICSSON_SYMBOL = "ERIC-B.ST"
 _OMXH25_SYMBOL = "^OMXH25"
 _EURUSD_SYMBOL = "EURUSD=X"
 _ADR_SYMBOL = "NOK"
+# Orderbook Nokii na Avanzie — instrument z założenia hardcoded w tym
+# dodatku (jak pozostałe symbole wyżej), patrz providers/avanza.py.
+_AVANZA_ORDERBOOK_ID = "52784"
 
 logger = logging.getLogger("nokia_tracker")
 
@@ -58,6 +62,7 @@ def main() -> None:
         "history_backfill_years": _env("HISTORY_BACKFILL_YEARS", "5"),
         "display_currency_secondary": _env("DISPLAY_CURRENCY_SECONDARY", "PLN"),
         "allow_scrape_fallback": "1" if _env("ALLOW_SCRAPE_FALLBACK") == "true" else "0",
+        "avanza_live_price_enabled": "1" if _env("AVANZA_LIVE_PRICE_ENABLED", "true") == "true" else "0",
         "ai_primary": _env("AI_PRIMARY", "local"),
         "ai_fallback": _env("AI_FALLBACK", "gemini"),
         "local_llm_base_url": _env("LOCAL_LLM_BASE_URL"),
@@ -152,6 +157,8 @@ def main() -> None:
         with dbm.WRITE_LOCK:
             c = dbm.get_conn(db_path)
             try:
+                cfg = settingsm.get_settings(c)
+
                 provider = YahooQuoteProvider(c)
                 quotes.refresh_recent_daily(c, instrument_id, _PRIMARY_SYMBOL, provider)
                 quotes.refresh_recent_daily(c, ericsson_id, _ERICSSON_SYMBOL, provider)
@@ -164,13 +171,25 @@ def main() -> None:
                     if adr:
                         quotes.store_single_price(c, adr_id, adr["price"], source="finnhub")
 
+                if cfg["avanza_live_price_enabled"]:
+                    # Dodatkowe, niezależne źródło żywej ceny (patrz
+                    # providers/avanza.py) — owinięte we WŁASNY try/except,
+                    # bo to nieoficjalne API i awaria nie może ubić reszty
+                    # publikacji, która działa poprawnie na samym Yahoo.
+                    try:
+                        live = avanza_provider.fetch_quote(c, _AVANZA_ORDERBOOK_ID)
+                        if live:
+                            quotes.refresh_live_price(c, instrument_id, live["price"],
+                                                     source="avanza")
+                    except Exception:
+                        logger.exception("Avanza live price nieudane (nie krytyczne)")
+
                 values = sensors.market_values(c, instrument_id)
                 values.update(sensors.benchmark_values(
                     c, instrument_id, ericsson_id, omxh25_id, eurpln_id, adr_id, eurusd_id))
                 values.update(sensors.ai_values(c))
                 values.update(sensors.forecast_values(c))
 
-                cfg = settingsm.get_settings(c)
                 cost_basis_eur = cfg["position_qty"] * cfg["avg_cost_eur"]
                 dividends = sensors.dividends_values(c, cfg, cost_basis_eur)
                 position = portfolio.position_values(

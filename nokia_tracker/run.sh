@@ -8,6 +8,7 @@ export POLL_INTERVAL_MINUTES=$(jq -r '.poll_interval_minutes // "10"' "$CONFIG")
 export HISTORY_BACKFILL_YEARS=$(jq -r '.history_backfill_years // "5"' "$CONFIG")
 export DISPLAY_CURRENCY_SECONDARY=$(jq -r '.display_currency_secondary // "PLN"' "$CONFIG")
 export ALLOW_SCRAPE_FALLBACK=$(jq -r '.allow_scrape_fallback // "false"' "$CONFIG")
+export AVANZA_LIVE_PRICE_ENABLED=$(jq -r '.avanza_live_price_enabled // "true"' "$CONFIG")
 
 # --- klucze API (opcjonalne) ---
 export FINNHUB_API_KEY=$(jq -r '.finnhub_api_key // ""' "$CONFIG")

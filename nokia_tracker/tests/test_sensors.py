@@ -381,3 +381,46 @@ def test_lots_values_defaults_tax_year_to_current_year_when_unset(conn, _fake_nb
     cfg_no_year = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0, "tax_year": 0}
     v = sensors.lots_values(conn, cfg_no_year)
     assert v["realized_income_pln"] == pytest.approx((5 * 8.0 - 5 * 5.0) * 4.0)
+
+
+# --- grants_values ---
+
+def test_grants_values_empty_db(conn):
+    v = sensors.grants_values(conn)
+    assert v["unvested_qty"] == 0.0
+    assert v["next_vest_date"] is None
+    assert v["next_vest_date_attrs"] == {"next_vest_qty": None}
+
+
+def test_grants_values_unvested_qty_sums_all_pending_regardless_of_date(conn, monkeypatch):
+    from datetime import datetime
+
+    from nokia_tracker.tax import grants as grantsm
+    monkeypatch.setattr("nokia_tracker.sensors.datetime", type(
+        "FixedDatetime", (), {"now": staticmethod(lambda tz=None: datetime(2026, 7, 28))}))
+
+    grant_id = grantsm.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g1")
+    # 2026-07-06 już minęło (dziś 2026-07-28), ale status wciąż 'pending' - scheduler
+    # vestingu (krok 14) jeszcze nie istnieje, więc liczy się mimo przeszłej daty.
+    grantsm.add_vest(conn, grant_id, "2026-07-06", 634.0, "lti_vest:g1:2026-07-06:634.0")
+    grantsm.add_vest(conn, grant_id, "2027-07-06", 633.0, "lti_vest:g1:2027-07-06:633.0")
+    espp_grant_id = grantsm.add_grant(conn, "espp", "2025-10-27", 12.0, "espp_grant:x")
+    grantsm.add_vest(conn, espp_grant_id, "2026-04-27", 12.0, "espp_vest:x")
+
+    v = sensors.grants_values(conn)
+    assert v["unvested_qty"] == pytest.approx(634.0 + 633.0 + 12.0)
+    # next_vest_date liczy tylko przyszłe daty (mimo że 2026-07-06 też pending, już minęło)
+    assert v["next_vest_date"] == "2027-07-06"
+    assert v["next_vest_date_attrs"] == {"next_vest_qty": 633.0}
+
+
+def test_grants_values_ignores_vested_and_cancelled_status(conn):
+    from nokia_tracker.tax import grants as grantsm
+    grant_id = grantsm.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g1")
+    grantsm.add_vest(conn, grant_id, "2099-01-01", 100.0, "lti_vest:g1:vested", status="vested")
+    grantsm.add_vest(conn, grant_id, "2099-02-01", 50.0, "lti_vest:g1:cancelled", status="cancelled")
+    grantsm.add_vest(conn, grant_id, "2099-03-01", 25.0, "lti_vest:g1:pending", status="pending")
+
+    v = sensors.grants_values(conn)
+    assert v["unvested_qty"] == pytest.approx(25.0)
+    assert v["next_vest_date"] == "2099-03-01"

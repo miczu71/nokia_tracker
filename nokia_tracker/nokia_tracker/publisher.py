@@ -150,6 +150,11 @@ _ENTITIES: list[_Entity] = [
            "total", "mdi:cash-check"),
     _Entity("sensor", "realized_tax_pln", "Realized Tax PLN", "PLN", "monetary",
            "total", "mdi:bank-outline"),
+    # --- granty ESPP/LTI (krok 13.5) ---
+    _Entity("sensor", "unvested_qty", "Unvested Qty", None, None, "measurement",
+           "mdi:timer-sand"),
+    _Entity("sensor", "next_vest_date", "Next Vest Date", None, "date", None,
+           "mdi:calendar-clock", has_attrs=True),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

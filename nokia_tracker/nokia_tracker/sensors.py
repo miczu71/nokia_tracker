@@ -300,3 +300,24 @@ def lots_values(conn: sqlite3.Connection, cfg: dict) -> dict:
         "realized_income_pln": active["income_pln"],
         "realized_tax_pln": active["tax_pln"],
     }
+
+
+def grants_values(conn: sqlite3.Connection) -> dict:
+    """Sensory widoczności grantów ESPP/LTI (krok 13.5): `unvested_qty` liczy WSZYSTKIE
+    transze o statusie 'pending' niezależnie od daty (scheduler auto-vestingu z kroku 14
+    jeszcze nie istnieje, więc przeszła data nie zmienia statusu); `next_vest_date` to
+    najbliższa transza `pending` z datą w przyszłości."""
+    pending = conn.execute(
+        "SELECT vest_date, quantity FROM vests WHERE status = 'pending'").fetchall()
+    unvested_qty = sum(r["quantity"] for r in pending)
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    future = sorted((r["vest_date"], r["quantity"]) for r in pending if r["vest_date"] > today)
+    next_vest_date = future[0][0] if future else None
+    next_vest_qty = future[0][1] if future else None
+
+    return {
+        "unvested_qty": unvested_qty,
+        "next_vest_date": next_vest_date,
+        "next_vest_date_attrs": {"next_vest_qty": next_vest_qty},
+    }

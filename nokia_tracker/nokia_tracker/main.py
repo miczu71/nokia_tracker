@@ -203,6 +203,7 @@ def main() -> None:
                 values.update(position)
                 values.update(dividends)
                 values.update(sensors.lots_values(c, cfg))
+                values.update(sensors.grants_values(c))
 
                 mqtt_pub.publish(values)
 

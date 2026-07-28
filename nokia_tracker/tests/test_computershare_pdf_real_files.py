@@ -81,6 +81,86 @@ def test_reimporting_same_file_is_idempotent_at_parse_level():
     assert cp.parse_purchases(text1) == cp.parse_purchases(text2)
 
 
+def test_vested_matching_shares_unique_rows_across_all_five_files():
+    """Krok 13.6 (docs/PLAN_KROK_13_6_vesting_gap.md): tabela "Vested Matching Shares" to
+    powtarzający się snapshot - te same krotki (data, cena, ilość) pojawiają się w kolejnych
+    wyciągach. Po redukcji po (vested_date, cost_basis_eur, quantity) - dokładnie 9 unikalnych
+    wierszy, suma ok. 154.77 akcji (policzone ręcznie z surowego tekstu przy diagnozie)."""
+    seen: set[tuple] = set()
+    for pdf_path in _pdf_files():
+        text = cp.extract_layout_text(pdf_path.read_bytes())
+        for row in cp.parse_vested_matching_shares(text):
+            seen.add((row["vested_date"], row["cost_basis_eur"], row["quantity"]))
+    assert len(seen) == 9
+    assert sum(qty for _, _, qty in seen) == pytest.approx(154.77, abs=0.01)
+
+
+def test_withhold_type_a_classified_matched_when_same_day_as_vested_matching_shares():
+    """Plik z period_end=2026-01-01 ma dokładnie 1 wiersz Typ A (101.396662 @ 28 Aug 2025),
+    tego samego dnia co wiersz "Vested Matching Shares" (0.48 @ 28 Aug 2025) w TYM SAMYM
+    pliku - wspólna kohorta dopasowań ESPP, klasyfikacja 'matched'."""
+    for pdf_path in _pdf_files():
+        text = cp.extract_layout_text(pdf_path.read_bytes())
+        meta = cp.parse_document_meta(text)
+        if meta["period_end"] != "2026-01-01":
+            continue
+        type_a, _ = cp.parse_withhold_to_cover(text)
+        vested_dates = {row["vested_date"] for row in cp.parse_vested_matching_shares(text)}
+        assert len(type_a) == 1
+        assert type_a[0]["quantity"] == pytest.approx(101.396662)
+        assert type_a[0]["execution_date"] in vested_dates
+        return
+    pytest.fail("Nie znaleziono pliku z period_end=2026-01-01")
+
+
+def test_withhold_type_a_classified_lti_when_no_same_day_vested_matching_shares():
+    """Plik z period_end=2026-07-26 ma dokładnie 2 wiersze Typ A (634 i 2100 @ 9 Jul 2026),
+    żaden dzień nie pokrywa się z żadnym wierszem "Vested Matching Shares" w tym pliku ->
+    klasyfikacja 'lti' dla obu (uwolnienie transz RS Award)."""
+    for pdf_path in _pdf_files():
+        text = cp.extract_layout_text(pdf_path.read_bytes())
+        meta = cp.parse_document_meta(text)
+        if meta["period_end"] != "2026-07-26":
+            continue
+        type_a, _ = cp.parse_withhold_to_cover(text)
+        vested_dates = {row["vested_date"] for row in cp.parse_vested_matching_shares(text)}
+        assert len(type_a) == 2
+        assert {row["quantity"] for row in type_a} == {634.0, 2100.0}
+        assert all(row["execution_date"] not in vested_dates for row in type_a)
+        return
+    pytest.fail("Nie znaleziono pliku z period_end=2026-07-26")
+
+
+def test_import_all_five_real_files_covers_the_784_share_sale(conn, monkeypatch):
+    """Regresja dla incydentu z tej sesji: import_statement.record_sale(784) na 27.10.2025
+    rzucał InsufficientLotsError, bo zvestowane dopasowania ESPP/transze LTI nigdy nie
+    stawały się lotami. Po dodaniu parse_vested_matching_shares + reklasyfikacji Withhold
+    Typu A - pełny sekwencyjny import wszystkich 5 plików (najstarszy->najnowszy, jak
+    realne użycie) musi dać wystarczające pokrycie."""
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.30, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.30, "stub"))
+
+    total_conflicts = 0
+    for pdf_path in _pdf_files():
+        report = cp.import_statement(conn, pdf_path.read_bytes(), pdf_path.name)
+        total_conflicts += report["rows_conflict"]
+    # Dokładnie 1 konflikt oczekiwany: Withhold-to-Cover Typ B (sprzedaż 784 akcji) -
+    # zawsze do ręcznego potwierdzenia, nigdy nie księgowany automatycznie (patrz
+    # test_withhold_to_cover_type_b_real_sale_detected_in_2025_statement powyżej).
+    assert total_conflicts == 1
+
+    from nokia_tracker.tax import lots as taxlots
+    total_available = sum(r["qty_remaining"] for r in taxlots.open_lots(conn))
+    assert total_available >= 784.0
+
+    sale_id = taxlots.record_sale(conn, "2025-10-27", 784.0, 5.31, fee_eur=8.32)
+    assert sale_id is not None
+
+
 def test_import_statement_full_pipeline_on_real_files_reimport_gives_zero_inserted(conn, monkeypatch):
     """Pełny pipeline (BLUEPRINT §5 DoD kroku 13): import_statement() na realnym pliku
     parsuje bez błędów i zapisuje do bazy; ponowny import TEGO SAMEGO pliku daje

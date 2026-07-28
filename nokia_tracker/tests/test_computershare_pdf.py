@@ -69,6 +69,63 @@ def test_parse_matching_shares_multiple_rows_in_one_grant():
     assert rows[0]["estimated_value_pln"] == 1036.84
 
 
+def test_parse_vested_matching_shares_basic_row():
+    line = (
+        "Vested  Matching   Shares                                             28 Aug  2025"
+        "                        3.71 EUR                      4.51 EUR                               "
+        "0.48                       16.98 PLN"
+    )
+    rows = cp.parse_vested_matching_shares(line)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["vested_date"] == "2025-08-28"
+    assert r["cost_basis_eur"] == 3.71
+    assert r["gain_per_share_eur"] == 4.51
+    assert r["quantity"] == 0.48
+    assert r["estimated_value_pln"] == 16.98
+
+
+def test_parse_vested_matching_shares_negative_gain_per_share():
+    # Gain per share bywa ujemny, gdy cena spadła od dnia vestingu do dnia wyciągu.
+    line = (
+        "Vested  Matching  Shares                                            30 Aug  2023"
+        "                       3.65 EUR                     -0.60 EUR                             "
+        "8.21                     109.12  PLN"
+    )
+    rows = cp.parse_vested_matching_shares(line)
+    assert len(rows) == 1
+    assert rows[0]["gain_per_share_eur"] == -0.60
+    assert rows[0]["quantity"] == 8.21
+
+
+def test_parse_vested_matching_shares_multiple_rows_same_date_and_price():
+    # Realny przypadek: kilka sub-lotów z tej samej kohorty vestingu, ta sama data/cena,
+    # różne ilości - każdy musi się sparsować jako osobny wiersz.
+    text = (
+        "Vested  Matching  Shares                                            30 Aug  2023"
+        "                       3.65 EUR                     -0.60 EUR                             "
+        "8.21                     109.12  PLN\n"
+        "Vested  Matching  Shares                                            30 Aug  2023"
+        "                       3.65 EUR                     -0.60 EUR                             "
+        "7.20                      95.65  PLN\n"
+    )
+    rows = cp.parse_vested_matching_shares(text)
+    assert len(rows) == 2
+    assert {r["quantity"] for r in rows} == {8.21, 7.20}
+    assert all(r["vested_date"] == "2023-08-30" for r in rows)
+
+
+def test_parse_vested_matching_shares_ignores_vested_dividend_shares():
+    # "Vested Dividend Shares" ma identyczny kształt kolumn, ale to inna kategoria (już
+    # pokryta przez parse_dividends/dividend_drip) - regex musi ją świadomie pomijać.
+    line = (
+        "Vested  Dividend   Shares                                             13 Nov  2025"
+        "                        6.06 EUR                      2.16 EUR                               "
+        "2.52                       89.50 PLN"
+    )
+    assert cp.parse_vested_matching_shares(line) == []
+
+
 def test_parse_rs_award_multiple_tranches_same_grant():
     text = (
         f"2025  RS AWARD    07-JUL-2025                                         7Jul 2025                     5 Jul 2028                   5 Jul2028                          633.00                  14{_THIN}882.25  PLN\n"

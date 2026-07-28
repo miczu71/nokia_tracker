@@ -45,6 +45,12 @@ _WITHHOLD_B_LINE = (
     "4 161.47 EUR                 0.00 EUR                    8.32 EUR           4 153.15  EUR\n"
 )
 
+_VESTED_MATCHING_LINE = (
+    "Vested  Matching   Shares                                             28 Aug  2025"
+    "                        3.71 EUR                      4.51 EUR                               "
+    "0.48                       16.98 PLN\n"
+)
+
 _FULL_TEXT = (_HEADER + _PURCHASE_LINE + _MATCHING_LINE + _RS_AWARD_LINE + _DIVIDEND_LINE
              + _WITHHOLD_A_LINE + _WITHHOLD_B_LINE)
 
@@ -113,6 +119,93 @@ def test_reimporting_withhold_type_b_does_not_duplicate_conflict_row(conn, _fake
     conflicts = conn.execute(
         "SELECT * FROM import_conflicts WHERE entity_type = 'withhold_to_cover_sale'").fetchall()
     assert len(conflicts) == 1
+
+
+def test_import_statement_creates_matched_lot_from_vested_matching_shares_row(conn, monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _VESTED_MATCHING_LINE)
+
+    report = cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    lot = conn.execute(
+        "SELECT * FROM lots WHERE lot_type = 'matched'").fetchone()
+    assert lot is not None
+    assert lot["acquired_date"] == "2025-08-28"
+    assert lot["quantity"] == 0.48
+    assert lot["price_eur"] == 3.71
+    assert lot["source"] == "pdf_import"
+    assert report["rows_inserted"] >= 1
+
+
+def test_reimporting_vested_matching_shares_is_idempotent(conn, monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _VESTED_MATCHING_LINE)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    count_after_first = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'matched'").fetchone()["c"]
+
+    report2 = cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+
+    assert count_after_first == 1
+    count_after_second = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'matched'").fetchone()["c"]
+    assert count_after_second == 1
+    assert report2["rows_inserted"] == 0
+    assert report2["rows_unchanged"] >= 1
+
+
+def test_import_statement_withhold_type_a_creates_lti_lot_when_no_vested_matching_same_date(
+        conn, _fake_pdf):
+    # _FULL_TEXT ma _WITHHOLD_A_LINE (2026-07-09) bez żadnego wiersza "Vested Matching
+    # Shares" tego samego dnia -> klasyfikacja 'lti' (uwolnienie RS Award/LTI).
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    lot = conn.execute("SELECT * FROM lots WHERE lot_type = 'lti'").fetchone()
+    assert lot is not None
+    assert lot["acquired_date"] == "2026-07-09"
+    assert lot["quantity"] == 634.0
+    assert lot["price_eur"] == 10.22
+    assert lot["source"] == "pdf_import"
+
+
+def test_import_statement_withhold_type_a_creates_matched_lot_when_date_coincides_with_vested_matching(
+        conn, monkeypatch):
+    # Withhold Typ A z 28 Aug 2025 + "Vested Matching Shares" TEGO SAMEGO dnia w tym samym
+    # wyciągu -> wspólna kohorta dopasowań ESPP, klasyfikacja 'matched', nie 'lti'.
+    same_day_withhold_a = (
+        "28 Aug 2025                                            Nokia  Share                            "
+        "101.396662                 3.71 EUR                 0.00 EUR                   0.00 EUR             "
+        "101.396662\n"
+    )
+    text = _HEADER + _VESTED_MATCHING_LINE + same_day_withhold_a
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    lot = conn.execute(
+        "SELECT * FROM lots WHERE quantity = 101.396662").fetchone()
+    assert lot is not None
+    assert lot["lot_type"] == "matched"
+    assert lot["acquired_date"] == "2025-08-28"
+
+
+def test_reimporting_withhold_type_a_lot_is_idempotent(conn, _fake_pdf):
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    count_after_first = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'lti'").fetchone()["c"]
+
+    report2 = cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+
+    assert count_after_first == 1
+    count_after_second = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'lti'").fetchone()["c"]
+    assert count_after_second == 1
+    assert report2["rows_inserted"] == 0
 
 
 def test_import_statement_modified_purchase_value_goes_to_conflicts_not_overwritten(conn, _fake_pdf, monkeypatch):

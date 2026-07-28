@@ -15,10 +15,19 @@ Fair Market Value (EUR), Purchase Price (EUR), Purchased Shares (ilość), Resid
 finalne (EUR). `lots.acquired_date` = Trade Date (dzień faktycznego wykonania zakupu).
 
 Withhold-to-Cover ma DWA różne kształty w realnych danych:
-- Typ A (etykieta instrumentu "Nokia Share", `Net Units == Quantity`) — zero-efektowe
-  potwierdzenie odroczenia podatku (art. 24 ust. 11 ustawy o PIT).
+- Typ A (etykieta instrumentu "Nokia Share", `Net Units == Quantity`) — zero podatku
+  potrąconego TERAZ (art. 24 ust. 11 ustawy o PIT, opodatkowanie odroczone do zbycia), ale
+  akcje realnie stają się własnością — TWORZY lot (krok 13.6, docs/PLAN_KROK_13_6_vesting_gap.md).
 - Typ B (bez etykiety instrumentu, kolumny Sale Proceeds/Net proceeds w EUR) — prawdziwa,
   gotówkowa sprzedaż. Nigdy nie księgowana automatycznie — zawsze do ręcznego potwierdzenia.
+
+Tabele „Matching Shares"/„RS AWARD" pokazują WYŁĄCZNIE transze wciąż oczekujące na dzień
+wygenerowania wyciągu — raz zvestowana transza znika z nich na zawsze i przenosi się do
+tabeli „Vested Matching Shares" (powtarzający się snapshot aktualnie posiadanego salda, nie
+harmonogram) oraz/lub do Withhold-to-Cover Typu A (patrz `parse_vested_matching_shares`,
+krok 13.6). Bez czytania obu tych źródeł zvestowane akcje nigdy nie stają się `lots` —
+potwierdzone empirycznie na realnych danych użytkownika jako przyczyna `InsufficientLotsError`
+przy księgowaniu sprzedaży, która historycznie się powiodła.
 """
 from __future__ import annotations
 
@@ -134,6 +143,33 @@ def parse_matching_shares(text: str) -> list[dict]:
             "allocation_date": _date_iso(g[0]),
             "vesting_date": _date_iso(g[1]),
             "available_from": _date_iso(g[2]),
+            "quantity": _num(g[3]),
+            "estimated_value_pln": _num(g[4]),
+        })
+    return rows
+
+
+# --- Vested Matching Shares: powtarzający się snapshot aktualnie posiadanego,
+# już-zvestowanego salda dopasowań ESPP (NIE harmonogram - to już się wydarzyło).
+# "Vested Dividend Shares" w tej samej tabeli świadomie pomijamy (patrz docstring
+# import_statement) - już poprawnie pokryte przez parse_dividends/dividend_drip.
+_VESTED_MATCHING_RE = re.compile(
+    rf"^Vested\s+Matching\s+Shares{_SEP}({_DATE}){_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM}){_SEP}({_NUM})\s*PLN\s*$"
+)
+
+
+def parse_vested_matching_shares(text: str) -> list[dict]:
+    rows = []
+    for line in text.splitlines():
+        m = _VESTED_MATCHING_RE.match(line.strip())
+        if not m:
+            continue
+        g = m.groups()
+        rows.append({
+            "vested_date": _date_iso(g[0]),
+            "cost_basis_eur": _num(g[1]),
+            "gain_per_share_eur": _num(g[2]),
             "quantity": _num(g[3]),
             "estimated_value_pln": _num(g[4]),
         })
@@ -338,6 +374,20 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         elif _record_conflict(conn, import_id, "vest", vest_nk, dict(existing_vest), row):
             rows_conflict += 1
 
+    for row in parse_vested_matching_shares(text):
+        nk = f"vested_matching:{row['vested_date']}:{row['cost_basis_eur']}:{row['quantity']}"
+        existing = conn.execute("SELECT * FROM lots WHERE natural_key = ?", (nk,)).fetchone()
+        if existing is None:
+            taxlots.add_lot(
+                conn, row["vested_date"], "matched", row["quantity"], row["cost_basis_eur"],
+                source="pdf_import", natural_key=nk)
+            rows_inserted += 1
+        elif (abs(existing["quantity"] - row["quantity"]) < _EPS
+              and abs(existing["price_eur"] - row["cost_basis_eur"]) < _EPS):
+            rows_unchanged += 1
+        elif _record_conflict(conn, import_id, "lot", nk, dict(existing), row):
+            rows_conflict += 1
+
     for row in parse_rs_award(text):
         # grant.quantity zostaje NULL: jeden grant LTI zbiera wiele transz (wiele wierszy
         # RS AWARD), każda z własną ilością w vests — suma per grant liczona z SUM(vests),
@@ -379,13 +429,32 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         elif _record_conflict(conn, import_id, "dividend", nk, dict(existing), row):
             rows_conflict += 1
 
+    vested_matching_dates = {row["vested_date"] for row in parse_vested_matching_shares(text)}
+
     type_a, type_b = parse_withhold_to_cover(text)
     for row in type_a:
-        # Zero-efektowe potwierdzenie odroczenia podatku (art. 24 ust. 11) — tylko log,
-        # brak zapisu (patrz docs/PLAN_KROK_13.md).
-        logger.info(
-            "Withhold-to-Cover Typ A (zero-efektowe): %s, %.4f akcji potwierdzone",
-            row["execution_date"], row["quantity"])
+        # Realne uwolnienie akcji (RS Award/LTI lub, gdy data pokrywa się z "Vested
+        # Matching Shares" z tego samego wyciągu, wspólna kohorta dopasowań ESPP) - zero
+        # podatku potrąconego teraz (art. 24 ust. 11 ustawy o PIT, opodatkowanie odroczone
+        # do zbycia). Rozróżnienie matched/lti nie wpływa na żadną kwotę podatkową
+        # (tax/policy.py::POLICIES traktuje je identycznie w każdej z 3 polityk) - służy
+        # tylko czytelności /lots i /grants (krok 13.6, docs/PLAN_KROK_13_6_vesting_gap.md).
+        lot_type = "matched" if row["execution_date"] in vested_matching_dates else "lti"
+        nk = f"vested_release:{row['execution_date']}:{row['sale_price_eur']}:{row['quantity']}"
+        existing = conn.execute("SELECT * FROM lots WHERE natural_key = ?", (nk,)).fetchone()
+        if existing is None:
+            taxlots.add_lot(
+                conn, row["execution_date"], lot_type, row["quantity"], row["sale_price_eur"],
+                source="pdf_import", natural_key=nk)
+            rows_inserted += 1
+            logger.info(
+                "Withhold-to-Cover Typ A: %s, %.4f akcji @ %.2f EUR zaksięgowane jako lot '%s'",
+                row["execution_date"], row["quantity"], row["sale_price_eur"], lot_type)
+        elif (abs(existing["quantity"] - row["quantity"]) < _EPS
+              and abs(existing["price_eur"] - row["sale_price_eur"]) < _EPS):
+            rows_unchanged += 1
+        elif _record_conflict(conn, import_id, "lot", nk, dict(existing), row):
+            rows_conflict += 1
     for row in type_b:
         # Prawdziwa sprzedaż gotówkowa — NIGDY nie księgowana automatycznie.
         nk = f"wtc:{row['execution_date']}:{row['quantity']}:{row['net_proceeds_eur']}"

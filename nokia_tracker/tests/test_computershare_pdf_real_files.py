@@ -79,3 +79,37 @@ def test_reimporting_same_file_is_idempotent_at_parse_level():
     text1 = cp.extract_layout_text(data)
     text2 = cp.extract_layout_text(data)
     assert cp.parse_purchases(text1) == cp.parse_purchases(text2)
+
+
+def test_import_statement_full_pipeline_on_real_files_reimport_gives_zero_inserted(conn, monkeypatch):
+    """Pełny pipeline (BLUEPRINT §5 DoD kroku 13): import_statement() na realnym pliku
+    parsuje bez błędów i zapisuje do bazy; ponowny import TEGO SAMEGO pliku daje
+    rows_inserted=0, rows_unchanged=N - zero duplikatów w lots/grants/vests/dividends."""
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.30, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.30, "stub"))
+
+    pdf_path = _pdf_files()[-1]  # najnowszy, najbardziej złożony wyciąg (8 stron)
+    data = pdf_path.read_bytes()
+
+    report1 = cp.import_statement(conn, data, pdf_path.name)
+    assert report1["rows_inserted"] > 0
+    assert report1["rows_conflict"] == 0
+
+    lots_after_first = conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"]
+    grants_after_first = conn.execute("SELECT COUNT(*) c FROM grants").fetchone()["c"]
+
+    report2 = cp.import_statement(conn, data, pdf_path.name + "-again")
+
+    # Niezmiennik idempotencji: ponowny import nie tworzy NIC nowego. Nie porównujemy
+    # report2["rows_unchanged"] wprost z report1["rows_inserted"] - granty LTI z wieloma
+    # transzami (ten sam natural_key dotykany kilka razy w JEDNYM imporcie) legalnie
+    # rozkładają się inaczej na inserted/unchanged w pierwszym przebiegu niż w drugim,
+    # mimo że łączna liczba dotkniętych faktów jest identyczna.
+    assert report2["rows_inserted"] == 0
+    assert report2["rows_conflict"] == 0
+    assert conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"] == lots_after_first
+    assert conn.execute("SELECT COUNT(*) c FROM grants").fetchone()["c"] == grants_after_first

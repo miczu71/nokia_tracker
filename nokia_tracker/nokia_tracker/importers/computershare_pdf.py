@@ -22,11 +22,23 @@ Withhold-to-Cover ma DWA różne kształty w realnych danych:
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import re
+import sqlite3
 from datetime import datetime
 from io import BytesIO
 
 from pypdf import PdfReader
+
+from ..tax import dividends as taxdiv
+from ..tax import grants as grantsm
+from ..tax import lots as taxlots
+
+logger = logging.getLogger(__name__)
+
+_EPS = 1e-9
 
 # --- prymitywy liczbowe/datowe, wspólne dla wszystkich kształtów wierszy ---
 _DATE = r"\d{1,2}\s*[A-Za-z]{3}\s*\d{4}"
@@ -233,3 +245,166 @@ def parse_withhold_to_cover(text: str) -> tuple[list[dict], list[dict]]:
                 "net_proceeds_eur": _num(g[6]),
             })
     return type_a, type_b
+
+
+def _record_conflict(conn: sqlite3.Connection, import_id: int, entity_type: str,
+                      natural_key: str, existing: dict, incoming: dict) -> bool:
+    """Wstawia wiersz do import_conflicts, chyba że natural_key tego typu już tam czeka
+    na rozstrzygnięcie (idempotencja konfliktu — ponowny import tego samego pliku nie
+    duplikuje wpisu w kolejce). Zwraca True, jeśli faktycznie wstawiono nowy wiersz."""
+    dup = conn.execute(
+        "SELECT id FROM import_conflicts WHERE entity_type = ? AND natural_key = ?",
+        (entity_type, natural_key)).fetchone()
+    if dup:
+        return False
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json) VALUES (?,?,?,?,?)",
+        (import_id, entity_type, natural_key, json.dumps(existing), json.dumps(incoming)))
+    conn.commit()
+    return True
+
+
+def _check_dividend_arithmetic(row: dict) -> None:
+    """Sanity-check, nie twardy gate: Gross - Taxes - Fees powinno się równać Dividend
+    Reinvested + Residual Amount. Łapie błędy pozycjonowania kolumn, nie blokuje importu —
+    pełna kontrola krzyżowa portfela wraca w kroku 14 (patrz docs/PLAN_KROK_13.md)."""
+    lhs = row["gross_dividend_payment_eur"] - row["taxes_eur"] - row["fees_eur"]
+    rhs = row["dividend_reinvested_eur"] + row["residual_amount_eur"]
+    if abs(lhs - rhs) > 0.02:
+        logger.warning(
+            "Dywidenda %s: arytmetyka się nie zgadza (gross-taxes-fees=%.2f, "
+            "reinvested+residual=%.2f) — możliwy błąd parsowania kolumn",
+            row["record_date"], lhs, rhs)
+
+
+def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
+                      cfg: dict | None = None) -> dict:
+    """Importuje jeden wyciąg Computershare: parsuje wszystkie sekcje i UPSERT-uje do
+    lots/grants/vests/dividends z detekcją konfliktu (nigdy nie nadpisuje cicho — patrz
+    docs/PLAN_KROK_13.md). Zwraca {import_id, rows_inserted, rows_unchanged, rows_conflict}.
+
+    Ten sam plik zaimportowany drugi raz: wszystkie natural_key już istnieją z identycznymi
+    wartościami → same rows_unchanged, zero duplikatów."""
+    espp_match_pct = (cfg or {}).get("espp_match_pct", 50.0)
+
+    text = extract_layout_text(pdf_bytes)
+    meta = parse_document_meta(text)
+    file_sha256 = hashlib.sha256(pdf_bytes).hexdigest()
+
+    cur = conn.execute(
+        "INSERT INTO imports (filename, file_sha256, period_start, period_end, as_of_date) "
+        "VALUES (?,?,?,?,?)",
+        (filename, file_sha256, meta["period_start"], meta["period_end"], meta["as_of_date"]))
+    import_id = cur.lastrowid
+    conn.commit()
+
+    rows_inserted = rows_unchanged = rows_conflict = 0
+
+    for row in parse_purchases(text):
+        nk = f"purchase:{row['contribution_date']}:{row['trade_date']}:{row['quantity']}"
+        existing = conn.execute("SELECT * FROM lots WHERE natural_key = ?", (nk,)).fetchone()
+        if existing is None:
+            taxlots.add_lot(
+                conn, row["trade_date"], "own", row["quantity"], row["purchase_price_eur"],
+                fee_eur=row["fees_eur"], source="pdf_import", natural_key=nk)
+            rows_inserted += 1
+        elif (existing["acquired_date"] == row["trade_date"]
+              and abs(existing["quantity"] - row["quantity"]) < _EPS
+              and abs(existing["price_eur"] - row["purchase_price_eur"]) < _EPS):
+            rows_unchanged += 1
+        elif _record_conflict(conn, import_id, "lot", nk, dict(existing), row):
+            rows_conflict += 1
+
+    for row in parse_matching_shares(text):
+        grant_nk = f"espp_grant:{row['allocation_date']}:{row['quantity']}"
+        existing_grant = grantsm.find_grant_by_natural_key(conn, grant_nk)
+        if existing_grant is None:
+            grant_id = grantsm.add_grant(
+                conn, "espp", row["allocation_date"], row["quantity"], grant_nk,
+                match_pct=espp_match_pct)
+            rows_inserted += 1
+        else:
+            grant_id = existing_grant["id"]
+            rows_unchanged += 1
+
+        vest_nk = f"espp_vest:{row['allocation_date']}:{row['vesting_date']}:{row['quantity']}"
+        existing_vest = grantsm.find_vest_by_natural_key(conn, vest_nk)
+        if existing_vest is None:
+            grantsm.add_vest(conn, grant_id, row["vesting_date"], row["quantity"], vest_nk)
+            rows_inserted += 1
+        elif abs(existing_vest["quantity"] - row["quantity"]) < _EPS:
+            rows_unchanged += 1
+        elif _record_conflict(conn, import_id, "vest", vest_nk, dict(existing_vest), row):
+            rows_conflict += 1
+
+    for row in parse_rs_award(text):
+        # grant.quantity zostaje NULL: jeden grant LTI zbiera wiele transz (wiele wierszy
+        # RS AWARD), każda z własną ilością w vests — suma per grant liczona z SUM(vests),
+        # nie z tego pojedynczego wiersza (patrz docs/PLAN_KROK_13.md).
+        grant_nk = f"lti_grant:{row['participation_description']}"
+        existing_grant = grantsm.find_grant_by_natural_key(conn, grant_nk)
+        if existing_grant is None:
+            grant_id = grantsm.add_grant(
+                conn, "lti", row["allocation_date"], None, grant_nk)
+            rows_inserted += 1
+        else:
+            grant_id = existing_grant["id"]
+            rows_unchanged += 1
+
+        vest_nk = f"lti_vest:{row['participation_description']}:{row['vesting_date']}:{row['quantity']}"
+        existing_vest = grantsm.find_vest_by_natural_key(conn, vest_nk)
+        if existing_vest is None:
+            grantsm.add_vest(conn, grant_id, row["vesting_date"], row["quantity"], vest_nk)
+            rows_inserted += 1
+        elif abs(existing_vest["quantity"] - row["quantity"]) < _EPS:
+            rows_unchanged += 1
+        elif _record_conflict(conn, import_id, "vest", vest_nk, dict(existing_vest), row):
+            rows_conflict += 1
+
+    for row in parse_dividends(text):
+        _check_dividend_arithmetic(row)
+        nk = f"dividend:{row['record_date']}:{row['purchase_date']}:{row['entitled_quantity']}"
+        existing = conn.execute(
+            "SELECT * FROM dividends WHERE natural_key = ?", (nk,)).fetchone()
+        if existing is None:
+            taxdiv.add_dividend(
+                conn, row["record_date"], row["purchase_date"], row["entitled_quantity"],
+                row["gross_dividend_payment_eur"], row["taxes_eur"], row["fees_eur"],
+                row["dividend_reinvested_eur"], row["purchase_price_eur"],
+                row["purchased_shares"], natural_key=nk)
+            rows_inserted += 1
+        elif abs(existing["gross_eur"] - row["gross_dividend_payment_eur"]) < _EPS:
+            rows_unchanged += 1
+        elif _record_conflict(conn, import_id, "dividend", nk, dict(existing), row):
+            rows_conflict += 1
+
+    type_a, type_b = parse_withhold_to_cover(text)
+    for row in type_a:
+        # Zero-efektowe potwierdzenie odroczenia podatku (art. 24 ust. 11) — tylko log,
+        # brak zapisu (patrz docs/PLAN_KROK_13.md).
+        logger.info(
+            "Withhold-to-Cover Typ A (zero-efektowe): %s, %.4f akcji potwierdzone",
+            row["execution_date"], row["quantity"])
+    for row in type_b:
+        # Prawdziwa sprzedaż gotówkowa — NIGDY nie księgowana automatycznie.
+        nk = f"wtc:{row['execution_date']}:{row['quantity']}:{row['net_proceeds_eur']}"
+        if _record_conflict(conn, import_id, "withhold_to_cover_sale", nk, {}, row):
+            rows_conflict += 1
+            logger.warning(
+                "Withhold-to-Cover Typ B (prawdziwa sprzedaż): %s, %.4f akcji, %.2f EUR "
+                "netto — wymaga ręcznego potwierdzenia przez /lots/sell",
+                row["execution_date"], row["quantity"], row["net_proceeds_eur"])
+
+    conn.execute(
+        "UPDATE imports SET rows_inserted = ?, rows_unchanged = ?, rows_conflict = ? "
+        "WHERE id = ?",
+        (rows_inserted, rows_unchanged, rows_conflict, import_id))
+    conn.commit()
+
+    return {
+        "import_id": import_id,
+        "rows_inserted": rows_inserted,
+        "rows_unchanged": rows_unchanged,
+        "rows_conflict": rows_conflict,
+    }

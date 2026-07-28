@@ -44,6 +44,20 @@ def lots_based_position_values(conn: sqlite3.Connection, cfg: dict, price_eur: f
                            dividends_net_total_eur)
 
 
+def position_values_auto(conn: sqlite3.Connection, cfg: dict, price_eur: float | None,
+                         eurpln_rate: float | None,
+                         dividends_net_total_eur: float = 0.0) -> dict:
+    """Dispatcher: loty istnieją -> `lots_based_position_values()`; brak lotów (użytkownik,
+    który jeszcze nic nie zaimportował/nie dodał ręcznie) -> stary, ręczny
+    `position_values(cfg['position_qty'], cfg['avg_cost_eur'], ...)` z kroku 9, żeby nie
+    stracić możliwości orientacyjnego wpisania stanu posiadania przed pierwszym importem."""
+    if taxlots.open_lots(conn):
+        return lots_based_position_values(conn, cfg, price_eur, eurpln_rate,
+                                          dividends_net_total_eur)
+    return position_values(cfg["position_qty"], cfg["avg_cost_eur"], price_eur, eurpln_rate,
+                           dividends_net_total_eur)
+
+
 def position_values(position_qty: float, avg_cost_eur: float, price_eur: float | None,
                     eurpln_rate: float | None, dividends_net_total_eur: float = 0.0) -> dict:
     """total_return_pct = (niezrealizowany P&L + suma netto dywidend) / koszt

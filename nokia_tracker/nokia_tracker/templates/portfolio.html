@@ -7,11 +7,51 @@
   {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
 </div>
 
+{% if lots_position %}
 <div class="card">
-  <div class="card-title">Stan posiadania</div>
+  <div class="card-title">Stan posiadania — z lotów (aktywne źródło)</div>
   <p class="muted">
-    Prosty stan posiadania (ilość + średni koszt) — pełne loty z FIFO i historią
-    nabyć dochodzą w wydaniu 0.2.0 razem z rozliczeniem podatkowym.
+    Liczone automatycznie z tabeli lotów (<a href="{{ url_for('lots_get') }}">Loty</a>):
+    ilość to suma wszystkich posiadanych akcji, koszt liczony wg aktywnej polityki
+    (<code>{{ cfg.cost_basis_policy }}</code>) — formularz poniżej jest teraz tylko zapasowy
+    i nie wpływa na te liczby.
+  </p>
+  <div class="grid stats">
+    <div class="stat">
+      <span class="stat-label">Ilość</span>
+      <span class="stat-value">{{ '%.4f'|format(lots_position.position_qty) }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Koszt bazowy</span>
+      <span class="stat-value">{{ '%.0f'|format(lots_position.cost_basis_eur) }}<span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Wartość rynkowa</span>
+      <span class="stat-value">
+        {{ '%.0f'|format(lots_position.market_value_eur) if lots_position.market_value_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Niezrealizowany P&L</span>
+      <span class="stat-value {{ 'up' if (lots_position.unrealized_pnl_eur or 0) > 0 else 'down' }}">
+        {{ '%+.0f'|format(lots_position.unrealized_pnl_eur) if lots_position.unrealized_pnl_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Stan posiadania — ręczny (zapasowy)</div>
+  <p class="muted">
+    {% if lots_position %}
+    Używane tylko, dopóki nie ma żadnych lotów. Skoro masz już loty (powyżej), ten formularz
+    jest nieaktywny informacyjnie — edytuj stan przez <a href="{{ url_for('lots_get') }}">Loty</a>.
+    {% else %}
+    Prosty stan posiadania (ilość + średni koszt) — używany, dopóki nie dodasz pierwszego lotu
+    przez <a href="{{ url_for('lots_get') }}">Loty</a> albo import PDF przez
+    <a href="{{ url_for('imports_get') }}">Importy</a>.
+    {% endif %}
   </p>
   <form class="form" method="post" action="{{ url_for('portfolio_post') }}">
     <div class="row2">

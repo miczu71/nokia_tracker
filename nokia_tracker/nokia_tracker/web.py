@@ -100,9 +100,9 @@ def create_app(db_path: str) -> Flask:
             cfg = settingsm.get_settings(conn)
             cost_basis_eur = cfg["position_qty"] * cfg["avg_cost_eur"]
             dividends = sensors.dividends_values(conn, cfg, cost_basis_eur)
-            position = portfoliom.position_values(
-                cfg["position_qty"], cfg["avg_cost_eur"], values.get("price_eur"),
-                values.get("eurpln_rate"), dividends_net_total_eur=dividends["dividends_net_eur"])
+            position = portfoliom.position_values_auto(
+                conn, cfg, values.get("price_eur"), values.get("eurpln_rate"),
+                dividends_net_total_eur=dividends["dividends_net_eur"])
 
             closes = quotes.daily_closes(conn, ids["primary"])[-90:]
             recent_alerts = conn.execute(
@@ -135,8 +135,17 @@ def create_app(db_path: str) -> Flask:
         conn = _conn()
         try:
             cfg = settingsm.get_settings(conn)
+            lots_position = None
+            if taxlots.open_lots(conn):
+                ids = _ids(conn)
+                price = quotes.latest_quote(conn, ids["primary"], granularity="daily")
+                eurpln = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+                lots_position = portfoliom.lots_based_position_values(
+                    conn, cfg, price["close"] if price else None,
+                    eurpln["close"] if eurpln else None)
             return render_template(
                 "portfolio.html", active="portfolio", version=__version__, cfg=cfg,
+                lots_position=lots_position,
                 saved=request.args.get("saved") == "1")
         finally:
             conn.close()

@@ -197,9 +197,8 @@ def main() -> None:
 
                 cost_basis_eur = cfg["position_qty"] * cfg["avg_cost_eur"]
                 dividends = sensors.dividends_values(c, cfg, cost_basis_eur)
-                position = portfolio.position_values(
-                    cfg["position_qty"], cfg["avg_cost_eur"], values.get("price_eur"),
-                    values.get("eurpln_rate"),
+                position = portfolio.position_values_auto(
+                    c, cfg, values.get("price_eur"), values.get("eurpln_rate"),
                     dividends_net_total_eur=dividends["dividends_net_eur"])
                 values.update(position)
                 values.update(dividends)

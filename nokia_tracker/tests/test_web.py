@@ -249,6 +249,18 @@ def test_grants_page_shows_espp_and_lti_grouped_with_tranches(tmp_path):
         assert "1267" in html  # suma transz LTI (634+633), bo grants.quantity=NULL
 
 
+def test_grants_page_shows_overdue_badge_for_past_pending_tranches(tmp_path, monkeypatch):
+    from datetime import datetime as _datetime
+    # _make_grants_app tworzy transze datowane 2026-01-06/2026-07-06 - z ustalonym "dziś" w
+    # przyszłości względem obu, żeby test nie zależał od realnego zegara systemowego.
+    monkeypatch.setattr("nokia_tracker.tax.grants.datetime", type(
+        "FixedDatetime", (), {"now": staticmethod(lambda tz=None: _datetime(2027, 1, 1))}))
+    app = _make_grants_app(tmp_path)
+    with app.test_client() as c:
+        html = c.get("/grants").get_data(as_text=True)
+        assert "zaległe — sprawdź wyciąg" in html
+
+
 # --- imports ---
 
 def test_imports_page_empty_state(client):

@@ -32,7 +32,10 @@
           <td class="num">{{ '%.0f'|format(g.match_pct) }}%</td>
           <td>{{ g.vest_date }}</td>
           <td class="num">{{ '%.4f'|format(g.quantity) }}</td>
-          <td>{{ status_labels.get(g.status, g.status) }}</td>
+          <td>
+            {% if g.overdue %}<span class="badge">zaległe — sprawdź wyciąg</span>
+            {% else %}{{ status_labels.get(g.status, g.status) }}{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -62,7 +65,10 @@
           <tr>
             <td>{{ v.vest_date }}</td>
             <td class="num">{{ '%.4f'|format(v.quantity) }}</td>
-            <td>{{ status_labels.get(v.status, v.status) }}</td>
+            <td>
+              {% if v.overdue %}<span class="badge">zaległe — sprawdź wyciąg</span>
+              {% else %}{{ status_labels.get(v.status, v.status) }}{% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

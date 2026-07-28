@@ -96,3 +96,42 @@ def test_list_lti_grouped_sums_multiple_tranches_and_extracts_description(conn):
 
 def test_list_lti_grouped_empty_when_no_lti_grants(conn):
     assert grants.list_lti_grouped(conn) == []
+
+
+# --- overdue flag (krok 13.6, docs/PLAN_KROK_13_6_vesting_gap.md) ---
+
+def test_list_espp_marks_pending_past_vest_date_as_overdue(conn):
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x", match_pct=50.0)
+    grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    rows = grants.list_espp(conn, today="2026-07-28")
+    assert rows[0]["overdue"] is True
+
+
+def test_list_espp_does_not_mark_future_vest_date_as_overdue(conn):
+    grant_id = grants.add_grant(conn, "espp", "2026-04-27", 17.37, "espp_grant:y", match_pct=50.0)
+    grants.add_vest(conn, grant_id, "2026-08-01", 17.37, "espp_vest:y")
+    rows = grants.list_espp(conn, today="2026-07-28")
+    assert rows[0]["overdue"] is False
+
+
+def test_list_espp_does_not_mark_already_vested_status_as_overdue(conn):
+    # Status już ustawiony ręcznie na 'vested' - nie chcemy fałszywie oznaczać jako
+    # zaległe czegoś, co zostało już rozwiązane.
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:z", match_pct=50.0)
+    grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:z", status="vested")
+    rows = grants.list_espp(conn, today="2026-07-28")
+    assert rows[0]["overdue"] is False
+
+
+def test_list_lti_grouped_marks_past_pending_vest_as_overdue_per_tranche(conn):
+    grant_id = grants.add_grant(conn, "lti", "2023-07-06", None, "lti_grant:g1")
+    grants.add_vest(conn, grant_id, "2026-07-06", 2100.0, "lti_vest:g1:2026-07-06")
+    result = grants.list_lti_grouped(conn, today="2026-07-28")
+    assert result[0]["vests"][0]["overdue"] is True
+
+
+def test_list_lti_grouped_does_not_mark_future_tranche_as_overdue(conn):
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g2")
+    grants.add_vest(conn, grant_id, "2027-07-05", 633.0, "lti_vest:g2:2027-07-05")
+    result = grants.list_lti_grouped(conn, today="2026-07-28")
+    assert result[0]["vests"][0]["overdue"] is False

@@ -90,3 +90,73 @@ def compute_dividend_tax(gross_eur: float, withholding_pct: float,
         "pl_tax_due_eur": round(pl_tax_due_eur, 2),
         "reclaimable_from_finland_eur": round(reclaimable_from_finland_eur, 2),
     }
+
+
+def compute_dividend_tax_pln(row, cfg: dict) -> dict:
+    """Krok 15 — sekcja G PIT-38: ten sam łańcuch co `compute_dividend_tax()`
+    (u źródła -> zaliczenie ograniczone stawką traktatową -> Belka -> dopłata
+    w PL / kwota do odzysku z Vero), ale liczony w PLN na `row['gross_pln']`,
+    czyli na kursie NBP ZAMROŻONYM na Record Date (art. 11a) przez
+    `add_dividend()`. `row` może być `sqlite3.Row` lub `dict` — używa tylko
+    `gross_pln`/`withholding_pct`.
+
+    Zamrożony jest kurs, NIE stawki procentowe: `treaty_withholding_pct`/
+    `pl_capital_gains_tax_pct` z `cfg` stosowane są w momencie wywołania, więc
+    zmiana ustawień w UI przelicza kwoty PLN na nowo (po kursach z dnia
+    zdarzenia) — to celowe, nie niedopatrzenie (patrz `backfill_pl_tax_due`).
+
+    Zwraca `None` dla obu kwot, gdy `gross_pln` jeszcze nie istnieje (kurs
+    NBP nie został jeszcze zamrożony, np. NBP było niedostępne przy zapisie).
+    """
+    gross_pln = row["gross_pln"]
+    if gross_pln is None:
+        return {"pl_tax_due_pln": None, "reclaimable_from_finland_pln": None}
+
+    withholding_pct = row["withholding_pct"]
+    if withholding_pct is None:
+        withholding_pct = cfg.get("finnish_withholding_pct", 35.0)
+
+    withholding_paid_pln = gross_pln * withholding_pct / 100
+    treaty_cap_pln = gross_pln * cfg["treaty_withholding_pct"] / 100
+    credit_pln = min(withholding_paid_pln, treaty_cap_pln)
+    belka_pln = gross_pln * cfg["pl_capital_gains_tax_pct"] / 100
+    pl_tax_due_pln = max(0.0, belka_pln - credit_pln)
+    reclaimable_from_finland_pln = max(0.0, withholding_paid_pln - treaty_cap_pln)
+
+    return {
+        "withholding_paid_pln": round(withholding_paid_pln, 2),
+        "belka_pln": round(belka_pln, 2),
+        "credit_pln": round(credit_pln, 2),
+        "pl_tax_due_pln": round(pl_tax_due_pln, 2),
+        "reclaimable_from_finland_pln": round(reclaimable_from_finland_pln, 2),
+    }
+
+
+def backfill_pl_tax_due(conn: sqlite3.Connection, cfg: dict) -> int:
+    """Przelicza `pl_tax_due_pln` dla wszystkich dywidend z już zamrożonym
+    kursem NBP (`gross_pln IS NOT NULL`) na podstawie AKTUALNYCH stawek
+    traktat/Belka z `cfg`.
+
+    W odróżnieniu od `tax/lots.py::backfill_missing_rates` (które nigdy nie
+    nadpisuje zamrożonego kursu, bo kurs jest prawnie zamrożony na dobre),
+    to przeliczenie robi się na nowo za KAŻDYM wywołaniem — to czysta
+    arytmetyka na już zamrożonym `gross_pln`, zero wywołań NBP, więc zmiana
+    ustawień w UI ma się odzwierciedlić natychmiast po następnym backfillu
+    (job schedulera lub odczyt strony `/pit38`), a nie zostać w zawieszeniu
+    do ręcznej edycji rekordu. Wiersze bez zamrożonego kursu (`gross_pln IS
+    NULL`) są pomijane — nie ma z czego policzyć, `backfill_missing_rates`
+    dla lotów to inny mechanizm i nie dotyczy tabeli `dividends`.
+
+    Zwraca liczbę zaktualizowanych wierszy."""
+    rows = conn.execute(
+        "SELECT id, gross_pln, withholding_pct FROM dividends "
+        "WHERE gross_pln IS NOT NULL").fetchall()
+    updated = 0
+    for row in rows:
+        result = compute_dividend_tax_pln(row, cfg)
+        conn.execute(
+            "UPDATE dividends SET pl_tax_due_pln = ? WHERE id = ?",
+            (result["pl_tax_due_pln"], row["id"]))
+        updated += 1
+    conn.commit()
+    return updated

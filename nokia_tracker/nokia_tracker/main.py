@@ -19,6 +19,7 @@ from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
 from . import news, portfolio, quotes, sensors
 from . import settings as settingsm
 from .importers import computershare_pdf
+from .tax import dividends as taxdiv
 from .tax import grants as grantsm
 from .tax import lots as taxlots
 from .ai import scoring as ai_scoring
@@ -282,13 +283,23 @@ def main() -> None:
         chwilowo niedostępne (tax/lots.py::add_lot nie blokuje zapisu na
         brak kursu — patrz krok 12). GET /lots też to robi przy każdej
         wizycie, ten job jest siatką bezpieczeństwa, gdyby nikt strony
-        nie odwiedził."""
+        nie odwiedził. Przy okazji (krok 15): przelicza sekcję G
+        (`dividends.pl_tax_due_pln`) na AKTUALNYCH stawkach traktat/Belka —
+        w odróżnieniu od kursu NBP to nie jest jednorazowe uzupełnienie
+        braku, tylko przeliczenie za każdym razem (patrz docstring
+        `taxdiv.backfill_pl_tax_due`), więc zmiana ustawień w UI dociera
+        tu bez czekania na ręczną wizytę na `/pit38`."""
         with dbm.WRITE_LOCK:
             c = dbm.get_conn(db_path)
             try:
                 filled = taxlots.backfill_missing_rates(c)
                 if filled:
                     logger.info("Backfill kursów NBP: uzupełniono %d lotów", filled)
+                cfg = settingsm.get_settings(c)
+                updated = taxdiv.backfill_pl_tax_due(c, cfg)
+                if updated:
+                    logger.info(
+                        "Sekcja G: przeliczono pl_tax_due_pln dla %d dywidend", updated)
             except Exception:
                 logger.exception("Backfill kursów NBP nieudany")
             finally:

@@ -153,12 +153,21 @@ def record_sale(conn: sqlite3.Connection, sale_date: str, quantity: float,
     return sale_id
 
 
-def _allocate_fifo(conn: sqlite3.Connection, sale_id: int, sale_quantity: float,
-                    price_eur: float, fee_eur: float, nbp_rate: float) -> None:
+def _plan_fifo(candidates: list[dict], sale_quantity: float, price_eur: float,
+               fee_eur: float, nbp_rate: float) -> list[dict]:
+    """Czysta funkcja: planuje alokację FIFO bez `conn`/`INSERT` — krok 15
+    wydzielił ją z `_allocate_fifo`, żeby `tax/whatif.py::simulate_sale()`
+    mogła użyć DOKŁADNIE tej samej kolejności i matematyki kosztu na akcję
+    co realna zapisana sprzedaż, bez pisania do bazy. `candidates` musi być
+    już posortowane FIFO (`acquired_date ASC, id ASC`) z `qty_remaining > 0`
+    — dokładnie to, co zwraca `open_lots()`.
+
+    Zwraca listę alokacji (`lot_id`, `lot_type`, `acquired_date`, `quantity`,
+    `cost_pln`, `revenue_pln`). Podnosi te same wyjątki co dotychczasowy
+    `_allocate_fifo`: `CostBasisMissingError` (lot bez zamrożonego kursu) i
+    `InsufficientLotsError` (pokrycie zmieniło się w trakcie planowania)."""
     remaining_to_allocate = sale_quantity
-    candidates = conn.execute(
-        "SELECT * FROM lots WHERE qty_remaining > ? ORDER BY acquired_date ASC, id ASC",
-        (_EPS,)).fetchall()
+    allocations: list[dict] = []
 
     for lot in candidates:
         if remaining_to_allocate <= _EPS:
@@ -173,13 +182,14 @@ def _allocate_fifo(conn: sqlite3.Connection, sale_id: int, sale_quantity: float,
         fee_share_eur = fee_eur * (take / sale_quantity) if sale_quantity else 0.0
         alloc_revenue_pln = (take * price_eur - fee_share_eur) * nbp_rate
 
-        conn.execute(
-            "INSERT INTO sale_allocations (sale_id, lot_id, quantity, cost_pln, revenue_pln) "
-            "VALUES (?,?,?,?,?)",
-            (sale_id, lot["id"], take, alloc_cost_pln, alloc_revenue_pln))
-        conn.execute(
-            "UPDATE lots SET qty_remaining = ? WHERE id = ?",
-            (lot["qty_remaining"] - take, lot["id"]))
+        allocations.append({
+            "lot_id": lot["id"],
+            "lot_type": lot["lot_type"],
+            "acquired_date": lot["acquired_date"],
+            "quantity": take,
+            "cost_pln": alloc_cost_pln,
+            "revenue_pln": alloc_revenue_pln,
+        })
         remaining_to_allocate -= take
 
     if remaining_to_allocate > _EPS:
@@ -189,3 +199,25 @@ def _allocate_fifo(conn: sqlite3.Connection, sale_id: int, sale_quantity: float,
         # wyjątek niż po cichu zaksięgować niepełną sprzedaż.
         raise InsufficientLotsError(
             "Pokrycie zmieniło się w trakcie alokacji — sprzedaż wycofana")
+
+    return allocations
+
+
+def _allocate_fifo(conn: sqlite3.Connection, sale_id: int, sale_quantity: float,
+                    price_eur: float, fee_eur: float, nbp_rate: float) -> None:
+    candidates = [dict(r) for r in conn.execute(
+        "SELECT * FROM lots WHERE qty_remaining > ? ORDER BY acquired_date ASC, id ASC",
+        (_EPS,)).fetchall()]
+    plan = _plan_fifo(candidates, sale_quantity, price_eur, fee_eur, nbp_rate)
+
+    lots_by_id = {lot["id"]: lot for lot in candidates}
+    for alloc in plan:
+        conn.execute(
+            "INSERT INTO sale_allocations (sale_id, lot_id, quantity, cost_pln, revenue_pln) "
+            "VALUES (?,?,?,?,?)",
+            (sale_id, alloc["lot_id"], alloc["quantity"], alloc["cost_pln"],
+             alloc["revenue_pln"]))
+        new_remaining = lots_by_id[alloc["lot_id"]]["qty_remaining"] - alloc["quantity"]
+        conn.execute(
+            "UPDATE lots SET qty_remaining = ? WHERE id = ?",
+            (new_remaining, alloc["lot_id"]))

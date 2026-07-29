@@ -1,0 +1,147 @@
+"""Roczny raport PIT-38 (BLUEPRINT §3a, krok 15): poz. C (trzy polityki
+kosztu, reuse tax/policy.py), sekcja G (dywidendy w PLN na zamrożonym
+kursie, reuse tax/dividends.py), PIT/ZG, ślad obliczeń per lot i kwota do
+odzysku z Vero. Zero żywego HTTP — fx_nbp.rate_for_event zamockowane na
+stały kurs, jak w test_tax_lots.py/test_tax_policy.py."""
+from __future__ import annotations
+
+import pytest
+
+from nokia_tracker.tax import dividends as taxdiv
+from nokia_tracker.tax import lots, pit38
+
+
+@pytest.fixture(autouse=True)
+def _fake_nbp_rate(monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    return None
+
+
+def _base_cfg(**overrides) -> dict:
+    cfg = {
+        "cost_basis_policy": "own_only",
+        "pl_capital_gains_tax_pct": 19.0,
+        "treaty_withholding_pct": 15.0,
+        "finnish_withholding_pct": 35.0,
+    }
+    cfg.update(overrides)
+    return cfg
+
+
+def _add_dividend(conn, record_date, gross_eur=100.0, taxes_eur=35.0):
+    return taxdiv.add_dividend(
+        conn, record_date=record_date, purchase_date=record_date,
+        entitled_quantity=1.0, gross_eur=gross_eur, taxes_eur=taxes_eur, fees_eur=0.0,
+        reinvested_eur=gross_eur - taxes_eur, purchase_price_eur=1.0,
+        purchased_shares=0.01, natural_key=f"div:{record_date}:{gross_eur}")
+
+
+def test_annual_report_poz_c_matches_compute_all_policies(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    lots.add_lot(conn, "2024-02-10", "lti", 10, 0.0)
+    lots.record_sale(conn, "2024-06-01", 20, 8.0)
+
+    report = pit38.annual_report(conn, _base_cfg(), year=2024)
+    from nokia_tracker.tax import policy as taxpolicy
+    expected = taxpolicy.compute_all_policies(conn, _base_cfg(), year=2024)
+
+    assert report["policies"] == expected
+
+
+def test_annual_report_section_g_sums_dividends_in_pln(conn):
+    _add_dividend(conn, "2024-03-15", gross_eur=100.0, taxes_eur=35.0)
+    _add_dividend(conn, "2024-09-01", gross_eur=50.0, taxes_eur=17.5)
+
+    report = pit38.annual_report(conn, _base_cfg(), year=2024)
+    g = report["section_g"]
+
+    # gross_pln = (100+50) EUR * 4.0 (kurs stub) = 600
+    assert g["gross_pln"] == pytest.approx(600.0)
+    assert g["dividend_count"] == 2
+    # przykład z BLUEPRINT skalowany kursem 4.0: 4 EUR dopłaty * 4.0 na
+    # każde 100 EUR -> tu dwie dywidendy o tej samej proporcji (35%/15%/19%)
+    assert g["pl_tax_due_pln"] == pytest.approx((4.0 + 2.0) * 4.0)
+    assert g["reclaimable_from_finland_pln"] == pytest.approx((20.0 + 10.0) * 4.0)
+
+
+def test_annual_report_section_g_filters_by_year(conn):
+    _add_dividend(conn, "2023-03-15", gross_eur=100.0, taxes_eur=35.0)
+    _add_dividend(conn, "2024-03-15", gross_eur=50.0, taxes_eur=17.5)
+
+    report_2023 = pit38.annual_report(conn, _base_cfg(), year=2023)
+    report_2024 = pit38.annual_report(conn, _base_cfg(), year=2024)
+
+    assert report_2023["section_g"]["dividend_count"] == 1
+    assert report_2023["section_g"]["gross_pln"] == pytest.approx(400.0)
+    assert report_2024["section_g"]["dividend_count"] == 1
+    assert report_2024["section_g"]["gross_pln"] == pytest.approx(200.0)
+
+
+def test_annual_report_pit_zg_mirrors_dividend_foreign_tax(conn):
+    _add_dividend(conn, "2024-03-15", gross_eur=100.0, taxes_eur=35.0)
+
+    report = pit38.annual_report(conn, _base_cfg(), year=2024)
+    pit_zg = report["pit_zg"]
+
+    assert pit_zg["country"] == "Finlandia"
+    assert pit_zg["foreign_income_pln"] == pytest.approx(400.0)
+    assert pit_zg["foreign_tax_paid_pln"] == pytest.approx(35.0 * 4.0)
+
+
+def test_annual_report_sale_trace_has_per_lot_breakdown(conn):
+    lot1 = lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    lot2 = lots.add_lot(conn, "2024-03-01", "lti", 5, 0.0)
+    lots.record_sale(conn, "2024-06-01", 8, 8.0)
+
+    report = pit38.annual_report(conn, _base_cfg(), year=2024)
+    trace = report["sale_trace"]
+
+    assert len(trace) == 2  # sprzedaż przecięła granicę dwóch lotów
+    by_lot = {row["lot_id"]: row for row in trace}
+    assert by_lot[lot1]["quantity"] == pytest.approx(5)
+    assert by_lot[lot1]["lot_type"] == "own"
+    assert by_lot[lot1]["acquired_date"] == "2024-01-10"
+    assert by_lot[lot2]["quantity"] == pytest.approx(3)
+    assert by_lot[lot2]["lot_type"] == "lti"
+    for row in trace:
+        assert row["lot_nbp_rate"] == pytest.approx(4.0)
+        assert row["sale_nbp_rate"] == pytest.approx(4.0)
+        assert row["sale_date"] == "2024-06-01"
+
+
+def test_annual_report_sale_trace_filters_by_year(conn):
+    lots.add_lot(conn, "2023-01-10", "own", 5, 5.0)
+    lots.record_sale(conn, "2023-06-01", 5, 8.0)
+    lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    lots.record_sale(conn, "2024-06-01", 5, 8.0)
+
+    report_2023 = pit38.annual_report(conn, _base_cfg(), year=2023)
+    report_2024 = pit38.annual_report(conn, _base_cfg(), year=2024)
+
+    assert len(report_2023["sale_trace"]) == 1
+    assert report_2023["sale_trace"][0]["sale_date"] == "2023-06-01"
+    assert len(report_2024["sale_trace"]) == 1
+    assert report_2024["sale_trace"][0]["sale_date"] == "2024-06-01"
+
+
+def test_annual_report_is_stable_across_repeated_calls(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    lots.record_sale(conn, "2024-06-01", 10, 8.0)
+    _add_dividend(conn, "2024-03-15")
+
+    first = pit38.annual_report(conn, _base_cfg(), year=2024)
+    second = pit38.annual_report(conn, _base_cfg(), year=2024)
+    assert first == second
+
+
+def test_annual_report_empty_year_has_zeroed_sections_not_errors(conn):
+    report = pit38.annual_report(conn, _base_cfg(), year=2099)
+    assert report["section_g"]["dividend_count"] == 0
+    assert report["section_g"]["gross_pln"] == 0.0
+    assert report["sale_trace"] == []
+    assert report["policies"]["own_only"]["revenue_pln"] == 0.0

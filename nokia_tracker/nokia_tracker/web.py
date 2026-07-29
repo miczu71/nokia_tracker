@@ -5,10 +5,14 @@ HTML agresywnie i nie rewaliduje).
 """
 from __future__ import annotations
 
+import csv
+import io
 import json
 import logging
 import os
+from datetime import datetime
 
+import openpyxl
 from flask import Flask, Response, redirect, render_template, request, url_for
 
 from . import __version__, analysis, db as dbm, fx
@@ -17,9 +21,12 @@ from . import quotes, sensors
 from . import settings as settingsm
 from . import tax as taxm
 from .importers import computershare_pdf
+from .tax import dividends as taxdiv
 from .tax import grants as grantsm
 from .tax import lots as taxlots
+from .tax import pit38 as taxpit38
 from .tax import policy as taxpolicy
+from .tax import whatif as taxwhatif
 from .ai import openai_compat
 
 logger = logging.getLogger(__name__)
@@ -428,6 +435,147 @@ def create_app(db_path: str) -> Flask:
             with dbm.WRITE_LOCK:
                 settingsm.set_settings(conn, updates)
             return redirect(url_for("settings_get", saved="1"))
+        finally:
+            conn.close()
+
+    def _pit38_report_for_request(conn):
+        """Wspólne dla /pit38 i obu eksportów: rok z ?year= (domyślnie
+        cfg['tax_year'] lub bieżący rok) + roczny raport."""
+        cfg = settingsm.get_settings(conn)
+        taxdiv.backfill_pl_tax_due(conn, cfg)
+        year = request.args.get("year", type=int) or cfg.get("tax_year") or datetime.now().year
+        report = taxpit38.annual_report(conn, cfg, year)
+        return cfg, year, report
+
+    @app.get("/pit38")
+    def pit38_get():
+        conn = _conn()
+        try:
+            cfg, year, report = _pit38_report_for_request(conn)
+
+            whatif_result = None
+            whatif_error = None
+            qty_raw = request.args.get("whatif_qty")
+            price_raw = request.args.get("whatif_price")
+            if qty_raw and price_raw:
+                try:
+                    whatif_result = taxwhatif.simulate_sale(
+                        conn, cfg, float(qty_raw), float(price_raw))
+                except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
+                    whatif_error = str(e)
+
+            current_price = sensors.market_values(conn, _ids(conn)["primary"]).get("price_eur")
+
+            return render_template(
+                "pit38.html", active="pit38", version=__version__,
+                year=year, report=report, cfg=cfg,
+                whatif_result=whatif_result, whatif_error=whatif_error,
+                whatif_qty=qty_raw, whatif_price=price_raw,
+                current_price=current_price,
+                print_mode=request.args.get("print") == "1")
+        finally:
+            conn.close()
+
+    @app.get("/pit38/export.csv")
+    def pit38_export_csv():
+        conn = _conn()
+        try:
+            _cfg, year, report = _pit38_report_for_request(conn)
+
+            buf = io.StringIO()
+            w = csv.writer(buf)
+            w.writerow(["PIT-38", year])
+            w.writerow([])
+            w.writerow(["Polityka", "Przychod PLN", "Koszt PLN", "Dochod PLN", "Podatek PLN"])
+            for name, data in report["policies"].items():
+                w.writerow([name, data["revenue_pln"], data["cost_pln"],
+                            data["income_pln"], data["tax_pln"]])
+            w.writerow([])
+            w.writerow(["Sekcja G (dywidendy)"])
+            w.writerow(["Liczba dywidend", report["section_g"]["dividend_count"]])
+            w.writerow(["Brutto PLN", report["section_g"]["gross_pln"]])
+            w.writerow(["Pobrane u zrodla PLN", report["section_g"]["withholding_paid_pln"]])
+            w.writerow(["Zaliczenie traktatowe PLN", report["section_g"]["credit_pln"]])
+            w.writerow(["Belka PLN", report["section_g"]["belka_pln"]])
+            w.writerow(["Doplata w PL PLN", report["section_g"]["pl_tax_due_pln"]])
+            w.writerow(["Do odzyskania z Vero PLN",
+                        report["section_g"]["reclaimable_from_finland_pln"]])
+            w.writerow([])
+            w.writerow(["PIT/ZG", "Kraj", report["pit_zg"]["country"]])
+            w.writerow(["Dochod zagraniczny PLN", report["pit_zg"]["foreign_income_pln"]])
+            w.writerow(["Podatek zaplacony za granica PLN",
+                        report["pit_zg"]["foreign_tax_paid_pln"]])
+            w.writerow([])
+            w.writerow(["Slad per lot"])
+            w.writerow(["Lot ID", "Data nabycia", "Typ", "Ilosc", "Koszt PLN",
+                        "Przychod PLN", "Kurs NBP lotu", "Data kursu lotu",
+                        "Data sprzedazy", "Kurs NBP sprzedazy"])
+            for row in report["sale_trace"]:
+                w.writerow([
+                    row["lot_id"], row["acquired_date"], row["lot_type"], row["quantity"],
+                    row["cost_pln"], row["revenue_pln"], row["lot_nbp_rate"],
+                    row["lot_nbp_rate_date"], row["sale_date"], row["sale_nbp_rate"]])
+
+            filename = f"pit38_{year}.csv"
+            return Response(
+                "﻿" + buf.getvalue(),
+                mimetype="text/csv; charset=utf-8",
+                headers={"Content-Disposition": f"attachment; filename={filename}"})
+        finally:
+            conn.close()
+
+    @app.get("/pit38/export.xlsx")
+    def pit38_export_xlsx():
+        conn = _conn()
+        try:
+            _cfg, year, report = _pit38_report_for_request(conn)
+
+            wb = openpyxl.Workbook()
+            ws_summary = wb.active
+            ws_summary.title = "Podsumowanie"
+            ws_summary.append(
+                ["Polityka", "Przychod PLN", "Koszt PLN", "Dochod PLN", "Podatek PLN"])
+            for name, data in report["policies"].items():
+                ws_summary.append([name, data["revenue_pln"], data["cost_pln"],
+                                    data["income_pln"], data["tax_pln"]])
+            ws_summary.append([])
+            ws_summary.append(["Sekcja G (dywidendy)"])
+            ws_summary.append(["Liczba dywidend", report["section_g"]["dividend_count"]])
+            ws_summary.append(["Brutto PLN", report["section_g"]["gross_pln"]])
+            ws_summary.append(["Doplata w PL PLN", report["section_g"]["pl_tax_due_pln"]])
+            ws_summary.append(
+                ["Do odzyskania z Vero PLN", report["section_g"]["reclaimable_from_finland_pln"]])
+            ws_summary.append([])
+            ws_summary.append(["PIT/ZG", "Kraj", report["pit_zg"]["country"]])
+            ws_summary.append(["Dochod zagraniczny PLN", report["pit_zg"]["foreign_income_pln"]])
+
+            ws_trace = wb.create_sheet("Ślad per lot")
+            ws_trace.append(["Lot ID", "Data nabycia", "Typ", "Ilosc", "Koszt PLN",
+                              "Przychod PLN", "Kurs NBP lotu", "Data kursu lotu",
+                              "Data sprzedazy", "Kurs NBP sprzedazy"])
+            for row in report["sale_trace"]:
+                ws_trace.append([
+                    row["lot_id"], row["acquired_date"], row["lot_type"], row["quantity"],
+                    row["cost_pln"], row["revenue_pln"], row["lot_nbp_rate"],
+                    row["lot_nbp_rate_date"], row["sale_date"], row["sale_nbp_rate"]])
+
+            ws_div = wb.create_sheet("Dywidendy")
+            ws_div.append(["Rok", year])
+            ws_div.append(["Liczba dywidend", report["section_g"]["dividend_count"]])
+            ws_div.append(["Brutto PLN", report["section_g"]["gross_pln"]])
+            ws_div.append(["Pobrane u zrodla PLN", report["section_g"]["withholding_paid_pln"]])
+            ws_div.append(["Doplata w PL PLN", report["section_g"]["pl_tax_due_pln"]])
+            ws_div.append(
+                ["Do odzyskania z Vero PLN", report["section_g"]["reclaimable_from_finland_pln"]])
+
+            buf = io.BytesIO()
+            wb.save(buf)
+            buf.seek(0)
+            filename = f"pit38_{year}.xlsx"
+            return Response(
+                buf.getvalue(),
+                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers={"Content-Disposition": f"attachment; filename={filename}"})
         finally:
             conn.close()
 

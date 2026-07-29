@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Nokia Tracker">
 </head>
-<body>
+<body{% if print_mode is defined and print_mode %} class="print-mode"{% endif %}>
 <nav class="nav">
   <span class="nav-brand">📈 Nokia Tracker</span>
   <div class="nav-links">
@@ -20,6 +20,7 @@
     <a href="{{ url_for('lots_get') }}" {% if active == 'lots' %}class="active"{% endif %}>Loty</a>
     <a href="{{ url_for('grants_get') }}" {% if active == 'grants' %}class="active"{% endif %}>Granty</a>
     <a href="{{ url_for('dividends_get') }}" {% if active == 'dividends' %}class="active"{% endif %}>Dywidendy</a>
+    <a href="{{ url_for('pit38_get') }}" {% if active == 'pit38' %}class="active"{% endif %}>PIT-38</a>
     <a href="{{ url_for('imports_get') }}" {% if active == 'imports' %}class="active"{% endif %}>Importy</a>
     <a href="{{ url_for('news_page') }}" {% if active == 'news' %}class="active"{% endif %}>Newsy</a>
     <a href="{{ url_for('forecasts_page') }}" {% if active == 'forecasts' %}class="active"{% endif %}>Prognozy</a>

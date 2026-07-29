@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}PIT-38 — Nokia Tracker{% endblock %}
+{% block content %}
+
+{% set lot_type_labels = {'own': 'własne', 'matched': 'podarowane', 'lti': 'LTI',
+                          'dividend_drip': 'dywidenda'} %}
+{% set policy_labels = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
+                        'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
+
+<div class="page-head">
+  <h1>PIT-38 — {{ year }}</h1>
+  <form class="year-form" method="get" action="{{ url_for('pit38_get') }}">
+    <label>Rok
+      <input type="number" name="year" value="{{ year }}" style="width:90px">
+    </label>
+    <button class="btn small" type="submit">Pokaż</button>
+  </form>
+</div>
+
+<p class="disclaimer">
+  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Kursy NBP są zamrożone
+  na dzień roboczy poprzedzający zdarzenie (art. 11a ustawy o PIT) w momencie
+  zapisu i nigdy nie są przeliczane ponownie. Wartości potwierdź z własnym
+  rozliczeniem lub doradcą przed wpisaniem do PIT-38.
+</p>
+
+<div class="form-actions no-print">
+  <a class="btn" href="{{ url_for('pit38_get', year=year, print=1) }}" target="_blank">Widok do druku</a>
+  <a class="btn" href="{{ url_for('pit38_export_csv', year=year) }}">Eksport CSV</a>
+  <a class="btn" href="{{ url_for('pit38_export_xlsx', year=year) }}">Eksport XLSX</a>
+</div>
+
+<div class="card">
+  <div class="card-title">Poz. C — trzy polityki kosztu, porównanie</div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Polityka</th><th class="num">Przychód PLN</th><th class="num">Koszt PLN</th>
+          <th class="num">Dochód PLN</th><th class="num">Podatek PLN</th>
+          <th class="num">Różnica vs aktywna</th><th>Podstawa prawna</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name, data in report.policies.items() %}
+        <tr {% if name == cfg.cost_basis_policy %}class="active-policy"{% endif %}>
+          <td>{{ policy_labels.get(name, name) }}
+            {% if name == cfg.cost_basis_policy %}<span class="badge saved">aktywna</span>{% endif %}
+          </td>
+          <td class="num">{{ '%.2f'|format(data.revenue_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
+          <td class="muted">{{ data.legal_basis_pl }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Sekcja G — dywidendy zagraniczne</div>
+  <div class="grid stats">
+    <div class="stat">
+      <span class="stat-label">Dywidendy brutto</span>
+      <span class="stat-value">{{ '%.2f'|format(report.section_g.gross_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Pobrane u źródła (Finlandia)</span>
+      <span class="stat-value">{{ '%.2f'|format(report.section_g.withholding_paid_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Zaliczenie traktatowe</span>
+      <span class="stat-value">{{ '%.2f'|format(report.section_g.credit_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Belka (19%)</span>
+      <span class="stat-value">{{ '%.2f'|format(report.section_g.belka_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Dopłata w PL</span>
+      <span class="stat-value">{{ '%.2f'|format(report.section_g.pl_tax_due_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Do odzyskania z Vero</span>
+      <span class="stat-value">{{ '%.2f'|format(report.section_g.reclaimable_from_finland_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+  </div>
+  <p class="muted">{{ report.section_g.dividend_count }} dywidend w {{ year }} roku.</p>
+</div>
+
+<div class="card">
+  <div class="card-title">PIT/ZG — dochód zagraniczny</div>
+  <div class="table-wrap">
+    <table class="table">
+      <tbody>
+        <tr><td>Kraj</td><td class="num">{{ report.pit_zg.country }}</td></tr>
+        <tr><td>Dochód zagraniczny</td>
+          <td class="num">{{ '%.2f'|format(report.pit_zg.foreign_income_pln) }} PLN</td></tr>
+        <tr><td>Podatek zapłacony za granicą</td>
+          <td class="num">{{ '%.2f'|format(report.pit_zg.foreign_tax_paid_pln) }} PLN</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card no-print">
+  <div class="card-title">„Co jeśli sprzedam teraz"</div>
+  <form class="form" method="get" action="{{ url_for('pit38_get') }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <div class="row2">
+      <label>Ilość akcji
+        <input type="number" step="0.0001" name="whatif_qty"
+               value="{{ whatif_qty or '' }}" required>
+      </label>
+      <label>Cena (EUR/akcję)
+        <input type="number" step="0.0001" name="whatif_price"
+               value="{{ whatif_price or current_price or '' }}" required>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Symuluj</button>
+    </div>
+  </form>
+
+  {% if whatif_error %}
+  <p class="disclaimer error">⚠️ {{ whatif_error }}</p>
+  {% endif %}
+
+  {% if whatif_result %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Polityka</th><th class="num">Podatek PLN</th><th class="num">Różnica vs aktywna</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for name, data in whatif_result.policies.items() %}
+        <tr {% if name == whatif_result.active_policy %}class="active-policy"{% endif %}>
+          <td>{{ policy_labels.get(name, name) }}</td>
+          <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">
+    Przychód: {{ '%.2f'|format(whatif_result.revenue_pln) }} PLN (kurs NBP
+    {{ '%.4f'|format(whatif_result.nbp_rate) }} z {{ whatif_result.nbp_rate_date }}) —
+    na rękę wg aktywnej polityki: {{ '%.2f'|format(whatif_result.net_proceeds_pln) }} PLN.
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Ślad obliczeń — per lot</div>
+  {% if report.sale_trace %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Data sprzedaży</th><th>Lot</th><th>Typ</th><th class="num">Ilość</th>
+          <th class="num">Koszt PLN</th><th class="num">Przychód PLN</th>
+          <th>Kurs lotu</th><th>Kurs sprzedaży</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.sale_trace %}
+        <tr>
+          <td>{{ row.sale_date }}</td>
+          <td>{{ row.acquired_date }}</td>
+          <td>{{ lot_type_labels.get(row.lot_type, row.lot_type) }}</td>
+          <td class="num">{{ '%.4f'|format(row.quantity) }}</td>
+          <td class="num">{{ '%.2f'|format(row.cost_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(row.revenue_pln) }}</td>
+          <td class="muted">
+            {{ '%.4f'|format(row.lot_nbp_rate) if row.lot_nbp_rate is not none else '—' }}
+            ({{ row.lot_nbp_rate_date or '—' }})
+          </td>
+          <td class="muted">
+            {{ '%.4f'|format(row.sale_nbp_rate) if row.sale_nbp_rate is not none else '—' }}
+            ({{ row.sale_nbp_rate_date or '—' }})
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Brak sprzedaży w {{ year }} roku.</p>
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -155,3 +155,14 @@ body {
 .sentiment.neg { color: var(--bad); }
 
 [hidden] { display: none !important; }
+
+.year-form { display: flex; align-items: flex-end; gap: 8px; }
+.year-form label { font-size: 13px; color: var(--ink-2); }
+.year-form input { padding: 6px 8px; border: 1px solid var(--baseline); border-radius: 6px; }
+
+@media print {
+  .nav, .no-print, .form-actions { display: none !important; }
+  body.print-mode .main { max-width: none; padding: 0; }
+  .card { border: none; break-inside: avoid; margin-bottom: 10px; }
+  .table th, .table td { white-space: normal; }
+}

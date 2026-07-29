@@ -22,7 +22,7 @@ def client(tmp_path):
 # --- smoke: każda strona GET zwraca 200 i ma no-store ---
 
 @pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/dividends", "/grants",
-                                  "/imports", "/news", "/forecasts", "/settings"])
+                                  "/imports", "/news", "/forecasts", "/settings", "/pit38"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -613,3 +613,106 @@ def test_dashboard_renders_with_full_populated_data(tmp_path):
         assert c.get("/news").status_code == 200
         assert c.get("/forecasts").status_code == 200
         assert c.get("/dividends").status_code == 200
+
+
+# --- PIT-38 (krok 15) ---
+
+@pytest.fixture
+def _fake_nbp_rate_pit38(monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.whatif.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+
+
+def test_pit38_page_empty_state_shows_disclaimer(client):
+    resp = client.get("/pit38")
+    html = resp.get_data(as_text=True)
+    assert "kalkulator pomocniczy" in html
+
+
+def test_pit38_page_shows_three_policies_and_section_g(client, _fake_nbp_rate_pit38):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "10",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    resp = client.get("/pit38?year=2024")
+    html = resp.get_data(as_text=True)
+    assert "Tylko własne" in html
+    assert "Własne + dywidenda" in html
+    assert "Wszystkie w wartości nabycia" in html
+    assert "Sekcja G" in html
+    assert "PIT/ZG" in html
+
+
+def test_pit38_page_year_selector_filters_sale_trace(client, _fake_nbp_rate_pit38):
+    client.post("/lots", data={
+        "acquired_date": "2023-01-10", "lot_type": "own",
+        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2023-06-01", "sale_quantity": "5",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    resp_2023 = client.get("/pit38?year=2023")
+    resp_2024 = client.get("/pit38?year=2024")
+    assert "2023-01-10" in resp_2023.get_data(as_text=True)
+    assert "2023-01-10" not in resp_2024.get_data(as_text=True)
+
+
+def test_pit38_page_whatif_query_params_render_result(client, _fake_nbp_rate_pit38):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    resp = client.get("/pit38?whatif_qty=5&whatif_price=8.0")
+    html = resp.get_data(as_text=True)
+    assert resp.status_code == 200
+    # revenue (5*8*4=160) - cost (5*5*4=100) = 60 dochodu * 19% ~ 11.40
+    assert "11.40" in html or "11,40" in html
+
+
+def test_pit38_page_whatif_insufficient_lots_shows_error_not_500(client, _fake_nbp_rate_pit38):
+    resp = client.get("/pit38?whatif_qty=999&whatif_price=8.0")
+    assert resp.status_code == 200
+    assert "Brak pokrycia" in resp.get_data(as_text=True)
+
+
+def test_pit38_print_mode_marks_page_for_print(client):
+    resp = client.get("/pit38?print=1")
+    html = resp.get_data(as_text=True)
+    assert "print-mode" in html
+
+
+def test_pit38_export_csv_returns_csv_attachment(client, _fake_nbp_rate_pit38):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    resp = client.get("/pit38/export.csv?year=2024")
+    assert resp.status_code == 200
+    assert resp.mimetype == "text/csv"
+    assert "attachment" in resp.headers["Content-Disposition"]
+    assert "pit38_2024.csv" in resp.headers["Content-Disposition"]
+
+
+def test_pit38_export_xlsx_returns_xlsx_attachment(client, _fake_nbp_rate_pit38):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    resp = client.get("/pit38/export.xlsx?year=2024")
+    assert resp.status_code == 200
+    assert resp.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    assert "pit38_2024.xlsx" in resp.headers["Content-Disposition"]
+    # niepusty realny plik XLSX (magic bytes ZIP - openpyxl zapisuje jako zip)
+    assert resp.data[:2] == b"PK"

@@ -183,3 +183,15 @@ def test_discovery_payload_reclaimable_from_finland_eur_monetary_total():
     p = payloads["homeassistant/sensor/nokia_tracker/reclaimable_from_finland_eur/config"]
     assert p["device_class"] == "monetary"
     assert p["state_class"] == "total"
+
+
+def test_discovery_payload_pit38_and_whatif_entities_present_with_object_id():
+    payloads = discovery_payloads("0.1.0")
+    for slug in ("pit38_income_pln", "pit38_tax_pln", "pit38_dividend_due_pln",
+                 "pit38_reclaimable_pln", "whatif_sell_all_tax_pln"):
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        assert key in payloads
+        assert payloads[key]["object_id"] == f"nokia_tracker_{slug}"
+        assert payloads[key]["unique_id"] == f"nokia_tracker_{slug}"
+        assert payloads[key]["device_class"] == "monetary"
+        assert payloads[key]["unit_of_measurement"] == "PLN"

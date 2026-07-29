@@ -206,6 +206,8 @@ def main() -> None:
                 values.update(dividends)
                 values.update(sensors.lots_values(c, cfg))
                 values.update(sensors.grants_values(c))
+                values.update(sensors.pit38_values(c, cfg))
+                values.update(sensors.whatif_values(c, cfg, values.get("price_eur")))
 
                 mqtt_pub.publish(values)
 

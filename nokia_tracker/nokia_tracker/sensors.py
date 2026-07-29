@@ -15,7 +15,9 @@ from . import indicators as ind
 from . import market, quotes
 from . import tax as taxm
 from .tax import lots as taxlots
+from .tax import pit38 as taxpit38
 from .tax import policy as taxpolicy
+from .tax import whatif as taxwhatif
 from .ai import provider as ai_provider
 from .ai import usage as ai_usage
 from .ai.prompts import DISCLAIMER
@@ -321,3 +323,48 @@ def grants_values(conn: sqlite3.Connection) -> dict:
         "next_vest_date": next_vest_date,
         "next_vest_date_attrs": {"next_vest_qty": next_vest_qty},
     }
+
+
+def pit38_values(conn: sqlite3.Connection, cfg: dict) -> dict:
+    """Sensory grupy 'PIT-38' (krok 15): podsumowanie rocznego raportu na
+    AKTYWNEJ polityce kosztu (`cfg['cost_basis_policy']`) dla
+    `cfg['tax_year']` (domyślnie rok bieżący, ten sam wzorzec co
+    `lots_values`). Pełny raport ze śladem per lot i wszystkimi trzema
+    politykami jest w web UI (`/pit38`) — tu tylko cztery liczby, żeby nie
+    mnożyć sensorów bez potrzeby."""
+    year = cfg.get("tax_year") or datetime.now().year
+    report = taxpit38.annual_report(conn, cfg, year)
+    active_policy = cfg.get("cost_basis_policy", "own_only")
+    active = report["policies"].get(active_policy, report["policies"]["own_only"])
+
+    return {
+        "pit38_income_pln": active["income_pln"],
+        "pit38_tax_pln": active["tax_pln"],
+        "pit38_dividend_due_pln": report["section_g"]["pl_tax_due_pln"],
+        "pit38_reclaimable_pln": report["section_g"]["reclaimable_from_finland_pln"],
+    }
+
+
+def whatif_values(conn: sqlite3.Connection, cfg: dict, price_eur: float | None) -> dict:
+    """Sensor 'co jeśli sprzedam teraz' (krok 15): podatek wg AKTYWNEJ
+    polityki, gdyby dziś sprzedać CAŁĄ otwartą pozycję po cenie bieżącej
+    `price_eur`. `unknown` (`None`) gdy brak ceny, brak otwartych lotów, lub
+    symulacja nie może się wykonać (brak zamrożonego kursu NBP dla
+    jakiegoś lotu) — sensor nie zgaduje, milczy uczciwie zamiast pokazać
+    zmyśloną liczbę. Pełna symulacja z dowolną ilością/ceną jest w web UI
+    (`/pit38`, formularz)."""
+    if not price_eur:
+        return {"whatif_sell_all_tax_pln": None}
+
+    open_rows = taxlots.open_lots(conn)
+    total_qty = sum(r["qty_remaining"] for r in open_rows)
+    if total_qty <= 0:
+        return {"whatif_sell_all_tax_pln": None}
+
+    try:
+        result = taxwhatif.simulate_sale(conn, cfg, total_qty, price_eur)
+    except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError):
+        return {"whatif_sell_all_tax_pln": None}
+
+    active_policy = result["active_policy"]
+    return {"whatif_sell_all_tax_pln": result["policies"][active_policy]["tax_pln"]}

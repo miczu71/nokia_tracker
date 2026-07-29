@@ -424,3 +424,92 @@ def test_grants_values_ignores_vested_and_cancelled_status(conn):
     v = sensors.grants_values(conn)
     assert v["unvested_qty"] == pytest.approx(25.0)
     assert v["next_vest_date"] == "2099-03-01"
+
+
+# --- pit38_values ---
+
+_PIT38_CFG = {
+    "cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0,
+    "treaty_withholding_pct": 15.0, "finnish_withholding_pct": 35.0, "tax_year": 2024,
+}
+
+
+@pytest.fixture(autouse=False)
+def _fake_nbp_rate_for_pit38(monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+
+
+def test_pit38_values_empty_db_all_zero(conn):
+    v = sensors.pit38_values(conn, _PIT38_CFG)
+    assert v["pit38_income_pln"] == 0.0
+    assert v["pit38_tax_pln"] == 0.0
+    assert v["pit38_dividend_due_pln"] == 0.0
+    assert v["pit38_reclaimable_pln"] == 0.0
+
+
+def test_pit38_values_uses_active_policy_from_cfg(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+    taxlots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    taxlots.add_lot(conn, "2024-02-10", "lti", 10, 0.0)
+    taxlots.record_sale(conn, "2024-06-01", 20, 8.0)
+
+    v_own_only = sensors.pit38_values(conn, dict(_PIT38_CFG, cost_basis_policy="own_only"))
+    v_all = sensors.pit38_values(conn, dict(_PIT38_CFG, cost_basis_policy="all_at_acquisition"))
+    assert v_own_only["pit38_tax_pln"] >= v_all["pit38_tax_pln"]
+
+
+def test_pit38_values_dividend_totals_match_section_g(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import dividends as taxdiv
+    taxdiv.add_dividend(
+        conn, record_date="2024-03-15", purchase_date="2024-04-01",
+        entitled_quantity=1.0, gross_eur=100.0, taxes_eur=35.0, fees_eur=0.0,
+        reinvested_eur=65.0, purchase_price_eur=1.0, purchased_shares=0.01)
+    v = sensors.pit38_values(conn, _PIT38_CFG)
+    # przykład BLUEPRINT skalowany kursem stub 4.0: 4 EUR dopłaty, 20 EUR do odzysku
+    assert v["pit38_dividend_due_pln"] == pytest.approx(4.0 * 4.0)
+    assert v["pit38_reclaimable_pln"] == pytest.approx(20.0 * 4.0)
+
+
+def test_pit38_values_defaults_tax_year_to_current_year_when_unset(
+        conn, _fake_nbp_rate_for_pit38, monkeypatch):
+    from datetime import datetime
+    from nokia_tracker.tax import lots as taxlots
+    fixed_now = datetime(2024, 12, 1)
+    monkeypatch.setattr("nokia_tracker.sensors.datetime", type(
+        "FixedDatetime", (), {"now": staticmethod(lambda tz=None: fixed_now)}))
+    taxlots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    taxlots.record_sale(conn, "2024-06-01", 5, 8.0)
+
+    cfg_no_year = dict(_PIT38_CFG, tax_year=0)
+    v = sensors.pit38_values(conn, cfg_no_year)
+    assert v["pit38_income_pln"] == pytest.approx((5 * 8.0 - 5 * 5.0) * 4.0)
+
+
+# --- whatif_values ---
+
+def test_whatif_values_no_price_returns_none(conn):
+    v = sensors.whatif_values(conn, _PIT38_CFG, price_eur=None)
+    assert v["whatif_sell_all_tax_pln"] is None
+
+
+def test_whatif_values_no_open_lots_returns_none(conn):
+    v = sensors.whatif_values(conn, _PIT38_CFG, price_eur=10.0)
+    assert v["whatif_sell_all_tax_pln"] is None
+
+
+def test_whatif_values_sells_all_open_lots_at_current_price(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+    taxlots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+
+    v = sensors.whatif_values(conn, _PIT38_CFG, price_eur=8.0)
+    # revenue (10*8*4=320) - cost (10*5*4=200) = 120 dochodu * 19% = 22.80
+    assert v["whatif_sell_all_tax_pln"] == pytest.approx(120 * 0.19, abs=0.01)
+
+    # symulacja nie zmienia bazy — loty wciąż otwarte po wywołaniu
+    remaining = conn.execute("SELECT qty_remaining FROM lots").fetchone()["qty_remaining"]
+    assert remaining == pytest.approx(10)

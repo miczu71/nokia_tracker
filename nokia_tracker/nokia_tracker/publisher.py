@@ -155,6 +155,17 @@ _ENTITIES: list[_Entity] = [
            "mdi:timer-sand"),
     _Entity("sensor", "next_vest_date", "Next Vest Date", None, "date", None,
            "mdi:calendar-clock", has_attrs=True),
+    # --- PIT-38 i symulacja (krok 15, BLUEPRINT §3a) ---
+    _Entity("sensor", "pit38_income_pln", "PIT38 Income PLN", "PLN", "monetary",
+           "total", "mdi:file-document-outline"),
+    _Entity("sensor", "pit38_tax_pln", "PIT38 Tax PLN", "PLN", "monetary", "total",
+           "mdi:bank-outline"),
+    _Entity("sensor", "pit38_dividend_due_pln", "PIT38 Dividend Due PLN", "PLN",
+           "monetary", "total", "mdi:cash-plus"),
+    _Entity("sensor", "pit38_reclaimable_pln", "PIT38 Reclaimable PLN", "PLN",
+           "monetary", "total", "mdi:cash-refund"),
+    _Entity("sensor", "whatif_sell_all_tax_pln", "Whatif Sell All Tax PLN", "PLN",
+           "monetary", "total", "mdi:calculator-variant-outline"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

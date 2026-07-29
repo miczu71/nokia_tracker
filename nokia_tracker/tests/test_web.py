@@ -1,6 +1,8 @@
 """Web UI (Flask): smoke testy tras + zapis formularzy portfela/dywidend/
 ustawień + no-store na HTML (BLUEPRINT §3/§9, krok 9). Zero żywego AI —
 /analyze-now mockuje analysis.run_daily_analysis."""
+from datetime import datetime
+
 import pytest
 
 from nokia_tracker import analysis, db as dbm
@@ -21,7 +23,7 @@ def client(tmp_path):
 
 # --- smoke: każda strona GET zwraca 200 i ma no-store ---
 
-@pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/dividends", "/grants",
+@pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/sales", "/dividends", "/grants",
                                   "/imports", "/news", "/forecasts", "/settings", "/pit38"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
@@ -40,6 +42,54 @@ def test_base_template_versions_static_assets(client):
 def test_dashboard_shows_analyze_button(client):
     resp = client.get("/")
     assert b"analyze-now" in resp.data
+
+
+# --- wykres pulpitu z konfigurowalnym zakresem (krok 16) ---
+
+def test_dashboard_shows_chart_range_buttons(client):
+    html = client.get("/").get_data(as_text=True)
+    for r in ["1d", "1w", "1m", "3m", "6m", "1y", "3y", "5y", "max"]:
+        assert f'data-range="{r}"' in html
+
+
+@pytest.mark.parametrize("range_key", ["1d", "1w", "1m", "3m", "6m", "1y", "3y", "5y", "max"])
+def test_chart_api_returns_points_for_every_range(client, range_key):
+    resp = client.get(f"/api/chart?range={range_key}")
+    assert resp.status_code == 200
+    assert resp.headers["Cache-Control"] == "no-store"
+    data = resp.get_json()
+    assert data["range"] == range_key
+    assert "points" in data
+    expected_granularity = "intraday" if range_key == "1d" else "daily"
+    assert data["granularity"] == expected_granularity
+
+
+def test_chart_api_returns_seeded_daily_points(tmp_path):
+    from nokia_tracker import db as dbm
+    from nokia_tracker.models import Candle
+    from nokia_tracker.quotes import ensure_instrument, upsert_candles
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "chart.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    iid = ensure_instrument(conn, "NOKIA.HE", "Nokia Oyj", "EUR", "primary")
+    upsert_candles(conn, iid, "daily", [
+        Candle(ts="2026-07-01T00:00:00+00:00", close=9.0),
+        Candle(ts="2026-07-15T00:00:00+00:00", close=9.5),
+    ])
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        data = c.get("/api/chart?range=3m").get_json()
+        assert data["points"] == [
+            ["2026-07-01T00:00:00+00:00", 9.0], ["2026-07-15T00:00:00+00:00", 9.5]]
+
+
+def test_chart_api_defaults_to_3m_for_unknown_range(client):
+    resp = client.get("/api/chart?range=bogus")
+    assert resp.get_json()["granularity"] == "daily"
 
 
 # --- portfolio ---
@@ -183,6 +233,38 @@ def test_lots_sell_post_insufficient_quantity_redirects_with_error(client, _fake
     assert "Brak pokrycia" in resp2.get_data(as_text=True)
 
 
+def test_lots_post_rejects_future_acquired_date(client):
+    resp = client.post("/lots", data={
+        "acquired_date": "2099-01-01", "lot_type": "own",
+        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
+    })
+    assert resp.status_code == 302
+    resp2 = client.get(resp.headers["Location"])
+    assert "przyszłości" in resp2.get_data(as_text=True)
+    assert "Brak lotów" in resp2.get_data(as_text=True)  # lot NIE został zapisany
+
+
+def test_lots_sell_post_rejects_future_sale_date(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
+    })
+    resp = client.post("/lots/sell", data={
+        "sale_date": "2099-01-01", "sale_quantity": "5",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    assert resp.status_code == 302
+    resp2 = client.get(resp.headers["Location"])
+    assert "przyszłości" in resp2.get_data(as_text=True)
+
+
+def test_dividends_post_rejects_future_pay_date(client):
+    resp = client.post("/dividends", data={"pay_date": "2099-01-01", "gross_eur": "100.0"})
+    assert resp.status_code == 302
+    resp2 = client.get(resp.headers["Location"])
+    assert "przyszłości" in resp2.get_data(as_text=True)
+
+
 def test_lots_page_shows_three_policies_comparison(client, _fake_nbp_rate):
     client.post("/lots", data={
         "acquired_date": "2024-01-10", "lot_type": "own",
@@ -197,6 +279,81 @@ def test_lots_page_shows_three_policies_comparison(client, _fake_nbp_rate):
     assert "Tylko własne" in html
     assert "Własne + dywidenda" in html
     assert "Wszystkie w wartości nabycia" in html
+
+
+# --- sales (krok 16: pełne rozbicie zrealizowanych sprzedaży) ---
+
+def test_sales_page_empty_state(client):
+    resp = client.get("/sales")
+    html = resp.get_data(as_text=True)
+    assert "Brak zarejestrowanych sprzedaży" in html
+
+
+def test_sales_page_shows_realized_sale_breakdown(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    resp = client.get("/sales")
+    html = resp.get_data(as_text=True)
+    assert "2024-06-01" in html
+    assert "2024-01-10" in html  # data nabycia lotu widoczna w rozwinięciu
+    # kurs NBP zamockowany na "stub" (nie realna data) — bez numeru tabeli/linków
+    # tu, ale wyprowadzenie kursu (event -> D-1 -> kurs) ma się i tak wyrenderować.
+    assert "dzień roboczy poprzedzający" in html
+
+
+def test_sales_page_filters_by_year(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2023-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2023-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    resp_2023 = client.get("/sales?year=2023")
+    resp_2024 = client.get("/sales?year=2024")
+    assert "2023-06-01" in resp_2023.get_data(as_text=True)
+    assert "2024-06-01" not in resp_2023.get_data(as_text=True)
+    assert "2024-06-01" in resp_2024.get_data(as_text=True)
+
+
+def test_sales_delete_restores_qty_remaining_and_redirects(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    resp_lots_before = client.get("/lots")
+    assert "6.0000" in resp_lots_before.get_data(as_text=True)  # qty_remaining po sprzedaży
+
+    import re
+    html = client.get("/sales").get_data(as_text=True)
+    sale_form_action = re.search(r'action="(/sales/\d+/delete)"', html)
+    assert sale_form_action, "brak formularza cofnięcia sprzedaży w HTML"
+    delete_url = sale_form_action.group(1)
+
+    resp_del = client.post(delete_url)
+    assert resp_del.status_code == 302
+    assert "deleted=1" in resp_del.headers["Location"]
+
+    resp_lots_after = client.get("/lots")
+    assert "10.0000" in resp_lots_after.get_data(as_text=True)  # qty_remaining przywrócone
+
+    resp_sales = client.get("/sales")
+    assert "Brak zarejestrowanych sprzedaży" in resp_sales.get_data(as_text=True)
 
 
 # --- grants (ESPP/LTI) ---
@@ -259,6 +416,34 @@ def test_grants_page_shows_overdue_badge_for_past_pending_tranches(tmp_path, mon
     with app.test_client() as c:
         html = c.get("/grants").get_data(as_text=True)
         assert "zaległe — sprawdź wyciąg" in html
+
+
+def test_grants_page_shows_valuation_for_open_and_realized_portions(tmp_path, monkeypatch):
+    # Krok 16: transza dopasowana do lotu (reconcile_vesting), część sprzedana,
+    # część nadal otwarta — strona ma pokazać obie wartości.
+    from nokia_tracker import db as dbm
+    from nokia_tracker.tax import grants as grantsm
+    from nokia_tracker.tax import lots as taxlots
+    from nokia_tracker.web import create_app
+
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+
+    db_path = str(tmp_path / "grants_valuation.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    grant_id = grantsm.add_grant(conn, "espp", "2022-10-26", 10.0, "espp_grant:x")
+    grantsm.add_vest(conn, grant_id, "2023-08-01", 10.0, "espp_vest:x")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 10.0, 3.65, source="pdf_import")
+    grantsm.reconcile_vesting(conn, today="2026-07-28")
+    taxlots.record_sale(conn, "2026-01-15", 4.0, 9.0)
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/grants").get_data(as_text=True)
+        assert "2026-01-15" in html  # data zrealizowanej sprzedaży w rozwinięciu
+        assert "niedopasowane" not in html  # jedyna transza tutaj jest reconciled=True
 
 
 # --- imports ---
@@ -462,9 +647,16 @@ def test_imports_conflicts_queue_shows_unresolved_and_resolve_hides_it(tmp_path)
         assert "Brak nierozwiązanych konfliktów" in resp3.get_data(as_text=True)
 
 
-# --- dividends ---
+# --- dividends (krok 16: jedno źródło prawdy przez add_dividend, kwoty w PLN) ---
 
-def test_dividends_post_computes_tax_and_stores_row(client):
+@pytest.fixture
+def _fake_nbp_rate_dividends(monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "2026-06-12"))
+
+
+def test_dividends_post_computes_tax_and_stores_row(client, _fake_nbp_rate_dividends):
     resp = client.post("/dividends", data={
         "pay_date": "2026-06-15", "gross_eur": "100.0", "withholding_pct": "35.0",
     })
@@ -473,15 +665,37 @@ def test_dividends_post_computes_tax_and_stores_row(client):
     resp2 = client.get("/dividends")
     html = resp2.get_data(as_text=True)
     assert "2026-06-15" in html
-    assert "65.00" in html  # net_received_eur = 100 - 35
+    assert "400.00" in html  # gross_pln = 100 EUR * kurs 4.0
+    # przykład BLUEPRINT skalowany kursem 4.0: 4 PLN dopłaty -> 16.00, 20 -> 80.00
+    assert "16.00" in html
+    assert "80.00" in html
 
 
-def test_dividends_post_uses_default_withholding_when_blank(client):
+def test_dividends_post_uses_default_withholding_when_blank(client, _fake_nbp_rate_dividends):
     resp = client.post("/dividends", data={"pay_date": "2026-06-15", "gross_eur": "100.0"})
     assert resp.status_code == 302
     resp2 = client.get("/dividends")
-    # domyślne finnish_withholding_pct=35 -> netto 65
-    assert "65.00" in resp2.get_data(as_text=True)
+    # domyślne finnish_withholding_pct=35 -> ten sam wynik co jawne 35.0 powyżej
+    assert "400.00" in resp2.get_data(as_text=True)
+
+
+def test_dividends_post_with_drip_creates_lot_and_shows_reinvestment(
+        client, _fake_nbp_rate_dividends):
+    resp = client.post("/dividends", data={
+        "pay_date": "2026-06-15", "gross_eur": "100.0", "withholding_pct": "35.0",
+        "drip_purchase_date": "2026-06-20", "drip_price_eur": "3.50", "drip_shares": "18.5714",
+    })
+    assert resp.status_code == 302
+    html = client.get("/dividends").get_data(as_text=True)
+    assert "18.5714" in html
+    assert "2026-06-20" in html
+    assert "gotówka" not in html
+
+
+def test_dividends_post_without_drip_shows_cash(client, _fake_nbp_rate_dividends):
+    client.post("/dividends", data={"pay_date": "2026-06-15", "gross_eur": "100.0"})
+    html = client.get("/dividends").get_data(as_text=True)
+    assert "gotówka" in html
 
 
 def test_dividends_page_shows_disclaimer(client):
@@ -667,6 +881,22 @@ def test_pit38_page_year_selector_filters_sale_trace(client, _fake_nbp_rate_pit3
     resp_2024 = client.get("/pit38?year=2024")
     assert "2023-01-10" in resp_2023.get_data(as_text=True)
     assert "2023-01-10" not in resp_2024.get_data(as_text=True)
+
+
+def test_pit38_year_selector_lists_years_with_data(client, _fake_nbp_rate_pit38):
+    # Krok 16 (§8.3): selektor to lista lat z rzeczywistymi zdarzeniami, nie
+    # gołe pole liczbowe — 2023 (sprzedaż) i bieżący rok muszą się pojawić.
+    client.post("/lots", data={
+        "acquired_date": "2023-01-10", "lot_type": "own",
+        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2023-06-01", "sale_quantity": "5",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    html = client.get("/pit38").get_data(as_text=True)
+    assert '<option value="2023"' in html
+    assert f'<option value="{datetime.now().year}"' in html
 
 
 def test_pit38_page_whatif_query_params_render_result(client, _fake_nbp_rate_pit38):

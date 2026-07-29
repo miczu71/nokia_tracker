@@ -110,6 +110,53 @@ def test_backfill_pl_tax_due_recomputes_on_settings_change_unlike_nbp_rate(conn)
     assert row["nbp_rate_date"] == "stub"
 
 
+def test_add_dividend_without_drip_args_creates_no_lot(conn):
+    # Krok 16: reinwestycja jest opcjonalna — dywidenda wypłacona gotówką
+    # (formularz ręczny bez pól DRIP) nie tworzy lotu dividend_drip.
+    dividend_id = taxdiv.add_dividend(
+        conn, record_date="2026-01-30", entitled_quantity=61.491555,
+        gross_eur=100.0, taxes_eur=35.0)
+    row = conn.execute("SELECT * FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    assert row["reinvested_lot_id"] is None
+    lots_count = conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"]
+    assert lots_count == 0
+
+
+def test_add_dividend_with_drip_args_still_creates_lot(conn):
+    # Ten sam formularz z wypełnionymi polami reinwestycji — zachowanie sprzed
+    # kroku 16 (import PDF zawsze podaje te trzy pola razem).
+    dividend_id = _add_dividend(conn)
+    row = conn.execute("SELECT * FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    assert row["reinvested_lot_id"] is not None
+
+
+def test_backfill_missing_dividend_rates_fills_null_rows(conn):
+    # Symuluje dywidendę wpisaną przed ujednoliceniem formularza (surowy INSERT,
+    # bez kursu NBP) — backfill ma ją dogonić tak jak tax/lots.py robi to dla lotów.
+    conn.execute(
+        "INSERT INTO dividends (pay_date, gross_eur, natural_key) "
+        "VALUES ('2026-01-30', 100.0, 'manual:1')")
+    conn.commit()
+    filled = taxdiv.backfill_missing_dividend_rates(conn)
+    assert filled == 1
+    row = conn.execute(
+        "SELECT nbp_rate, nbp_rate_date, gross_pln FROM dividends "
+        "WHERE natural_key = 'manual:1'").fetchone()
+    assert row["nbp_rate"] == 4.0
+    assert row["gross_pln"] == pytest.approx(400.0)
+
+
+def test_backfill_missing_dividend_rates_never_overwrites_frozen_rate(conn):
+    dividend_id = _add_dividend(conn)
+    row_before = conn.execute(
+        "SELECT nbp_rate FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    filled = taxdiv.backfill_missing_dividend_rates(conn)
+    assert filled == 0  # już zamrożone, nic do zrobienia
+    row_after = conn.execute(
+        "SELECT nbp_rate FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    assert row_after["nbp_rate"] == row_before["nbp_rate"]
+
+
 def test_backfill_pl_tax_due_skips_rows_without_frozen_nbp_rate(conn):
     dividend_id = _add_dividend(conn, record_date="2026-01-30")
     conn.execute("UPDATE dividends SET gross_pln = NULL, nbp_rate = NULL WHERE id = ?",

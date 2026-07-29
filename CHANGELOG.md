@@ -1,5 +1,62 @@
 # Changelog
 
+## [0.3.0] - 2026-07-29
+
+Trzecie wydanie: pełna przejrzystość rozliczeń (krok 16, `docs/PLAN_KROK_16_transparentnosc.md`) —
+każda kwota PLN daje się rozłożyć aż do numeru tabeli NBP, dywidendy dostają jedno źródło prawdy,
+granty pokazują wartość zamiast samego harmonogramu, a pulpit ma konfigurowalny wykres.
+
+### Dodano — rozbicie FIFO do numeru tabeli NBP
+- **Numer tabeli NBP** (`providers/fx_nbp.py`): migracja v3 dokłada `nbp_rates.table_no`; nowe
+  `table_urls()` (link do archiwum nbp.pl + do surowego JSON-a `api.nbp.pl` jako zapasowy,
+  zweryfikowany empirycznie) i `backfill_table_numbers()` (dogania wiersze sprzed tego kroku,
+  nigdy nie dotyka już zamrożonego kursu).
+- **`tax/trace.py`** (nowy moduł): `fx_derivation()` — wyprowadzenie kursu w formacie „zdarzenie →
+  D-1 (art. 11a) → ostatnia opublikowana tabela → kurs" jako gotowe zdanie po polsku, bez żadnego
+  zapytania do NBP (czyta tylko już zamrożone kolumny). `enrich_allocations()` — dokłada do każdej
+  alokacji FIFO dane lotu, oba wyprowadzenia kursu, kwoty EUR (pochodne zamrożonego PLN) i które
+  polityki kosztu uznają dany lot; współdzielone przez symulację i sprzedaże zrealizowane.
+- Karta „co jeśli sprzedam teraz" na **PIT-38**: pełne rozwijane rozbicie per lot zamiast samej
+  sumy podatku.
+- Strona **Sprzedaże** (nowa, `/sales`): każda zrealizowana sprzedaż rozwijalna do tego samego
+  rozbicia; **cofanie sprzedaży** (`tax/lots.py::reverse_sale`) przywraca `qty_remaining` lotom —
+  literówka w formularzu sprzedaży już nie wymaga ręcznej edycji SQLite.
+- Eksport CSV/XLSX z **PIT-38**: nowe kolumny (koszt/przychód EUR, numer tabeli NBP lotu i
+  sprzedaży) — eksport to teraz ten sam dowód co ekran.
+
+### Dodano — dywidendy: jedno źródło prawdy
+- `tax/dividends.py::add_dividend()`: reinwestycja (DRIP) jest teraz **opcjonalna** — formularz
+  ręczny na **Dywidendy** przechodzi przez tę samą funkcję co import PDF, więc kurs NBP zamrożony
+  na Record Date i (opcjonalny) lot DRIP powstają identycznie niezależnie od źródła wpisu.
+- Nowa `backfill_missing_dividend_rates()` dogania dywidendy wpisane ręcznie przed tym krokiem.
+- Migracja v3 dokłada `dividends.currency`. Historia na **Dywidendy**: waluta, brutto EUR **i**
+  PLN, kurs NBP z numerem tabeli, kolumna reinwestycji (ilość/cena/data lub „gotówka”).
+- Sensory MQTT dywidend (`dividends_*`) **bez zmian** — świadomie zostają na bieżącym kursie EUR,
+  żeby nie zerwać historii encji w HA; PLN na zamrożonym kursie jest tylko w UI/PIT-38.
+
+### Dodano — granty: wartość, nie tylko harmonogram
+- `tax/grants.py::valuation()`: dla każdej transzy — wartość **dziś** (bieżąca cena/kurs, część
+  wciąż w portfelu) i wartość **zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży, część
+  skonsumowana przez `sale_allocations`). Transze jeszcze niedopasowane (`reconcile_vesting`)
+  pokazują całość jako prognozę, jawnie oznaczoną.
+- Strona **Granty**: kolumny „Wartość dziś EUR/PLN” i „Zrealizowano PLN”, rozwijalna lista sprzedaży
+  per transza z kursem NBP.
+
+### Dodano — pulpit: konfigurowalny wykres
+- `quotes.py::closes_in_range()`/`prune_intraday()`, nowy endpoint `/api/chart?range=`, joby
+  schedulera `refresh_intraday_job` (co `poll_interval_minutes`) i `prune_intraday_job` (cron
+  3:00) — zakres **1D** ma wreszcie z czego rysować (Yahoo intraday istniało w kodzie, ale nikt go
+  nie wołał). Zakresy 1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany w `localStorage`.
+
+### Dodano — usprawnienia porządkowe
+- Formularze lotu/sprzedaży/dywidendy odrzucają daty przyszłe z czytelnym komunikatem (zamiast
+  gołego 500 — NBP zwraca HTTP 400 na przyszłe daty).
+- Selektor roku na **PIT-38**: lista lat z rzeczywistymi zdarzeniami zamiast pola liczbowego.
+
+### Klauzula
+To kalkulator pomocniczy, nie doradztwo podatkowe. Rozbicie do numeru tabeli NBP służy weryfikacji
+liczby, nie zastępuje konsultacji z doradcą — patrz README „Jak zweryfikować kwotę z PIT-38”.
+
 ## [0.2.0] - 2026-07-29
 
 Drugie wydanie: pełny silnik podatkowy PIT-38 dla pracowniczego planu akcji Nokii (ESPP + LTI),

@@ -118,3 +118,69 @@ def test_rate_for_event_window_ends_day_before_event_not_on_it(conn, monkeypatch
     fx_nbp.rate_for_event(conn, "2025-10-27")
     assert "2025-10-26" in seen["url"]  # okno kończy się na dniu PRZED zdarzeniem
     assert "2025-10-27" not in seen["url"]
+
+
+# ---- krok 16: numer tabeli NBP (link do konkretnej publikacji) ----
+
+def test_rate_on_or_before_persists_table_no(conn, monkeypatch, nbp_range_fixture):
+    monkeypatch.setattr(
+        "nokia_tracker.providers.fx_nbp.requests.get",
+        lambda url, params=None, timeout=None: _FakeResponse(200, nbp_range_fixture))
+    fx_nbp.rate_on_or_before(conn, "2023-01-10")
+    row = conn.execute("SELECT table_no FROM nbp_rates WHERE date = '2023-01-10'").fetchone()
+    assert row["table_no"] == "006/A/NBP/2023"
+
+
+def test_table_no_for_effective_date_looks_up_persisted_row(conn, monkeypatch, nbp_range_fixture):
+    monkeypatch.setattr(
+        "nokia_tracker.providers.fx_nbp.requests.get",
+        lambda url, params=None, timeout=None: _FakeResponse(200, nbp_range_fixture))
+    fx_nbp.rate_on_or_before(conn, "2023-01-10")
+    assert fx_nbp.table_no_for_effective_date(conn, "2023-01-10") == "006/A/NBP/2023"
+
+
+def test_table_no_for_effective_date_none_when_unknown(conn):
+    assert fx_nbp.table_no_for_effective_date(conn, "1999-01-01") is None
+
+
+def test_table_urls_builds_slug_from_table_no():
+    urls = fx_nbp.table_urls("142/A/NBP/2026", "2026-07-24")
+    assert urls["nbp"] == (
+        "https://nbp.pl/archiwum-kursow/tabela-nr-142-a-nbp-2026-z-dnia-2026-07-24/")
+    assert urls["api"] == (
+        "https://api.nbp.pl/api/exchangerates/rates/a/eur/2026-07-24/?format=json")
+
+
+def test_backfill_table_numbers_fills_null_rows_without_touching_rate(
+        conn, monkeypatch, nbp_range_fixture):
+    # Wiersz zapisany "przed krokiem 16" — rate/effective_date obecne, table_no NULL
+    # (symuluje stan przed migracją v3, gdzie kolumna jeszcze nie istniała).
+    conn.execute(
+        "INSERT INTO nbp_rates (date, rate, effective_date) VALUES (?, ?, ?)",
+        ("2023-01-10", 4.6981, "2023-01-10"))
+    conn.commit()
+
+    def fake_get(url, params=None, timeout=None):
+        assert "2023-01-10" in url
+        return _FakeResponse(200, {"rates": [{"no": "006/A/NBP/2023",
+                                               "effectiveDate": "2023-01-10", "mid": 4.6981}]})
+
+    monkeypatch.setattr("nokia_tracker.providers.fx_nbp.requests.get", fake_get)
+    filled = fx_nbp.backfill_table_numbers(conn)
+    assert filled == 1
+    row = conn.execute("SELECT rate, table_no FROM nbp_rates WHERE date = '2023-01-10'").fetchone()
+    assert row["rate"] == pytest.approx(4.6981)  # kurs nietknięty
+    assert row["table_no"] == "006/A/NBP/2023"
+
+
+def test_backfill_table_numbers_skips_rows_already_filled(conn, monkeypatch):
+    conn.execute(
+        "INSERT INTO nbp_rates (date, rate, effective_date, table_no) VALUES (?, ?, ?, ?)",
+        ("2023-01-10", 4.6981, "2023-01-10", "006/A/NBP/2023"))
+    conn.commit()
+
+    def fake_get(url, params=None, timeout=None):
+        raise AssertionError("nie powinno odpytywać NBP — table_no już uzupełniony")
+
+    monkeypatch.setattr("nokia_tracker.providers.fx_nbp.requests.get", fake_get)
+    assert fx_nbp.backfill_table_numbers(conn) == 0

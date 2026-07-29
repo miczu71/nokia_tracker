@@ -96,6 +96,19 @@ def test_simulate_sale_net_proceeds_uses_active_policy_tax(conn):
     assert result["net_proceeds_pln"] == pytest.approx(result["revenue_pln"] - active_tax)
 
 
+def test_simulate_sale_includes_detailed_trace(conn):
+    # Krok 16: lots_consumed_detailed obok lots_consumed — rozbicie do numeru
+    # tabeli NBP (tax/trace.py), bez psucia starego, płaskiego lots_consumed.
+    lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    result = whatif.simulate_sale(conn, _base_cfg(), 5, 8.0)
+    assert len(result["lots_consumed"]) == 1
+    detailed = result["lots_consumed_detailed"]
+    assert len(detailed["allocations"]) == 1
+    assert detailed["allocations"][0]["lot_type"] == "own"
+    assert detailed["net_pln"] == pytest.approx(
+        result["revenue_pln"] - result["policies"]["own_only"]["tax_pln"])
+
+
 def test_simulate_sale_defaults_to_today_when_sale_date_omitted(conn, monkeypatch):
     lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
     seen_dates = []

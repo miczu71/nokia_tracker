@@ -160,6 +160,28 @@ body {
 .year-form label { font-size: 13px; color: var(--ink-2); }
 .year-form input { padding: 6px 8px; border: 1px solid var(--baseline); border-radius: 6px; }
 
+/* Rozbicie alokacji FIFO do numeru tabeli NBP (krok 16) */
+.alloc-fx-row td { white-space: normal; border-bottom: 1px solid var(--border); }
+.alloc-fx { padding: 2px 8px 10px !important; font-size: 12px; line-height: 1.5; }
+.alloc-fx div { margin-top: 2px; }
+.alloc-fx a { color: var(--series-1); }
+.sale-summary summary {
+  cursor: pointer; padding: 8px 0; font-weight: 600; list-style: none;
+}
+.sale-summary summary::-webkit-details-marker { display: none; }
+.sale-summary summary::before { content: "▸ "; color: var(--muted); }
+.sale-summary[open] summary::before { content: "▾ "; }
+.sale-summary { border-bottom: 1px solid var(--grid); padding-bottom: 10px; margin-bottom: 10px; }
+.sale-summary:last-child { border-bottom: none; margin-bottom: 0; }
+
+/* Wykres pulpitu — pasek zakresów */
+.chart-range-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.chart-range-bar button {
+  border: 1px solid var(--baseline); background: var(--surface); color: var(--ink-2);
+  border-radius: 6px; padding: 4px 10px; font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.chart-range-bar button.active { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+
 @media print {
   .nav, .no-print, .form-actions { display: none !important; }
   body.print-mode .main { max-width: none; padding: 0; }

@@ -216,6 +216,12 @@ _MIGRATIONS = [
     """
     ALTER TABLE vests ADD COLUMN reminder_sent_at TEXT;
     """,
+    # v3 — krok 16: numer tabeli NBP (link do konkretnej publikacji) +
+    # waluta dywidendy (docs/PLAN_KROK_16_transparentnosc.md)
+    """
+    ALTER TABLE nbp_rates ADD COLUMN table_no TEXT;
+    ALTER TABLE dividends ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR';
+    """,
 ]
 
 

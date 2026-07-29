@@ -39,6 +39,12 @@
       <span class="stat-value" style="font-size:16px">{{ values.alpha_verdict or '—' }}</span>
     </div>
   </div>
+  <div class="chart-range-bar" id="chart-range-bar">
+    {% for r in chart_ranges %}
+    <button type="button" data-range="{{ r }}"
+            {% if r == default_chart_range %}class="active"{% endif %}>{{ r }}</button>
+    {% endfor %}
+  </div>
   <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
 </div>
 
@@ -155,5 +161,8 @@
 
 {% endblock %}
 {% block scripts %}
-<script>NT.initPriceChart("price-chart", {{ chart_closes_json|safe }});</script>
+<script>
+NT.initPriceChart("price-chart", "chart-range-bar", {{ chart_api_url|tojson }},
+                   {{ default_chart_range|tojson }});
+</script>
 {% endblock %}

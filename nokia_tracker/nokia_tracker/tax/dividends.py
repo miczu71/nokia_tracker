@@ -21,13 +21,24 @@ from ..providers import fx_nbp
 from . import lots as taxlots
 
 
-def add_dividend(conn: sqlite3.Connection, record_date: str, purchase_date: str,
-                 entitled_quantity: float, gross_eur: float, taxes_eur: float,
-                 fees_eur: float, reinvested_eur: float, purchase_price_eur: float,
-                 purchased_shares: float, natural_key: str | None = None) -> int:
-    """Zapisuje dywidendę (rejestr, krok 13) + tworzy JEDNOCZEŚNIE lot `dividend_drip`
-    (DRIP nie ma odroczonego vestingu jak ESPP match/LTI — reinwestycja wykonuje się
-    natychmiast, więc lot powstaje od razu, nie przez scheduler kroku 14).
+def add_dividend(conn: sqlite3.Connection, record_date: str, entitled_quantity: float,
+                 gross_eur: float, taxes_eur: float, fees_eur: float = 0.0,
+                 reinvested_eur: float | None = None, purchase_date: str | None = None,
+                 purchase_price_eur: float | None = None,
+                 purchased_shares: float | None = None, currency: str = "EUR",
+                 gross_per_share_eur: float | None = None,
+                 natural_key: str | None = None) -> int:
+    """Zapisuje dywidendę (rejestr, krok 13) i OPCJONALNIE tworzy JEDNOCZEŚNIE lot
+    `dividend_drip` (DRIP nie ma odroczonego vestingu jak ESPP match/LTI — reinwestycja
+    wykonuje się natychmiast, więc lot powstaje od razu, nie przez scheduler kroku 14).
+
+    Krok 16: `purchase_date`/`purchase_price_eur`/`purchased_shares` są teraz opcjonalne
+    (`None` domyślnie) — dywidenda wypłacona gotówką (bez reinwestycji) nie tworzy lotu,
+    `reinvested_lot_id` zostaje `NULL`. To ujednolica JEDYNE miejsce zapisu dywidend: web.py
+    wołało dawniej surowy `INSERT INTO dividends` z formularza ręcznego, pomijając kurs NBP
+    i `natural_key` — stąd rozjazd, gdzie ręcznie wpisane dywidendy nie miały ani waluty osi
+    czasu (kurs zamrożony), ani śladu reinwestycji. Teraz WSZYSTKIE dywidendy (import PDF i
+    formularz ręczny) przechodzą przez tę jedną funkcję.
 
     `withholding_pct` liczone z REALNYCH `taxes_eur/gross_eur` per wiersz (dokładniejsze
     niż stała z ustawień — potwierdzone na 5 niezależnych dywidendach w zakresie
@@ -54,22 +65,51 @@ def add_dividend(conn: sqlite3.Connection, record_date: str, purchase_date: str,
     gross_pln = gross_eur * nbp_rate if nbp_rate is not None else None
 
     cur = conn.execute(
-        "INSERT INTO dividends (pay_date, quantity, gross_eur, withholding_pct, "
-        "withholding_paid_eur, net_received_eur, nbp_rate, nbp_rate_date, gross_pln, "
-        "natural_key) VALUES (?,?,?,?,?,?,?,?,?,?)",
-        (record_date, entitled_quantity, gross_eur, withholding_pct, withholding_paid_eur,
-         net_received_eur, nbp_rate, nbp_rate_date, gross_pln, natural_key))
+        "INSERT INTO dividends (pay_date, quantity, gross_per_share_eur, gross_eur, "
+        "withholding_pct, withholding_paid_eur, net_received_eur, nbp_rate, nbp_rate_date, "
+        "gross_pln, currency, natural_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (record_date, entitled_quantity, gross_per_share_eur, gross_eur, withholding_pct,
+         withholding_paid_eur, net_received_eur, nbp_rate, nbp_rate_date, gross_pln,
+         currency, natural_key))
     dividend_id = cur.lastrowid
     conn.commit()
 
-    drip_natural_key = f"drip:{record_date}:{purchase_date}:{entitled_quantity}"
-    lot_id = taxlots.add_lot(
-        conn, purchase_date, "dividend_drip", purchased_shares, purchase_price_eur,
-        natural_key=drip_natural_key)
-    conn.execute(
-        "UPDATE dividends SET reinvested_lot_id = ? WHERE id = ?", (lot_id, dividend_id))
-    conn.commit()
+    has_drip = purchase_date is not None and purchase_price_eur is not None \
+        and purchased_shares is not None
+    if has_drip:
+        drip_natural_key = f"drip:{record_date}:{purchase_date}:{entitled_quantity}"
+        lot_id = taxlots.add_lot(
+            conn, purchase_date, "dividend_drip", purchased_shares, purchase_price_eur,
+            natural_key=drip_natural_key)
+        conn.execute(
+            "UPDATE dividends SET reinvested_lot_id = ? WHERE id = ?", (lot_id, dividend_id))
+        conn.commit()
     return dividend_id
+
+
+def backfill_missing_dividend_rates(conn: sqlite3.Connection) -> int:
+    """Uzupełnia `nbp_rate`/`nbp_rate_date`/`gross_pln` dywidendom, które go
+    jeszcze nie mają — krok 16, lustrzane do `tax/lots.py::backfill_missing_rates`.
+    Dotyczy głównie dywidend wpisanych ręcznie PRZED ujednoliceniem formularza na
+    `add_dividend()` (dawny surowy INSERT w web.py nie zamrażał kursu). NIGDY nie
+    nadpisuje już zamrożonego `nbp_rate` (filtr `nbp_rate IS NULL` też w samym
+    UPDATE) — kurs raz zamrożony jest prawnie ostateczny."""
+    rows = conn.execute(
+        "SELECT id, pay_date, gross_eur FROM dividends WHERE nbp_rate IS NULL").fetchall()
+    filled = 0
+    for row in rows:
+        rate = fx_nbp.rate_for_event(conn, row["pay_date"])
+        if rate is None:
+            continue
+        nbp_rate, nbp_rate_date = rate
+        gross_pln = row["gross_eur"] * nbp_rate
+        conn.execute(
+            "UPDATE dividends SET nbp_rate = ?, nbp_rate_date = ?, gross_pln = ? "
+            "WHERE id = ? AND nbp_rate IS NULL",
+            (nbp_rate, nbp_rate_date, gross_pln, row["id"]))
+        filled += 1
+    conn.commit()
+    return filled
 
 
 def compute_dividend_tax(gross_eur: float, withholding_pct: float,

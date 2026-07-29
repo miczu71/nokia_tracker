@@ -22,7 +22,7 @@ def test_migrate_creates_all_tables(conn):
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 2  # v2: krok 14 - vests.reminder_sent_at
+    assert version == 3  # v3: krok 16 - nbp_rates.table_no, dividends.currency
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):
@@ -54,6 +54,22 @@ def test_vests_has_reminder_sent_at_column(conn):
     # nadchodzącym vestingu już wysłane - żeby nie przypominać drugi raz.
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(vests)").fetchall()}
     assert "reminder_sent_at" in cols
+
+
+def test_nbp_rates_has_table_no_column(conn):
+    # Krok 16 (migracja v3): numer tabeli NBP dla linku do konkretnej publikacji.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(nbp_rates)").fetchall()}
+    assert "table_no" in cols
+
+
+def test_dividends_has_currency_column_defaulting_to_eur(conn):
+    # Krok 16 (migracja v3): waluta dywidendy, dziś zawsze EUR (Nokia płaci w EUR),
+    # ale kolumna jawna zamiast zakładać walutę domyślnie w UI.
+    conn.execute(
+        "INSERT INTO dividends (pay_date, gross_eur) VALUES ('2026-01-01', 1.0)")
+    conn.commit()
+    row = conn.execute("SELECT currency FROM dividends WHERE pay_date = '2026-01-01'").fetchone()
+    assert row["currency"] == "EUR"
 
 
 def test_lots_natural_key_unique(conn):

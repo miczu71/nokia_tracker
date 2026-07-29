@@ -11,7 +11,11 @@
   <h1>PIT-38 — {{ year }}</h1>
   <form class="year-form" method="get" action="{{ url_for('pit38_get') }}">
     <label>Rok
-      <input type="number" name="year" value="{{ year }}" style="width:90px">
+      <select name="year" onchange="this.form.submit()">
+        {% for y in years %}
+        <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
     </label>
     <button class="btn small" type="submit">Pokaż</button>
   </form>
@@ -130,29 +134,11 @@
   {% endif %}
 
   {% if whatif_result %}
-  <div class="table-wrap">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Polityka</th><th class="num">Podatek PLN</th><th class="num">Różnica vs aktywna</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for name, data in whatif_result.policies.items() %}
-        <tr {% if name == whatif_result.active_policy %}class="active-policy"{% endif %}>
-          <td>{{ policy_labels.get(name, name) }}</td>
-          <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <p class="muted">
-    Przychód: {{ '%.2f'|format(whatif_result.revenue_pln) }} PLN (kurs NBP
-    {{ '%.4f'|format(whatif_result.nbp_rate) }} z {{ whatif_result.nbp_rate_date }}) —
-    na rękę wg aktywnej polityki: {{ '%.2f'|format(whatif_result.net_proceeds_pln) }} PLN.
-  </p>
+  <details class="no-print" open>
+    <summary>Z których lotów idzie sprzedaż — pełne rozbicie do numeru tabeli NBP</summary>
+    {% set detail = whatif_result.lots_consumed_detailed %}
+    {% include "_alloc_detail.html" %}
+  </details>
   {% endif %}
 </div>
 

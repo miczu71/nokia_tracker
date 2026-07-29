@@ -25,6 +25,7 @@ from .tax import lots as taxlots
 from .ai import scoring as ai_scoring
 from .providers import avanza as avanza_provider
 from .providers import finnhub as finnhub_provider
+from .providers import fx_nbp
 from .providers.yahoo import YahooQuoteProvider
 from .publisher import MQTTPublisher
 from .web import create_app
@@ -220,6 +221,38 @@ def main() -> None:
             finally:
                 c.close()
 
+    def refresh_intraday_job() -> None:
+        """Krok 16: dogrywa historię śróddzienną (5-minutową) instrumentu
+        głównego, żeby zakres „1D" na wykresie pulpitu (`/api/chart`) miał z
+        czego rysować — bez tego joba `quotes.refresh_intraday()` istnieje w
+        kodzie, ale nikt go nie woła i w bazie jest tylko jedna świeca dzienna.
+        Własny try/except, tak samo jak Avanza w `publish_sensors` — awaria
+        Yahoo na tym providerze nie może ubić reszty pollingu."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                provider = YahooQuoteProvider(c)
+                quotes.refresh_intraday(c, instrument_id, _PRIMARY_SYMBOL, provider)
+            except Exception:
+                logger.exception("Odświeżenie intraday nieudane (nie krytyczne)")
+            finally:
+                c.close()
+
+    def prune_intraday_job() -> None:
+        """Codziennie: retencja świec intraday (krok 16) — zakres „1D" nigdy
+        nie patrzy dalej niż jeden dzień wstecz, więc starsze świece 5-minutowe
+        są tylko martwym balastem w bazie."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                removed = quotes.prune_intraday(c)
+                if removed:
+                    logger.info("Retencja intraday: usunięto %d świec", removed)
+            except Exception:
+                logger.exception("Retencja intraday nieudana")
+            finally:
+                c.close()
+
     def _ai_cfg(c) -> dict:
         """Ustawienia AI z tabeli settings + klucze API z ENV — te ostatnie
         NIE żyją w tabeli settings (patrz settings.py), żeby nie dublować
@@ -290,13 +323,24 @@ def main() -> None:
         w odróżnieniu od kursu NBP to nie jest jednorazowe uzupełnienie
         braku, tylko przeliczenie za każdym razem (patrz docstring
         `taxdiv.backfill_pl_tax_due`), więc zmiana ustawień w UI dociera
-        tu bez czekania na ręczną wizytę na `/pit38`."""
+        tu bez czekania na ręczną wizytę na `/pit38`. Krok 16: dociąga też
+        numer tabeli NBP (`table_no`) dla wierszy zapisanych przed tym
+        krokiem oraz zamraża kurs dywidendom wpisanym ręcznie przed
+        ujednoliceniem formularza na `add_dividend()`."""
         with dbm.WRITE_LOCK:
             c = dbm.get_conn(db_path)
             try:
                 filled = taxlots.backfill_missing_rates(c)
                 if filled:
                     logger.info("Backfill kursów NBP: uzupełniono %d lotów", filled)
+                filled_div_rates = taxdiv.backfill_missing_dividend_rates(c)
+                if filled_div_rates:
+                    logger.info(
+                        "Backfill kursów NBP: uzupełniono %d dywidend", filled_div_rates)
+                filled_tables = fx_nbp.backfill_table_numbers(c)
+                if filled_tables:
+                    logger.info(
+                        "Backfill numerów tabel NBP: uzupełniono %d publikacji", filled_tables)
                 cfg = settingsm.get_settings(c)
                 updated = taxdiv.backfill_pl_tax_due(c, cfg)
                 if updated:
@@ -368,11 +412,14 @@ def main() -> None:
     scheduler = BackgroundScheduler(timezone=_env("TZ", "Europe/Warsaw"))
     scheduler.add_job(publish_sensors, "interval", minutes=poll_minutes,
                       next_run_time=datetime.now())
+    scheduler.add_job(refresh_intraday_job, "interval", minutes=poll_minutes,
+                      next_run_time=datetime.now())
     scheduler.add_job(fetch_news, "interval", minutes=30,
                       next_run_time=datetime.now())
     scheduler.add_job(run_daily_analysis, "cron", hour=analysis_hour, minute=analysis_minute)
     scheduler.add_job(backfill_nbp_rates, "cron", hour=6, minute=15)
     scheduler.add_job(check_vest_reminders, "cron", hour=6, minute=30)
+    scheduler.add_job(prune_intraday_job, "cron", hour=3, minute=0)
     scheduler.add_job(auto_import_pdf_share, "interval", minutes=30)
     scheduler.start()
 

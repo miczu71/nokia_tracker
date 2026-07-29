@@ -97,7 +97,7 @@ def list_espp(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
     if today is None:
         today = datetime.now().strftime("%Y-%m-%d")
     rows = conn.execute(
-        "SELECT g.id AS grant_id, g.grant_date, g.match_pct, "
+        "SELECT v.id AS vest_id, g.id AS grant_id, g.grant_date, g.match_pct, "
         "v.vest_date, v.quantity, v.status "
         "FROM grants g JOIN vests v ON v.grant_id = g.id "
         "WHERE g.program = 'espp' ORDER BY g.grant_date"
@@ -144,6 +144,85 @@ def reconcile_vesting(conn: sqlite3.Connection, today: str | None = None) -> int
                 resolved += 1
     conn.commit()
     return resolved
+
+
+def valuation(conn: sqlite3.Connection, current_price_eur: float | None,
+             current_eurpln: float | None) -> dict[int, dict]:
+    """Wartość każdej transzy vestingu (krok 16, docs/PLAN_KROK_16_transparentnosc.md),
+    kluczowana `vest_id`: część OTWARTA (nadal w `lots.qty_remaining`) wyceniona po
+    BIEŻĄCEJ cenie/kursie — zawsze szacunek, cena jutro będzie inna — i część
+    ZREALIZOWANA (skonsumowana przez `sale_allocations`) wyceniona po CENIE I KURSIE
+    NBP Z DNIA TEJ SPRZEDAŻY, czyli fakt, nie prognoza.
+
+    Transze bez `lot_id` (jeszcze nie rozwiązane przez `reconcile_vesting` — patrz
+    ten sam mechanizm wyżej) nie mają żadnego lotu do podziału na otwarte/zrealizowane,
+    więc CAŁA `quantity` transzy trafia do `open_*` z `reconciled=False` — jawnie
+    oznaczone jako prognoza, nie realizacja, bo nie potrafimy uczciwie stwierdzić,
+    czy i ile z niej zostało już sprzedane."""
+    result: dict[int, dict] = {}
+    for v in conn.execute("SELECT * FROM vests").fetchall():
+        if v["lot_id"] is None:
+            qty = v["quantity"]
+            open_eur = qty * current_price_eur if current_price_eur is not None else None
+            open_pln = (open_eur * current_eurpln
+                       if open_eur is not None and current_eurpln else None)
+            result[v["id"]] = {
+                "reconciled": False,
+                "open_qty": qty,
+                "open_value_eur": round(open_eur, 2) if open_eur is not None else None,
+                "open_value_pln": round(open_pln, 2) if open_pln is not None else None,
+                "realized": [],
+                "realized_qty": 0.0,
+                "realized_value_eur": 0.0,
+                "realized_value_pln": 0.0,
+            }
+            continue
+
+        lot = conn.execute("SELECT * FROM lots WHERE id = ?", (v["lot_id"],)).fetchone()
+        if lot is None:
+            continue
+
+        open_qty = lot["qty_remaining"]
+        open_eur = open_qty * current_price_eur if current_price_eur is not None else None
+        open_pln = (open_eur * current_eurpln
+                   if open_eur is not None and current_eurpln else None)
+
+        alloc_rows = conn.execute(
+            "SELECT sa.quantity, sa.revenue_pln, s.sale_date, s.price_eur AS sale_price_eur, "
+            "s.nbp_rate, s.nbp_rate_date FROM sale_allocations sa "
+            "JOIN sales s ON s.id = sa.sale_id WHERE sa.lot_id = ? ORDER BY s.sale_date",
+            (lot["id"],)).fetchall()
+        realized = []
+        realized_qty = 0.0
+        realized_eur_total = 0.0
+        realized_pln_total = 0.0
+        for a in alloc_rows:
+            value_pln = a["revenue_pln"]
+            value_eur = value_pln / a["nbp_rate"] if a["nbp_rate"] else None
+            realized.append({
+                "sale_date": a["sale_date"],
+                "quantity": a["quantity"],
+                "sale_price_eur": a["sale_price_eur"],
+                "nbp_rate": a["nbp_rate"],
+                "nbp_rate_date": a["nbp_rate_date"],
+                "value_eur": round(value_eur, 2) if value_eur is not None else None,
+                "value_pln": round(value_pln, 2),
+            })
+            realized_qty += a["quantity"]
+            realized_eur_total += value_eur or 0.0
+            realized_pln_total += value_pln
+
+        result[v["id"]] = {
+            "reconciled": True,
+            "open_qty": open_qty,
+            "open_value_eur": round(open_eur, 2) if open_eur is not None else None,
+            "open_value_pln": round(open_pln, 2) if open_pln is not None else None,
+            "realized": realized,
+            "realized_qty": round(realized_qty, 4),
+            "realized_value_eur": round(realized_eur_total, 2),
+            "realized_value_pln": round(realized_pln_total, 2),
+        }
+    return result
 
 
 def list_lti_grouped(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:

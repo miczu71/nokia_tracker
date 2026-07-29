@@ -255,3 +255,79 @@ def test_mark_reminder_sent_sets_timestamp(conn):
     grants.mark_reminder_sent(conn, vest_id)
     vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
     assert vest["reminder_sent_at"] is not None
+
+
+# ---- valuation (krok 16: wartość dziś + wartość zrealizowana) ----
+
+def test_valuation_unreconciled_vest_uses_full_quantity_as_estimate(conn):
+    grant_id = grants.add_grant(conn, "espp", "2026-04-27", 17.37, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2026-08-01", 17.37, "espp_vest:x")
+
+    result = grants.valuation(conn, current_price_eur=10.0, current_eurpln=4.0)
+
+    v = result[vest_id]
+    assert v["reconciled"] is False
+    assert v["open_qty"] == pytest.approx(17.37)
+    assert v["open_value_eur"] == pytest.approx(173.70)
+    assert v["open_value_pln"] == pytest.approx(173.70 * 4.0)
+    assert v["realized"] == []
+
+
+def test_valuation_fully_open_lot_values_at_current_price(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    lot_id = taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import")
+    grants.reconcile_vesting(conn, today="2026-07-28")
+
+    result = grants.valuation(conn, current_price_eur=12.0, current_eurpln=4.3)
+
+    v = result[vest_id]
+    assert v["reconciled"] is True
+    assert v["open_qty"] == pytest.approx(7.33)
+    assert v["open_value_eur"] == pytest.approx(7.33 * 12.0)
+    assert v["realized_qty"] == 0.0
+    assert v["realized_value_pln"] == 0.0
+    assert lot_id  # dopasowany lot faktycznie istnieje
+
+
+def test_valuation_partially_sold_lot_splits_open_and_realized(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 10.0, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2023-08-01", 10.0, "espp_vest:x")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 10.0, 3.65, source="pdf_import")
+    grants.reconcile_vesting(conn, today="2026-07-28")
+    taxlots.record_sale(conn, "2026-01-15", 4.0, 9.0)  # sprzedaje 4 z 10
+
+    result = grants.valuation(conn, current_price_eur=12.0, current_eurpln=4.3)
+
+    v = result[vest_id]
+    assert v["open_qty"] == pytest.approx(6.0)
+    assert v["open_value_eur"] == pytest.approx(6.0 * 12.0)
+    assert v["realized_qty"] == pytest.approx(4.0)
+    # wartość zrealizowana = revenue_pln alokacji (4*9*4.0) przeliczone z powrotem
+    # na EUR przez kurs SPRZEDAŻY (4.0), nie bieżący (4.3) — to fakt z dnia sprzedaży.
+    assert v["realized_value_eur"] == pytest.approx(4.0 * 9.0)
+    assert v["realized_value_pln"] == pytest.approx(4.0 * 9.0 * 4.0)
+    assert len(v["realized"]) == 1
+    assert v["realized"][0]["sale_date"] == "2026-01-15"
+    assert v["realized"][0]["nbp_rate"] == pytest.approx(4.0)
+
+
+def test_valuation_returns_none_values_when_current_price_missing(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import")
+    grants.reconcile_vesting(conn, today="2026-07-28")
+
+    result = grants.valuation(conn, current_price_eur=None, current_eurpln=None)
+    v = result[vest_id]
+    assert v["open_value_eur"] is None
+    assert v["open_value_pln"] is None

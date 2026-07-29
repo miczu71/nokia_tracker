@@ -419,10 +419,13 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
             "SELECT * FROM dividends WHERE natural_key = ?", (nk,)).fetchone()
         if existing is None:
             taxdiv.add_dividend(
-                conn, row["record_date"], row["purchase_date"], row["entitled_quantity"],
-                row["gross_dividend_payment_eur"], row["taxes_eur"], row["fees_eur"],
-                row["dividend_reinvested_eur"], row["purchase_price_eur"],
-                row["purchased_shares"], natural_key=nk)
+                conn, record_date=row["record_date"],
+                entitled_quantity=row["entitled_quantity"],
+                gross_eur=row["gross_dividend_payment_eur"], taxes_eur=row["taxes_eur"],
+                fees_eur=row["fees_eur"], reinvested_eur=row["dividend_reinvested_eur"],
+                purchase_date=row["purchase_date"],
+                purchase_price_eur=row["purchase_price_eur"],
+                purchased_shares=row["purchased_shares"], natural_key=nk)
             rows_inserted += 1
         elif abs(existing["gross_eur"] - row["gross_dividend_payment_eur"]) < _EPS:
             rows_unchanged += 1

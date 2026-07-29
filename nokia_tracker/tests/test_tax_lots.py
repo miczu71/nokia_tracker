@@ -138,3 +138,47 @@ def test_open_lots_summary_groups_by_type(conn):
     summary = lots.lots_summary(conn)
     assert summary["own"]["qty_remaining"] == pytest.approx(10)
     assert summary["lti"]["qty_remaining"] == pytest.approx(3)
+
+
+# ---- krok 16: cofanie sprzedaży ----
+
+def test_reverse_sale_restores_qty_remaining_single_lot(conn):
+    lot_id = lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 4, 8.0)
+
+    assert lots.reverse_sale(conn, sale_id) is True
+
+    row = conn.execute("SELECT qty_remaining FROM lots WHERE id = ?", (lot_id,)).fetchone()
+    assert row["qty_remaining"] == pytest.approx(10)
+    assert conn.execute("SELECT COUNT(*) c FROM sales").fetchone()["c"] == 0
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM sale_allocations").fetchone()["c"] == 0
+
+
+def test_reverse_sale_restores_multiple_lots_fifo(conn):
+    lot1 = lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    lot2 = lots.add_lot(conn, "2024-03-01", "own", 5, 6.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 8, 8.0)  # 5 z lot1 + 3 z lot2
+
+    lots.reverse_sale(conn, sale_id)
+
+    row1 = conn.execute("SELECT qty_remaining FROM lots WHERE id = ?", (lot1,)).fetchone()
+    row2 = conn.execute("SELECT qty_remaining FROM lots WHERE id = ?", (lot2,)).fetchone()
+    assert row1["qty_remaining"] == pytest.approx(5)
+    assert row2["qty_remaining"] == pytest.approx(5)
+
+
+def test_reverse_sale_unknown_id_is_noop(conn):
+    assert lots.reverse_sale(conn, 999999) is False
+
+
+def test_reverse_sale_then_resell_works(conn):
+    # Cofnięcie musi naprawdę zwolnić loty do ponownego użycia, nie tylko
+    # zerowo wyglądać w sales/sale_allocations.
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 10, 8.0)
+    lots.reverse_sale(conn, sale_id)
+
+    new_sale_id = lots.record_sale(conn, "2024-06-02", 10, 9.0)
+    assert new_sale_id is not None
+    assert lots.open_lots(conn) == []

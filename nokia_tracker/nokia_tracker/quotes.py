@@ -162,3 +162,34 @@ def daily_closes(conn: sqlite3.Connection, instrument_id: int, limit: int = 400
         "SELECT close FROM quotes WHERE instrument_id = ? AND granularity = 'daily' "
         "ORDER BY ts DESC LIMIT ?", (instrument_id, limit)).fetchall()
     return [r["close"] for r in reversed(rows)]
+
+
+def closes_in_range(conn: sqlite3.Connection, instrument_id: int, granularity: str,
+                    since: str | None = None) -> list[tuple[str, float]]:
+    """`[(ts, close), ...]` chronologicznie, opcjonalnie tylko od `since` (ISO) —
+    krok 16, wykres pulpitu z konfigurowalnym zakresem (`/api/chart`). W
+    odróżnieniu od `daily_closes()` (same liczby, zawsze ostatnie `limit`
+    punktów, wejście dla indicators.py) zwraca też oś czasu i działa na
+    dowolnej granularności (`daily` LUB `intraday`)."""
+    if since:
+        rows = conn.execute(
+            "SELECT ts, close FROM quotes WHERE instrument_id = ? AND granularity = ? "
+            "AND ts >= ? ORDER BY ts ASC", (instrument_id, granularity, since)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT ts, close FROM quotes WHERE instrument_id = ? AND granularity = ? "
+            "ORDER BY ts ASC", (instrument_id, granularity)).fetchall()
+    return [(r["ts"], r["close"]) for r in rows]
+
+
+def prune_intraday(conn: sqlite3.Connection, keep_days: int = 60) -> int:
+    """Usuwa świece `intraday` starsze niż `keep_days` — bez tego historia
+    5-minutowa rośnie bez końca (~78 świec/dzień/instrument), mimo że
+    zakres „1D" na wykresie nigdy nie patrzy dalej niż jeden dzień wstecz.
+    Świece `daily` NIGDY nie są tu ruszane (retencja historii dziennej to
+    inna sprawa, poza zakresem tej funkcji). Zwraca liczbę usuniętych wierszy."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=keep_days)).isoformat()
+    cur = conn.execute(
+        "DELETE FROM quotes WHERE granularity = 'intraday' AND ts < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount

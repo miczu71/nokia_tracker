@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Sprzedaże — Nokia Tracker{% endblock %}
+{% block content %}
+
+{% set lot_type_labels = {'own': 'własne', 'matched': 'podarowane', 'lti': 'LTI',
+                          'dividend_drip': 'dywidenda'} %}
+{% set policy_labels = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
+                        'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
+
+<div class="page-head">
+  <h1>Sprzedaże</h1>
+  {% if deleted %}<span class="badge saved">Sprzedaż cofnięta</span>{% endif %}
+</div>
+
+<p class="disclaimer">
+  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Rozwiń sprzedaż, żeby zobaczyć
+  dokładnie z których lotów poszła, jaki kurs NBP zastosowano (z linkiem do konkretnej
+  tabeli) i ile finalnie zostaje na rękę w PLN i EUR.
+</p>
+
+{% if years %}
+<form class="year-form no-print" method="get" action="{{ url_for('sales_get') }}">
+  <label>Rok
+    <select name="year" onchange="this.form.submit()">
+      <option value="">wszystkie</option>
+      {% for y in years %}
+      <option value="{{ y }}" {% if year and y == year|string %}selected{% endif %}>{{ y }}</option>
+      {% endfor %}
+    </select>
+  </label>
+</form>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Zrealizowane sprzedaże</div>
+  {% if sales %}
+  {% for item in sales %}
+  <details class="sale-summary">
+    <summary>
+      {{ item.sale.sale_date }} · {{ '%.4f'|format(item.sale.quantity) }} akcji @
+      {{ '%.4f'|format(item.sale.price_eur) }} EUR ·
+      przychód {{ '%.2f'|format(item.detail.revenue_pln) }} PLN ·
+      podatek {{ '%.2f'|format(item.detail.policies[item.detail.active_policy].tax_pln) }} PLN
+      ({{ policy_labels.get(item.detail.active_policy, item.detail.active_policy) }})
+    </summary>
+    {% set detail = item.detail %}
+    {% include "_alloc_detail.html" %}
+    <form class="no-print" method="post"
+          action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
+          onsubmit="return confirm('Cofnąć tę sprzedaż? Przywróci ilość akcji do lotów i usunie wpis nieodwracalnie.');">
+      <button class="btn small" type="submit">Cofnij tę sprzedaż</button>
+    </form>
+  </details>
+  {% endfor %}
+  {% else %}
+  <p class="muted">
+    Brak zarejestrowanych sprzedaży{% if year %} w {{ year }} roku{% endif %} —
+    zarejestruj sprzedaż na <a href="{{ url_for('lots_get') }}">stronie Lotów</a>.
+  </p>
+  {% endif %}
+</div>
+
+{% endblock %}

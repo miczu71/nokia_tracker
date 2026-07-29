@@ -153,6 +153,29 @@ def record_sale(conn: sqlite3.Connection, sale_date: str, quantity: float,
     return sale_id
 
 
+def reverse_sale(conn: sqlite3.Connection, sale_id: int) -> bool:
+    """Cofa sprzedaż (krok 16, docs/PLAN_KROK_16_transparentnosc.md): przywraca
+    `qty_remaining` lotom skonsumowanym przez tę sprzedaż i usuwa `sales` (kaskada
+    `ON DELETE CASCADE` sama sprząta `sale_allocations` — patrz db.py). Bez tego
+    literówka w formularzu sprzedaży trwale konsumuje loty i jedynym ratunkiem
+    byłaby ręczna edycja SQLite. Zwraca `False` (bez żadnego zapisu), gdy
+    `sale_id` nie istnieje — idempotentne wywołanie z nieistniejącym id nie jest
+    błędem, tylko no-opem."""
+    allocations = conn.execute(
+        "SELECT lot_id, quantity FROM sale_allocations WHERE sale_id = ?",
+        (sale_id,)).fetchall()
+    exists = conn.execute("SELECT 1 FROM sales WHERE id = ?", (sale_id,)).fetchone()
+    if not exists:
+        return False
+    for alloc in allocations:
+        conn.execute(
+            "UPDATE lots SET qty_remaining = qty_remaining + ? WHERE id = ?",
+            (alloc["quantity"], alloc["lot_id"]))
+    conn.execute("DELETE FROM sales WHERE id = ?", (sale_id,))
+    conn.commit()
+    return True
+
+
 def _plan_fifo(candidates: list[dict], sale_quantity: float, price_eur: float,
                fee_eur: float, nbp_rate: float) -> list[dict]:
     """Czysta funkcja: planuje alokację FIFO bez `conn`/`INSERT` — krok 15

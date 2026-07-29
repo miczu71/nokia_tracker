@@ -10,9 +10,13 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.2.0** — rynek, AI, portfel oparty na lotach, import wyciągów Computershare
-(przyrostowy, idempotentny), granty ESPP/LTI z auto-vestingiem, pełny silnik podatkowy PIT-38
-(trzy polityki kosztu, sekcja G, PIT/ZG, symulacja „co jeśli sprzedam teraz", eksport CSV/XLSX/PDF).
+**Status:** wydanie **0.3.0** — pełna przejrzystość rozliczeń: każda kwota PLN rozkłada się aż do
+numeru tabeli NBP (rozwijane rozbicie FIFO per lot, z linkiem do tabeli), zrealizowane sprzedaże na
+osobnej stronie z możliwością cofnięcia, dywidendy z jednym źródłem prawdy (kurs NBP zamrożony,
+opcjonalna reinwestycja), granty z wyceną bieżącą i zrealizowaną, pulpit z konfigurowalnym zakresem
+wykresu (1D–MAX). Wcześniej (0.2.0): rynek, AI, portfel oparty na lotach, import wyciągów
+Computershare (przyrostowy, idempotentny), pełny silnik podatkowy PIT-38 (trzy polityki kosztu,
+sekcja G, PIT/ZG, symulacja „co jeśli sprzedam teraz", eksport CSV/XLSX/PDF).
 
 ## Instalacja
 
@@ -27,13 +31,14 @@ Dodatek wystawia własny interfejs na ingressie (panel „Nokia Tracker” w boc
 
 | Strona | Zawartość |
 |---|---|
-| **Pulpit** | Kurs, zmiana dzienna, sesja, trend, RSI, wykres cenowy 90 dni, karta portfela, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
+| **Pulpit** | Kurs, zmiana dzienna, sesja, trend, RSI, wykres cenowy z konfigurowalnym zakresem (1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany), karta portfela, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
 | **Portfel** | Stan posiadania — automatycznie z lotów, gdy istnieją (FIFO), formularz ręczny jako fallback |
-| **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu, formularz rejestracji sprzedaży (konsumuje FIFO), tabela wszystkich lotów z kursem NBP zamrożonym per lot |
-| **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare — wyłącznie odczyt, status transz (oczekuje/nabyte/zaległe) |
-| **Dywidendy** | Formularz dodania wypłaty dywidendy (przelicza podatek u źródła/PL/odzysk na bieżąco), historia i podsumowanie, klauzula podatkowa |
+| **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu, formularz rejestracji sprzedaży (konsumuje FIFO, odrzuca daty przyszłe), tabela wszystkich lotów z kursem NBP zamrożonym per lot, link do rozliczenia sprzedaży |
+| **Sprzedaże** *(nowość 0.3.0)* | Każda zrealizowana sprzedaż rozwijalna do pełnego rozbicia FIFO: który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży (dzień zdarzenia → D-1 → tabela, z linkiem), kwoty EUR/PLN, „ile finalnie na rękę”; możliwość cofnięcia sprzedaży (przywraca loty) |
+| **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare, status transz (oczekuje/nabyte/zaległe), **wartość dziś** (bieżąca cena/kurs) i **wartość zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży) per transza |
+| **Dywidendy** | Formularz dodania wypłaty (waluta, opcjonalna reinwestycja/DRIP), jedno źródło prawdy z kursem NBP zamrożonym na Record Date, historia z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji |
 | **Importy** | Upload wyciągu Computershare (PDF), kolejka konfliktów (rozbieżności vs poprzedni import, w tym potwierdzenie realnej sprzedaży Withhold-to-Cover), historia importów |
-| **PIT-38** | Selektor roku podatkowego, trzy polityki kosztu, sekcja G (dywidendy zagraniczne), PIT/ZG, ślad obliczeń per lot, symulacja „co jeśli sprzedam teraz”, eksport CSV/XLSX/widok do druku |
+| **PIT-38** | Selektor roku (lista lat z rzeczywistymi zdarzeniami), trzy polityki kosztu, sekcja G (dywidendy zagraniczne), PIT/ZG, ślad obliczeń per lot, symulacja „co jeśli sprzedam teraz” z pełnym rozwijanym rozbiciem FIFO (numer tabeli NBP, linki), eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku |
 | **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza) |
 | **Prognozy** | Historia prognoz 1w/1m/12m vs zrealizowana cena, trafność (MAPE) |
 | **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia |
@@ -76,6 +81,26 @@ dzień wypłaty dywidendy**, nie na kursie bieżącym.
 Strona **PIT-38** dodaje symulację „co jeśli sprzedam teraz" (ta sama alokacja FIFO co realna
 sprzedaż, żaden zapis do bazy) i eksporty: CSV, XLSX (arkusze: Podsumowanie / Ślad per lot /
 Dywidendy) oraz widok do druku (PDF przez przeglądarkę).
+
+### Jak zweryfikować kwotę z PIT-38 krok po kroku (0.3.0)
+
+Żadna kwota w PLN nie jest czarną skrzynką — da się ją rozłożyć aż do numeru tabeli NBP:
+
+1. Otwórz **Sprzedaże** (albo kartę „co jeśli sprzedam teraz" na **PIT-38**) i rozwiń interesującą
+   Cię sprzedaż.
+2. Dla każdego skonsumowanego lotu widać: ile z niego wzięto (FIFO — najstarszy pierwszy), cenę
+   nabycia i sprzedaży w EUR, oraz **wyprowadzenie obu kursów NBP** w formacie „dzień zdarzenia →
+   dzień roboczy poprzedzający (art. 11a) → ostatnia opublikowana tabela → kurs", z linkiem do
+   archiwum NBP i do surowego JSON-a API (`api.nbp.pl`) jako źródła zapasowego.
+3. Kwoty EUR obok PLN są **pochodną** już zamrożonego PLN (`PLN ÷ kurs`), więc zawsze się zgadzają
+   z tym, co zapisano w bazie w momencie zdarzenia — nie przelicza się niczego na nowo.
+4. Na dole rozwinięcia: „ile finalnie dostaję" — przychód, koszt, dochód, podatek wg aktywnej
+   polityki i kwota na rękę w PLN (oraz orientacyjnie w EUR, po kursie sprzedaży).
+5. Eksport CSV/XLSX z **PIT-38** zawiera te same kolumny (EUR, numer tabeli NBP) — to ten sam
+   dowód co ekran, nie jego uboższa wersja.
+
+To narzędzie pomocnicze, nie doradztwo podatkowe — powyższe służy weryfikacji liczby, nie zastępuje
+konsultacji z doradcą podatkowym.
 
 ## Encje MQTT Discovery
 

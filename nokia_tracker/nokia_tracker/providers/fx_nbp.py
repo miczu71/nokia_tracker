@@ -66,9 +66,11 @@ def rate_on_or_before(conn: sqlite3.Connection, target_date: str) -> tuple[float
     latest = rates[-1]
     rate = float(latest["mid"])
     effective_date = latest["effectiveDate"]
+    table_no = latest.get("no")
     conn.execute(
-        "INSERT OR IGNORE INTO nbp_rates (date, rate, effective_date) VALUES (?, ?, ?)",
-        (target_date, rate, effective_date))
+        "INSERT OR IGNORE INTO nbp_rates (date, rate, effective_date, table_no) "
+        "VALUES (?, ?, ?, ?)",
+        (target_date, rate, effective_date, table_no))
     conn.commit()
     return rate, effective_date
 
@@ -86,3 +88,73 @@ def rate_for_event(conn: sqlite3.Connection, event_date: str) -> tuple[float, st
     event = date.fromisoformat(event_date)
     day_before = (event - timedelta(days=1)).isoformat()
     return rate_on_or_before(conn, day_before)
+
+
+def table_no_for_effective_date(conn: sqlite3.Connection, effective_date: str) -> str | None:
+    """Numer tabeli NBP (np. '142/A/NBP/2026') dla danej `effective_date`
+    (dzień faktycznej publikacji, NIE dzień zdarzenia/lookup) — krok 16.
+
+    Świadomie osobna funkcja od `rate_for_event`/`rate_on_or_before` zamiast
+    rozszerzania ich krotki wyniku: `effective_date` jest już zamrożone w
+    `lots.nbp_rate_date`/`sales.nbp_rate_date`/`dividends.nbp_rate_date`, więc
+    UI może dociągnąć numer tabeli osobnym zapytaniem do `nbp_rates` bez
+    zmiany sygnatury funkcji używanej w kilkunastu miejscach (lots/dividends/
+    whatif) i bez psucia ich testów. `LIMIT 1`, bo wiele różnych `date`
+    (dni lookup) może mapować na tę samą `effective_date` (weekend/święto
+    zwija się do tej samej ostatniej publikacji) — to ten sam numer tabeli
+    za każdym razem, biorący dowolny wystarczy."""
+    row = conn.execute(
+        "SELECT table_no FROM nbp_rates WHERE effective_date = ? "
+        "AND table_no IS NOT NULL LIMIT 1", (effective_date,)).fetchone()
+    return row["table_no"] if row else None
+
+
+def table_urls(table_no: str, effective_date: str) -> dict:
+    """Linki do tabeli NBP dla śladu obliczeń (krok 16): `nbp` — czytelna
+    strona archiwum dla człowieka (NIE dało się zweryfikować z tego
+    środowiska, strona zwracała ~1KB — prawdopodobnie render JS/blokada
+    bota, więc traktować jako "najlepszy wysiłek"), `api` — surowy JSON,
+    zweryfikowany empirycznie 2026-07-29: zwraca dokładnie ten kurs/numer
+    tabeli, zawsze pod tym adresem, niezależnie od JS."""
+    slug = table_no.lower().replace("/", "-")
+    return {
+        "nbp": f"https://nbp.pl/archiwum-kursow/tabela-nr-{slug}-z-dnia-{effective_date}/",
+        "api": f"{_BASE}/{effective_date}/?format=json",
+    }
+
+
+def backfill_table_numbers(conn: sqlite3.Connection) -> int:
+    """Uzupełnia `table_no` dla wierszy `nbp_rates` zapisanych przed krokiem
+    16 (kolumna wtedy nie istniała). Odpytuje NBP per `effective_date`
+    (endpoint jednodniowy, zawsze trafia — `effective_date` to z definicji
+    dzień faktycznej publikacji) i NIGDY nie dotyka `rate`/`date` — sam kurs
+    pozostaje zamrożony na zawsze, dopisujemy wyłącznie metadaną. Zwraca
+    liczbę uzupełnionych `effective_date` (nie wierszy — jedno zapytanie
+    może uzupełnić kilka wierszy `date` naraz, jeśli mapują na tę samą
+    publikację)."""
+    rows = conn.execute(
+        "SELECT DISTINCT effective_date FROM nbp_rates WHERE table_no IS NULL"
+    ).fetchall()
+    filled = 0
+    for row in rows:
+        effective_date = row["effective_date"]
+
+        def _do_request(_eff=effective_date):
+            return requests.get(f"{_BASE}/{_eff}/", params={"format": "json"}, timeout=15)
+
+        resp = ratelimit.backoff_retry(
+            _do_request, provider="nbp", retryable_statuses=(429, 502, 503))
+        if resp is None or resp.status_code != 200:
+            continue
+        rates = resp.json().get("rates", [])
+        if not rates:
+            continue
+        table_no = rates[0].get("no")
+        if table_no is None:
+            continue
+        conn.execute(
+            "UPDATE nbp_rates SET table_no = ? WHERE effective_date = ? AND table_no IS NULL",
+            (table_no, effective_date))
+        filled += 1
+    conn.commit()
+    return filled

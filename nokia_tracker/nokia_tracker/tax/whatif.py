@@ -20,6 +20,7 @@ from datetime import datetime
 from ..providers import fx_nbp
 from . import lots as taxlots
 from . import policy as taxpolicy
+from . import trace as taxtrace
 
 
 def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
@@ -70,6 +71,15 @@ def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
     for data in policies.values():
         data["delta_vs_active_pln"] = round(data["tax_pln"] - active_tax_pln, 2)
 
+    # Krok 16: rozbicie do numeru tabeli NBP — patrz tax/trace.py. Osobny klucz
+    # `lots_consumed_detailed` obok `lots_consumed`, żeby nie psuć istniejących
+    # konsumentów starego, płaskiego kształtu (testy krok 15).
+    detailed = taxtrace.enrich_allocations(
+        conn, plan,
+        {"sale_date": sale_date, "price_eur": price_eur, "fee_eur": fee_eur,
+         "quantity": quantity, "nbp_rate": nbp_rate, "nbp_rate_date": nbp_rate_date},
+        cfg)
+
     return {
         "sale_date": sale_date,
         "nbp_rate": nbp_rate,
@@ -77,6 +87,7 @@ def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
         "quantity": quantity,
         "revenue_pln": round(revenue_pln, 2),
         "lots_consumed": plan,
+        "lots_consumed_detailed": detailed,
         "policies": policies,
         "active_policy": active_policy,
         "net_proceeds_pln": round(revenue_pln - active_tax_pln, 2),

@@ -32,26 +32,82 @@
 {% endif %}
 
 <div class="card">
-  <div class="card-title">Zrealizowane sprzedaże</div>
+  <div class="card-title">Podsumowanie {{ year or 'wszystkie lata' }}</div>
+  <div class="grid stats">
+    <div class="stat">
+      <span class="stat-label">Sprzedaże</span>
+      <span class="stat-value">{{ totals.count }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Przychód</span>
+      <span class="stat-value">{{ '%.0f'|format(totals.revenue_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Koszt</span>
+      <span class="stat-value">{{ '%.0f'|format(totals.cost_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Dochód</span>
+      <span class="stat-value">{{ '%.0f'|format(totals.income_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Podatek</span>
+      <span class="stat-value">{{ '%.0f'|format(totals.tax_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Na rękę</span>
+      <span class="stat-value">{{ '%.0f'|format(totals.net_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+  </div>
+  <p class="muted">Wg aktywnej polityki kosztu ({{ policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }}).</p>
+</div>
+
+<div class="card">
+  <div class="card-title">Rejestr sprzedaży</div>
   {% if sales %}
-  {% for item in sales %}
-  <details class="sale-summary">
-    <summary>
-      {{ item.sale.sale_date }} · {{ '%.4f'|format(item.sale.quantity) }} akcji @
-      {{ '%.4f'|format(item.sale.price_eur) }} EUR ·
-      przychód {{ '%.2f'|format(item.detail.revenue_pln) }} PLN ·
-      podatek {{ '%.2f'|format(item.detail.policies[item.detail.active_policy].tax_pln) }} PLN
-      ({{ policy_labels.get(item.detail.active_policy, item.detail.active_policy) }})
-    </summary>
-    {% set detail = item.detail %}
-    {% include "_alloc_detail.html" %}
-    <form class="no-print" method="post"
-          action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
-          onsubmit="return confirm('Cofnąć tę sprzedaż? Przywróci ilość akcji do lotów i usunie wpis nieodwracalnie.');">
-      <button class="btn small" type="submit">Cofnij tę sprzedaż</button>
-    </form>
-  </details>
-  {% endfor %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th></th><th>Data</th><th class="num">Ilość</th><th class="num">Cena EUR</th>
+          <th class="num">Kurs NBP</th><th class="num">Przychód PLN</th>
+          <th class="num">Koszt PLN</th><th class="num">Dochód PLN</th>
+          <th class="num">Podatek PLN</th><th class="num">Na rękę PLN</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in sales %}
+        {% set active_data = item.detail.policies[item.detail.active_policy] %}
+        <tr class="row-toggle" data-target="sale-{{ item.sale.id }}" tabindex="0" role="button"
+            aria-expanded="false" aria-controls="sale-{{ item.sale.id }}">
+          <td><span class="chevron">▸</span></td>
+          <td class="nowrap">{{ item.sale.sale_date }}</td>
+          <td class="num">{{ '%.4f'|format(item.sale.quantity) }}</td>
+          <td class="num">{{ '%.4f'|format(item.sale.price_eur) }}</td>
+          <td class="num">{{ '%.4f'|format(item.sale.nbp_rate) if item.sale.nbp_rate is not none else '—' }}</td>
+          <td class="num">{{ '%.2f'|format(item.detail.revenue_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(active_data.cost_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(active_data.income_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(active_data.tax_pln) }}</td>
+          <td class="num">{{ '%.2f'|format(item.detail.net_pln) }}</td>
+        </tr>
+        <tr class="row-detail" id="sale-{{ item.sale.id }}" hidden>
+          <td colspan="10">
+            <div class="row-detail-inner">
+              {% set detail = item.detail %}
+              {% include "_alloc_detail.html" %}
+              <form class="no-print" method="post"
+                    action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
+                    onsubmit="return confirm('Cofnąć tę sprzedaż? Przywróci ilość akcji do lotów i usunie wpis nieodwracalnie.');">
+                <button class="btn small" type="submit">Cofnij tę sprzedaż</button>
+              </form>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   {% else %}
   <p class="muted">
     Brak zarejestrowanych sprzedaży{% if year %} w {{ year }} roku{% endif %} —
@@ -60,4 +116,7 @@
   {% endif %}
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>NT.initRowToggles();</script>
 {% endblock %}

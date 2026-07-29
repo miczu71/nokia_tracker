@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.4.0] - 2026-07-29
+
+Czwarte wydanie: pełna szerokość ekranu + skondensowane Sprzedaże i PIT-38
+(krok 17, `docs/PLAN_KROK_17_ux.md`) — treść wypełnia cały dostępny ekran zamiast
+780px kolumny ze scrollbarem, a dwie najgęstsze strony dają odpowiedź w pierwszym
+ekranie zamiast rozwlekłej prozy.
+
+### Zmieniono — pełna szerokość layoutu
+- `.main` bez limitu `max-width` (było 900px) — treść skaluje się do pełnej
+  szerokości okna na każdej stronie.
+- Tabele przestały wymuszać `white-space: nowrap` na wszystkich komórkach —
+  kolumny tekstowe (`Źródło`, `Podstawa prawna`, `Reinwestycja`, `Uznany w`) łamią
+  się zamiast rozpychać tabelę w poziomy scroll; kolumny liczbowe/daty zachowują
+  `nowrap` przez `.num`/`.nowrap`.
+- `.grid.stats` z `auto-fill` na `auto-fit` — kafelki KPI realnie rozciągają się
+  na szerokim ekranie zamiast zostawiać puste ścieżki siatki.
+
+### Zmieniono — `/sales` jako rejestr transakcji
+- Z akordeonu (`<details>` per sprzedaż z dwiema pełnymi tabelami) na rejestr:
+  jeden wiersz na sprzedaż z kluczowymi kwotami w kolumnach do porównania,
+  rozwijany detal FIFO pod wierszem (klik/Enter/Spacja, wyrenderowany
+  serwerowo — zero doładowywania JS-em).
+- Nowa karta „Podsumowanie {rok}" — 6 kafelków KPI (sprzedaże, przychód, koszt,
+  dochód, podatek, na rękę) liczone wg aktywnej polityki kosztu.
+
+### Zmieniono — `_alloc_detail.html` (współdzielony przez `/sales` i „co jeśli
+sprzedam teraz" na `/pit38`)
+- Kurs sprzedaży pokazywany RAZ nad tabelą alokacji (wcześniej powtarzał się w
+  osobnym wierszu prozy przy KAŻDYM locie).
+- Jedna tabela alokacji zamiast dwóch — kurs lotu jako kolumna z `ⓘ` (tooltip +
+  link do tabeli NBP), cena nabycia/prowizja w `title` komórki „Lot”.
+- Polityki kosztu jako jedna linia zamiast drugiej tabeli.
+
+### Zmieniono — `/pit38` skondensowany do nagłówka deklaracji
+- Nowa pierwsza karta „Do wpisania w deklarację” — poz. C (wg aktywnej polityki)
+  + sekcja G + kafelek **RAZEM DO ZAPŁATY** (nowe pole `report['total_due_pln']`
+  w `tax/pit38.py::annual_report()`).
+- „Polityka kosztu” jako 3 kafelki z podatkiem i deltą; przychód/koszt/dochód i
+  podstawa prawna przeniesione do zwiniętego `<details>` pod kafelkami.
+- Sekcja G scalona z PIT/ZG (i tak jest jej pochodną) w jedną kartę.
+- „Co jeśli sprzedam teraz”: formularz w jednej linii, wynik jako pasek KPI,
+  rozbicie FIFO domyślnie zwinięte (wcześniej zawsze rozwinięte).
+- Ślad obliczeń per lot: wiersze pogrupowane wizualnie po dacie sprzedaży.
+
 ## [0.3.0] - 2026-07-29
 
 Trzecie wydanie: pełna przejrzystość rozliczeń (krok 16, `docs/PLAN_KROK_16_transparentnosc.md`) —

@@ -356,6 +356,68 @@ def test_sales_delete_restores_qty_remaining_and_redirects(client, _fake_nbp_rat
     assert "Brak zarejestrowanych sprzedaży" in resp_sales.get_data(as_text=True)
 
 
+def test_sales_page_shows_year_totals(client, _fake_nbp_rate):
+    # Krok 17: rejestr sprzedaży dostaje pasek KPI z sumą za rok (nie tylko
+    # per-sprzedaż). Kafelki podsumowania formatują PLN bez miejsc po przecinku
+    # (konwencja strony, patrz dividends.html/dashboard.html) — cena dobrana tak,
+    # żeby podatek per sprzedaż wyszedł całkowity: revenue 4*11.25*4=180,
+    # koszt 4*5*4=80, dochód 100, podatek 19.00; dwie takie sprzedaże = 38 razem.
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "20", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-03-01", "sale_quantity": "4",
+        "sale_price_eur": "11.25", "sale_fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "11.25", "sale_fee_eur": "0",
+    })
+    html = client.get("/sales?year=2024").get_data(as_text=True)
+    assert "Podsumowanie 2024" in html
+    assert '<span class="stat-value">38<span class="stat-unit">PLN</span></span>' in html
+
+
+def test_sales_row_detail_rendered_server_side(client, _fake_nbp_rate):
+    # Krok 17: /sales przeszło z <details> na rejestr wiersz + wiersz-detal;
+    # detal musi być wyrenderowany po stronie serwera (schowany przez `hidden`,
+    # nie doładowany JS-em po kliknięciu).
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    html = client.get("/sales").get_data(as_text=True)
+    assert 'class="row-detail"' in html
+    assert "hidden" in html
+    assert "2024-01-10" in html  # data nabycia lotu widoczna w detalu, mimo hidden
+
+
+def test_alloc_detail_renders_sale_fx_once(client, _fake_nbp_rate):
+    # Regresja: przed krokiem 17 wyprowadzenie kursu sprzedaży powtarzało się
+    # w osobnym wierszu prozy PRZY KAŻDYM LOCIE (_alloc_detail.html/alloc-fx-row).
+    # Sprzedaż konsumująca FIFO z dwóch lotów (3+1 z pierwszego, 3 z drugiego)
+    # ma pokazać zdanie o kursie sprzedaży RAZ, nad tabelą alokacji.
+    client.post("/lots", data={
+        "acquired_date": "2024-01-05", "lot_type": "own",
+        "quantity": "3", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots", data={
+        "acquired_date": "2024-02-05", "lot_type": "own",
+        "quantity": "3", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    html = client.get("/sales").get_data(as_text=True)
+    assert html.count("sprzedaż: 2024-06-01") == 1
+
+
 # --- grants (ESPP/LTI) ---
 
 def _make_grants_app(tmp_path):
@@ -897,6 +959,25 @@ def test_pit38_year_selector_lists_years_with_data(client, _fake_nbp_rate_pit38)
     html = client.get("/pit38").get_data(as_text=True)
     assert '<option value="2023"' in html
     assert f'<option value="{datetime.now().year}"' in html
+
+
+def test_pit38_shows_total_due(client, _fake_nbp_rate_pit38):
+    # Krok 17: karta "Do wpisania w deklarację" pokazuje RAZEM DO ZAPŁATY =
+    # podatek poz. C (wg aktywnej polityki) + dopłata sekcji G. Bez dywidend
+    # w tym roku sekcja G = 0, więc razem = sam podatek poz. C: revenue
+    # 10*8*4=320 - koszt 10*5*4=200 = 120 dochodu * 19% = 22.80.
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "10",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    resp = client.get("/pit38?year=2024")
+    html = resp.get_data(as_text=True)
+    assert "RAZEM DO ZAPŁATY" in html
+    assert "22.80" in html or "22,80" in html
 
 
 def test_pit38_page_whatif_query_params_render_result(client, _fake_nbp_rate_pit38):

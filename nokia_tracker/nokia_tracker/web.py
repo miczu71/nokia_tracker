@@ -399,9 +399,24 @@ def create_app(db_path: str) -> Flask:
                 "SELECT DISTINCT strftime('%Y', sale_date) AS y FROM sales "
                 "ORDER BY y DESC").fetchall() if r["y"]]
 
+            # Krok 17: pasek KPI nad rejestrem — suma wg AKTYWNEJ polityki kosztu,
+            # ta sama, którą pokazuje szczegół każdej sprzedaży.
+            active_policy = cfg.get("cost_basis_policy", "own_only")
+            totals = {
+                "count": len(sales),
+                "revenue_pln": round(sum(i["detail"]["revenue_pln"] for i in sales), 2),
+                "cost_pln": round(sum(
+                    i["detail"]["policies"][active_policy]["cost_pln"] for i in sales), 2),
+                "income_pln": round(sum(
+                    i["detail"]["policies"][active_policy]["income_pln"] for i in sales), 2),
+                "tax_pln": round(sum(
+                    i["detail"]["policies"][active_policy]["tax_pln"] for i in sales), 2),
+                "net_pln": round(sum(i["detail"]["net_pln"] for i in sales), 2),
+            }
+
             return render_template(
                 "sales.html", active="sales", version=__version__, cfg=cfg,
-                sales=sales, year=year, years=years,
+                sales=sales, year=year, years=years, totals=totals,
                 deleted=request.args.get("deleted") == "1")
         finally:
             conn.close()

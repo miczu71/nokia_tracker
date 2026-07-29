@@ -6,10 +6,11 @@
                           'dividend_drip': 'dywidenda'} %}
 {% set policy_labels = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
                         'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
+{% set active_data = report.policies[cfg.cost_basis_policy] %}
 
 <div class="page-head">
   <h1>PIT-38 — {{ year }}</h1>
-  <form class="year-form" method="get" action="{{ url_for('pit38_get') }}">
+  <form class="year-form no-print" method="get" action="{{ url_for('pit38_get') }}">
     <label>Rok
       <select name="year" onchange="this.form.submit()">
         {% for y in years %}
@@ -19,6 +20,11 @@
     </label>
     <button class="btn small" type="submit">Pokaż</button>
   </form>
+  <div class="form-actions no-print">
+    <a class="btn" href="{{ url_for('pit38_get', year=year, print=1) }}" target="_blank">Widok do druku</a>
+    <a class="btn" href="{{ url_for('pit38_export_csv', year=year) }}">Eksport CSV</a>
+    <a class="btn" href="{{ url_for('pit38_export_xlsx', year=year) }}">Eksport XLSX</a>
+  </div>
 </div>
 
 <p class="disclaimer">
@@ -28,44 +34,80 @@
   rozliczeniem lub doradcą przed wpisaniem do PIT-38.
 </p>
 
-<div class="form-actions no-print">
-  <a class="btn" href="{{ url_for('pit38_get', year=year, print=1) }}" target="_blank">Widok do druku</a>
-  <a class="btn" href="{{ url_for('pit38_export_csv', year=year) }}">Eksport CSV</a>
-  <a class="btn" href="{{ url_for('pit38_export_xlsx', year=year) }}">Eksport XLSX</a>
-</div>
-
 <div class="card">
-  <div class="card-title">Poz. C — trzy polityki kosztu, porównanie</div>
-  <div class="table-wrap">
-    <table class="table">
-      <thead>
-        <tr>
-          <th>Polityka</th><th class="num">Przychód PLN</th><th class="num">Koszt PLN</th>
-          <th class="num">Dochód PLN</th><th class="num">Podatek PLN</th>
-          <th class="num">Różnica vs aktywna</th><th>Podstawa prawna</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for name, data in report.policies.items() %}
-        <tr {% if name == cfg.cost_basis_policy %}class="active-policy"{% endif %}>
-          <td>{{ policy_labels.get(name, name) }}
-            {% if name == cfg.cost_basis_policy %}<span class="badge saved">aktywna</span>{% endif %}
-          </td>
-          <td class="num">{{ '%.2f'|format(data.revenue_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
-          <td class="muted">{{ data.legal_basis_pl }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="card-title">Do wpisania w deklarację (wg aktywnej polityki: {{ policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }})</div>
+  <div class="grid stats">
+    <div class="stat">
+      <span class="stat-label">Poz. C — przychód</span>
+      <span class="stat-value">{{ '%.2f'|format(active_data.revenue_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Poz. C — koszt</span>
+      <span class="stat-value">{{ '%.2f'|format(active_data.cost_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Poz. C — dochód</span>
+      <span class="stat-value">{{ '%.2f'|format(active_data.income_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Poz. C — podatek</span>
+      <span class="stat-value">{{ '%.2f'|format(active_data.tax_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Sekcja G — dopłata w PL</span>
+      <span class="stat-value">{{ '%.2f'|format(report.section_g.pl_tax_due_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat highlight">
+      <span class="stat-label">RAZEM DO ZAPŁATY</span>
+      <span class="stat-value">{{ '%.2f'|format(report.total_due_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
   </div>
 </div>
 
 <div class="card">
-  <div class="card-title">Sekcja G — dywidendy zagraniczne</div>
+  <div class="card-title">Polityka kosztu — porównanie</div>
+  <div class="grid stats">
+    {% for name, data in report.policies.items() %}
+    <div class="stat">
+      <span class="stat-label">{{ policy_labels.get(name, name) }}
+        {% if name == cfg.cost_basis_policy %}<span class="badge saved">aktywna</span>{% endif %}
+      </span>
+      <span class="stat-value">{{ '%.2f'|format(data.tax_pln) }}<span class="stat-unit">PLN</span></span>
+      {% if name != cfg.cost_basis_policy %}
+      <span class="muted {{ 'bad' if data.delta_vs_active_pln > 0 else 'good' }}">
+        różnica {{ '%+.2f'|format(data.delta_vs_active_pln) }} PLN</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <details class="no-print">
+    <summary class="muted">Podstawa prawna i pełne rozbicie</summary>
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>Polityka</th><th class="num">Przychód PLN</th><th class="num">Koszt PLN</th>
+            <th class="num">Dochód PLN</th><th>Podstawa prawna</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for name, data in report.policies.items() %}
+          <tr {% if name == cfg.cost_basis_policy %}class="active-policy"{% endif %}>
+            <td>{{ policy_labels.get(name, name) }}</td>
+            <td class="num">{{ '%.2f'|format(data.revenue_pln) }}</td>
+            <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
+            <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
+            <td class="muted">{{ data.legal_basis_pl }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+</div>
+
+<div class="card">
+  <div class="card-title">Sekcja G — dywidendy zagraniczne (PIT/ZG)</div>
   <div class="grid stats">
     <div class="stat">
       <span class="stat-label">Dywidendy brutto</span>
@@ -76,14 +118,6 @@
       <span class="stat-value">{{ '%.2f'|format(report.section_g.withholding_paid_pln) }}<span class="stat-unit">PLN</span></span>
     </div>
     <div class="stat">
-      <span class="stat-label">Zaliczenie traktatowe</span>
-      <span class="stat-value">{{ '%.2f'|format(report.section_g.credit_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Belka (19%)</span>
-      <span class="stat-value">{{ '%.2f'|format(report.section_g.belka_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
       <span class="stat-label">Dopłata w PL</span>
       <span class="stat-value">{{ '%.2f'|format(report.section_g.pl_tax_due_pln) }}<span class="stat-unit">PLN</span></span>
     </div>
@@ -92,41 +126,31 @@
       <span class="stat-value">{{ '%.2f'|format(report.section_g.reclaimable_from_finland_pln) }}<span class="stat-unit">PLN</span></span>
     </div>
   </div>
-  <p class="muted">{{ report.section_g.dividend_count }} dywidend w {{ year }} roku.</p>
-</div>
-
-<div class="card">
-  <div class="card-title">PIT/ZG — dochód zagraniczny</div>
-  <div class="table-wrap">
-    <table class="table">
-      <tbody>
-        <tr><td>Kraj</td><td class="num">{{ report.pit_zg.country }}</td></tr>
-        <tr><td>Dochód zagraniczny</td>
-          <td class="num">{{ '%.2f'|format(report.pit_zg.foreign_income_pln) }} PLN</td></tr>
-        <tr><td>Podatek zapłacony za granicą</td>
-          <td class="num">{{ '%.2f'|format(report.pit_zg.foreign_tax_paid_pln) }} PLN</td></tr>
-      </tbody>
-    </table>
-  </div>
+  <p class="muted">
+    Zaliczenie traktatowe {{ '%.2f'|format(report.section_g.credit_pln) }} PLN ·
+    Belka (19%) {{ '%.2f'|format(report.section_g.belka_pln) }} PLN ·
+    {{ report.section_g.dividend_count }} dywidend w {{ year }} roku.
+  </p>
+  <p class="muted">
+    PIT/ZG: {{ report.pit_zg.country }} · dochód zagraniczny
+    {{ '%.2f'|format(report.pit_zg.foreign_income_pln) }} PLN · podatek zapłacony za granicą
+    {{ '%.2f'|format(report.pit_zg.foreign_tax_paid_pln) }} PLN.
+  </p>
 </div>
 
 <div class="card no-print">
   <div class="card-title">„Co jeśli sprzedam teraz"</div>
-  <form class="form" method="get" action="{{ url_for('pit38_get') }}">
+  <form class="inline-form" method="get" action="{{ url_for('pit38_get') }}">
     <input type="hidden" name="year" value="{{ year }}">
-    <div class="row2">
-      <label>Ilość akcji
-        <input type="number" step="0.0001" name="whatif_qty"
-               value="{{ whatif_qty or '' }}" required>
-      </label>
-      <label>Cena (EUR/akcję)
-        <input type="number" step="0.0001" name="whatif_price"
-               value="{{ whatif_price or current_price or '' }}" required>
-      </label>
-    </div>
-    <div class="form-actions">
-      <button class="btn primary" type="submit">Symuluj</button>
-    </div>
+    <label>Ilość akcji
+      <input type="number" step="0.0001" name="whatif_qty"
+             value="{{ whatif_qty or '' }}" required>
+    </label>
+    <label>Cena (EUR/akcję)
+      <input type="number" step="0.0001" name="whatif_price"
+             value="{{ whatif_price or current_price or '' }}" required>
+    </label>
+    <button class="btn primary" type="submit">Symuluj</button>
   </form>
 
   {% if whatif_error %}
@@ -134,7 +158,24 @@
   {% endif %}
 
   {% if whatif_result %}
-  <details class="no-print" open>
+  {% set whatif_active = whatif_result.policies[whatif_result.active_policy] %}
+  <div class="grid stats">
+    <div class="stat">
+      <span class="stat-label">Podatek (aktywna polityka)</span>
+      <span class="stat-value">{{ '%.2f'|format(whatif_active.tax_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Na rękę</span>
+      <span class="stat-value">{{ '%.2f'|format(whatif_result.net_proceeds_pln) }}<span class="stat-unit">PLN</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Efektywna stopa</span>
+      <span class="stat-value">
+        {{ '%.1f'|format(whatif_active.tax_pln / whatif_result.revenue_pln * 100) if whatif_result.revenue_pln else '—' }}
+        <span class="stat-unit">%</span></span>
+    </div>
+  </div>
+  <details class="no-print">
     <summary>Z których lotów idzie sprzedaż — pełne rozbicie do numeru tabeli NBP</summary>
     {% set detail = whatif_result.lots_consumed_detailed %}
     {% include "_alloc_detail.html" %}
@@ -155,23 +196,25 @@
         </tr>
       </thead>
       <tbody>
+        {% set ns = namespace(prev_date=None) %}
         {% for row in report.sale_trace %}
-        <tr>
-          <td>{{ row.sale_date }}</td>
-          <td>{{ row.acquired_date }}</td>
+        <tr {% if row.sale_date != ns.prev_date %}class="trace-new-sale"{% endif %}>
+          <td class="nowrap">{{ row.sale_date }}</td>
+          <td class="nowrap">{{ row.acquired_date }}</td>
           <td>{{ lot_type_labels.get(row.lot_type, row.lot_type) }}</td>
           <td class="num">{{ '%.4f'|format(row.quantity) }}</td>
           <td class="num">{{ '%.2f'|format(row.cost_pln) }}</td>
           <td class="num">{{ '%.2f'|format(row.revenue_pln) }}</td>
-          <td class="muted">
+          <td class="muted nowrap">
             {{ '%.4f'|format(row.lot_nbp_rate) if row.lot_nbp_rate is not none else '—' }}
             ({{ row.lot_nbp_rate_date or '—' }})
           </td>
-          <td class="muted">
+          <td class="muted nowrap">
             {{ '%.4f'|format(row.sale_nbp_rate) if row.sale_nbp_rate is not none else '—' }}
             ({{ row.sale_nbp_rate_date or '—' }})
           </td>
         </tr>
+        {% set ns.prev_date = row.sale_date %}
         {% endfor %}
       </tbody>
     </table>

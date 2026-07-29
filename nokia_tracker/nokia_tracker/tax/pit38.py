@@ -85,6 +85,12 @@ def annual_report(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
     policies = taxpolicy.compute_all_policies(conn, cfg, year=year)
     section_g = _section_g(conn, cfg, year)
 
+    # Krok 17: "ile finalnie wpisać w deklarację" wg AKTYWNEJ polityki kosztu —
+    # poz. C (kapitały) + sekcja G (dopłata z dywidend zagranicznych) razem.
+    active_policy = cfg.get("cost_basis_policy", "own_only")
+    total_due_pln = round(
+        policies[active_policy]["tax_pln"] + section_g["pl_tax_due_pln"], 2)
+
     return {
         "year": year,
         "policies": policies,
@@ -95,4 +101,5 @@ def annual_report(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
             "foreign_tax_paid_pln": section_g["withholding_paid_pln"],
         },
         "sale_trace": _sale_trace(conn, year),
+        "total_due_pln": total_due_pln,
     }

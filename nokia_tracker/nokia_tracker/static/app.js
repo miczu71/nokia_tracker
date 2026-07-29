@@ -93,5 +93,33 @@ window.NT = (function () {
     load();
   }
 
-  return { initPriceChart };
+  // Krok 17: rejestr sprzedaży (/sales) — wiersz-nagłówek `.row-toggle` przełącza
+  // widoczność wiersza-detalu `.row-detail` wskazanego przez `data-target`/id.
+  // Detal jest już wyrenderowany serwerowo (patrz _alloc_detail.html) — to tylko
+  // pokazanie/ukrycie, żadnego doładowywania.
+  function initRowToggles() {
+    function toggle(row) {
+      const detail = row.dataset.target && document.getElementById(row.dataset.target);
+      if (!detail) return;
+      const expanded = row.getAttribute("aria-expanded") === "true";
+      row.setAttribute("aria-expanded", String(!expanded));
+      detail.hidden = expanded;
+      const chevron = row.querySelector(".chevron");
+      if (chevron) chevron.textContent = expanded ? "▸" : "▾";
+    }
+
+    document.addEventListener("click", (ev) => {
+      const row = ev.target.closest(".row-toggle");
+      if (row) toggle(row);
+    });
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
+      const row = ev.target.closest(".row-toggle");
+      if (!row) return;
+      ev.preventDefault();
+      toggle(row);
+    });
+  }
+
+  return { initPriceChart, initRowToggles };
 })();

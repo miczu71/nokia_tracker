@@ -1,52 +1,51 @@
 {# Rozbicie alokacji FIFO do numeru tabeli NBP (krok 16) — współdzielone przez
-   kartę "Co jeśli sprzedam teraz" na /pit38 i każdą rozwiniętą sprzedaż na /sales,
+   kartę "Co jeśli sprzedam teraz" na /pit38 i rejestr sprzedaży na /sales,
    żeby oba widoki pokazywały TĘ SAMĄ matematykę (tax/trace.py::enrich_allocations).
+   Skondensowane w kroku 17: kurs sprzedaży pokazany RAZ nad tabelą (nie przy
+   każdym locie), polityki jako jedna linia zamiast drugiej tabeli.
    Oczekuje w kontekście: `detail` (wynik enrich_allocations), oraz — z template'u
    wywołującego — `lot_type_labels`/`policy_labels` (już zdefiniowane na /pit38 i /sales). #}
+
+<p class="fx-line">
+  Kurs sprzedaży: {{ detail.sale_fx.explanation_pl }}
+  {% if detail.sale_fx.urls %}
+    (<a href="{{ detail.sale_fx.urls.nbp }}" target="_blank" rel="noopener">nbp.pl</a> ·
+     <a href="{{ detail.sale_fx.urls.api }}" target="_blank" rel="noopener">api</a>)
+  {% endif %}
+</p>
 
 <div class="table-wrap">
   <table class="table alloc-table">
     <thead>
       <tr>
         <th>Lot</th><th>Typ</th><th class="num">Ilość</th>
+        <th class="num">Kurs lotu</th>
         <th class="num">Koszt EUR</th><th class="num">Koszt PLN</th>
-        <th class="num">Przychód EUR</th><th class="num">Przychód PLN</th>
-        <th class="num">Dochód PLN</th><th>Uznany w</th>
+        <th class="num">Przychód PLN</th><th class="num">Dochód PLN</th><th>Uznany w</th>
       </tr>
     </thead>
     <tbody>
       {% for a in detail.allocations %}
       <tr>
-        <td>#{{ a.lot_id }} · {{ a.acquired_date }}</td>
+        <td class="nowrap"
+            title="cena nabycia {{ '%.4f'|format(a.lot_price_eur) }} EUR/akcję{% if a.lot_fee_eur %} + prowizja {{ '%.2f'|format(a.lot_fee_eur) }} EUR{% endif %}">
+          #{{ a.lot_id }} · {{ a.acquired_date }}
+        </td>
         <td>{{ lot_type_labels.get(a.lot_type, a.lot_type) }}</td>
         <td class="num">{{ '%.4f'|format(a.qty_taken) }} / {{ '%.4f'|format(a.lot_quantity) }}</td>
+        <td class="num">
+          {% if a.lot_fx.rate is not none %}
+            {{ '%.4f'|format(a.lot_fx.rate) }}
+            <abbr class="abbr-info" title="{{ a.lot_fx.explanation_pl }}">ⓘ</abbr>
+            {% if a.lot_fx.urls %}<a href="{{ a.lot_fx.urls.nbp }}" target="_blank" rel="noopener">↗</a>{% endif %}
+          {% else %}—{% endif %}
+        </td>
         <td class="num">{{ '%.2f'|format(a.cost_eur) if a.cost_eur is not none else '—' }}</td>
         <td class="num">{{ '%.2f'|format(a.cost_pln) }}</td>
-        <td class="num">{{ '%.2f'|format(a.revenue_eur) }}</td>
         <td class="num">{{ '%.2f'|format(a.revenue_pln) }}</td>
         <td class="num">{{ '%.2f'|format(a.income_pln) }}</td>
         <td class="muted wrap">
           {% for name in a.counted_in %}{{ policy_labels.get(name, name) }}{% if not loop.last %}, {% endif %}{% endfor %}
-        </td>
-      </tr>
-      <tr class="alloc-fx-row">
-        <td colspan="9" class="muted alloc-fx">
-          <div>cena nabycia {{ '%.4f'|format(a.lot_price_eur) }} EUR/akcję
-            {% if a.lot_fee_eur %}+ prowizja {{ '%.2f'|format(a.lot_fee_eur) }} EUR{% endif %}
-            · {{ a.lot_fx.explanation_pl }}
-            {% if a.lot_fx.urls %}
-              (<a href="{{ a.lot_fx.urls.nbp }}" target="_blank" rel="noopener">nbp.pl</a> ·
-               <a href="{{ a.lot_fx.urls.api }}" target="_blank" rel="noopener">api</a>)
-            {% endif %}
-          </div>
-          <div>cena sprzedaży {{ '%.4f'|format(a.sale_price_eur) }} EUR/akcję
-            {% if a.fee_share_eur %}− prowizja (udział) {{ '%.2f'|format(a.fee_share_eur) }} EUR{% endif %}
-            · {{ detail.sale_fx.explanation_pl }}
-            {% if detail.sale_fx.urls %}
-              (<a href="{{ detail.sale_fx.urls.nbp }}" target="_blank" rel="noopener">nbp.pl</a> ·
-               <a href="{{ detail.sale_fx.urls.api }}" target="_blank" rel="noopener">api</a>)
-            {% endif %}
-          </div>
         </td>
       </tr>
       {% endfor %}
@@ -54,31 +53,16 @@
   </table>
 </div>
 
-<div class="table-wrap">
-  <table class="table">
-    <thead>
-      <tr>
-        <th>Polityka</th><th class="num">Koszt EUR</th><th class="num">Koszt PLN</th>
-        <th class="num">Dochód PLN</th><th class="num">Podatek PLN</th>
-        <th class="num">Różnica vs aktywna</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for name, data in detail.policies.items() %}
-      <tr {% if name == detail.active_policy %}class="active-policy"{% endif %}>
-        <td>{{ policy_labels.get(name, name) }}
-          {% if name == detail.active_policy %}<span class="badge saved">aktywna</span>{% endif %}
-        </td>
-        <td class="num">{{ '%.2f'|format(data.cost_eur) }}</td>
-        <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
-        <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
-        <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
-        <td class="num">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+<p class="policy-line">
+  Polityki:
+  {% for name, data in detail.policies.items() %}
+    {{ policy_labels.get(name, name) }} {{ '%.2f'|format(data.tax_pln) }} zł
+    {% if name == detail.active_policy %}<span class="badge saved">aktywna</span>
+    {% else %}<span class="{{ 'bad' if data.delta_vs_active_pln > 0 else 'good' }}">({{ '%+.2f'|format(data.delta_vs_active_pln) }})</span>
+    {% endif %}
+    {%- if not loop.last %} · {% endif %}
+  {% endfor %}
+</p>
 
 <p class="muted">
   Przychód razem: {{ '%.2f'|format(detail.revenue_eur) }} EUR /

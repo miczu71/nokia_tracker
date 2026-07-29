@@ -131,7 +131,7 @@
       <tbody>
         {% for l in lots %}
         <tr>
-          <td>{{ l.acquired_date }}</td>
+          <td class="nowrap">{{ l.acquired_date }}</td>
           <td>{{ lot_type_labels.get(l.lot_type, l.lot_type) }}</td>
           <td class="num">{{ '%.4f'|format(l.quantity) }}</td>
           <td class="num">{{ '%.4f'|format(l.qty_remaining) }}</td>

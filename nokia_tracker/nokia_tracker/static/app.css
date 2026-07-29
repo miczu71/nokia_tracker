@@ -56,7 +56,7 @@ body {
 .nav-links a.active, .nav-links a:hover { background: var(--grid); color: var(--ink); }
 .nav-version { color: var(--muted); font-size: 11px; margin-left: 4px; }
 
-.main { max-width: 900px; margin: 0 auto; padding: 14px 14px 60px; }
+.main { max-width: none; margin: 0; padding: 14px clamp(12px, 1.5vw, 28px) 60px; }
 
 .card {
   background: var(--surface);
@@ -78,7 +78,7 @@ body {
 
 .grid.stats {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px; margin-bottom: 14px;
 }
 .stat { display: flex; flex-direction: column; gap: 2px; }
@@ -97,14 +97,15 @@ body {
 .page-head h1 { font-size: 20px; margin: 0; }
 
 .table-wrap { overflow-x: auto; }
-.table { border-collapse: collapse; width: 100%; font-size: 14px; }
+.table { border-collapse: collapse; width: 100%; font-size: 14px; table-layout: auto; }
 .table th, .table td {
   text-align: left; padding: 7px 8px;
   border-bottom: 1px solid var(--grid);
-  white-space: nowrap;
+  white-space: normal;
 }
 .table th { color: var(--muted); font-weight: 600; font-size: 12px; }
-.table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table .nowrap { white-space: nowrap; }
 .table tr:hover td { background: var(--page); }
 .table td.wrap { white-space: normal; }
 
@@ -160,11 +161,19 @@ body {
 .year-form label { font-size: 13px; color: var(--ink-2); }
 .year-form input { padding: 6px 8px; border: 1px solid var(--baseline); border-radius: 6px; }
 
-/* Rozbicie alokacji FIFO do numeru tabeli NBP (krok 16) */
-.alloc-fx-row td { white-space: normal; border-bottom: 1px solid var(--border); }
-.alloc-fx { padding: 2px 8px 10px !important; font-size: 12px; line-height: 1.5; }
-.alloc-fx div { margin-top: 2px; }
-.alloc-fx a { color: var(--series-1); }
+/* Rozbicie alokacji FIFO do numeru tabeli NBP (krok 16), skondensowane w kroku 17 */
+.fx-line { font-size: 13px; color: var(--ink-2); margin: 0 0 10px; }
+.fx-line a { color: var(--series-1); }
+.policy-line { font-size: 13px; color: var(--ink-2); margin-top: 10px; }
+.abbr-info {
+  cursor: help; border-bottom: 1px dotted var(--muted);
+  text-decoration: none; color: var(--muted); font-size: 12px;
+}
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+
+/* .sale-summary — nadal używane przez /grants (rozwijane rozbicie zrealizowanych
+   transz); /sales przeszło na rejestr wiersz+detal (patrz .row-toggle niżej). */
 .sale-summary summary {
   cursor: pointer; padding: 8px 0; font-weight: 600; list-style: none;
 }
@@ -173,6 +182,31 @@ body {
 .sale-summary[open] summary::before { content: "▾ "; }
 .sale-summary { border-bottom: 1px solid var(--grid); padding-bottom: 10px; margin-bottom: 10px; }
 .sale-summary:last-child { border-bottom: none; margin-bottom: 0; }
+
+/* Krok 17: rejestr sprzedaży — wiersz-nagłówek + wiersz-detal zamiast <details> */
+.row-toggle { cursor: pointer; }
+.row-toggle:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+.row-toggle .chevron { display: inline-block; width: 14px; color: var(--muted); }
+.row-detail td { padding: 0; border-bottom: 1px solid var(--grid); }
+.row-detail-inner { padding: 4px 10px 16px; }
+
+/* Krok 17: formularz jednolinijkowy (symulacja PIT-38) */
+.inline-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+.inline-form label { font-size: 13px; color: var(--ink-2); }
+.inline-form input {
+  display: block; margin-top: 4px; padding: 9px 10px; font-size: 15px; width: 150px;
+  border: 1px solid var(--baseline); border-radius: 8px;
+  background: var(--page); color: var(--ink);
+}
+
+/* Krok 17: kafelek wyróżniony (RAZEM DO ZAPŁATY) */
+.stat.highlight {
+  border-left: 3px solid var(--series-1); padding-left: 10px;
+}
+.stat.highlight .stat-value { font-size: 28px; }
+
+/* Krok 17: separator zmiany daty w śladzie obliczeń per lot */
+.table tr.trace-new-sale td { border-top: 2px solid var(--baseline); }
 
 /* Wykres pulpitu — pasek zakresów */
 .chart-range-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -187,4 +221,6 @@ body {
   body.print-mode .main { max-width: none; padding: 0; }
   .card { border: none; break-inside: avoid; margin-bottom: 10px; }
   .table th, .table td { white-space: normal; }
+  .row-detail[hidden] { display: table-row !important; }
+  .row-toggle .chevron { display: none; }
 }

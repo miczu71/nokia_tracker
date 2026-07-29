@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.2.0] - 2026-07-29
+
+Drugie wydanie: pełny silnik podatkowy PIT-38 dla pracowniczego planu akcji Nokii (ESPP + LTI),
+zbudowany na podstawie realnych wyciągów Computershare użytkownika. Obejmuje kroki 11-15 z
+`docs/BLUEPRINT.md` §3a — od kursów NBP po raport gotowy do wpisania w deklarację.
+
+### Dodano — silnik podatkowy
+- **Kursy NBP** (`providers/fx_nbp.py`): kurs średni z ostatniego dnia roboczego poprzedzającego
+  zdarzenie (art. 11a ustawy o PIT), z cofaniem do 10 dni wstecz przez weekendy/święta. Raz
+  zapisany kurs nigdy nie jest przeliczany ponownie.
+- **Loty i FIFO** (`tax/lots.py`, `tax/policy.py`): sprzedaż konsumuje loty metodą FIFO
+  (`sale_allocations`), z obsługą sprzedaży częściowej i akcji ułamkowych. Trzy polityki kosztu
+  (`own_only`/`own_plus_drip`/`all_at_acquisition`) liczone równolegle z tych samych zapisanych
+  alokacji, każda z podstawą prawną — strona **Loty** pokazuje wszystkie trzy obok siebie.
+- **Import wyciągów Computershare** (`importers/computershare_pdf.py`): parser PDF (layout-mode
+  `pypdf`) sekcji Purchases/Matching Shares/RS AWARD/Dividend Reinvested/Withhold-to-Cover.
+  Przyrostowy i idempotentny — ten sam wyciąg wgrany drugi raz daje `rows_unchanged`, nigdy
+  duplikatów; rozbieżności trafiają do kolejki konfliktów zamiast cichego nadpisania. Strona
+  **Importy**: upload, kolejka konfliktów (w tym ręczne potwierdzenie realnej sprzedaży przy
+  Withhold-to-Cover typu B), historia wgrań.
+- **Granty ESPP/LTI i vesting** (`tax/grants.py`): harmonogram transz z wyciągów, reconciliation
+  dopasowujący loty do transz po dokładnej, jednoznacznej ilości (nigdy nie zgaduje przy
+  niejednoznaczności), przypomnienia `vest_reminder_days` przed nadchodzącą datą. Strona
+  **Granty** (wyłącznie odczyt).
+- **Sekcja G — dywidendy w PLN** (`tax/dividends.py::compute_dividend_tax_pln`): łańcuch
+  u źródła → zaliczenie traktatowe → Belka → dopłata w PL / odzysk z Vero, liczony na kursie NBP
+  zamrożonym na dzień wypłaty (art. 11a) — w odróżnieniu od istniejącego orientacyjnego kalkulatora
+  EUR na bieżącym kursie.
+- **Raport PIT-38** (`tax/pit38.py::annual_report`): poz. C (trzy polityki kosztu naraz), sekcja G,
+  PIT/ZG, ślad obliczeń per lot (kurs NBP i data osobno dla kosztu lotu i przychodu sprzedaży).
+- **„Co jeśli sprzedam teraz"** (`tax/whatif.py::simulate_sale`): symulacja sprzedaży na tej samej
+  alokacji FIFO co realna sprzedaż (`tax/lots.py::_plan_fifo`, wydzielona z `_allocate_fifo` bez
+  zmiany zachowania), bez żadnego zapisu do bazy.
+- Strona **PIT-38**: selektor roku, wszystko powyższe w jednym miejscu, formularz what-if
+  (GET/read-only), widok do druku (`?print=1`, PDF przez przeglądarkę), eksport CSV i XLSX
+  (`openpyxl`, arkusze Podsumowanie/Ślad per lot/Dywidendy).
+- 12 nowych encji MQTT: 5× loty i FIFO, 2× granty (`unvested_qty`, `next_vest_date`), 5× PIT-38 i
+  symulacja.
+
+### Klauzula
+To kalkulator pomocniczy, nie doradztwo podatkowe. Wartości do PIT-38 potwierdź z własnym
+rozliczeniem lub doradcą — add-on pokazuje pełny ślad obliczeń per lot właśnie po to, żeby dało
+się to zweryfikować, a nie przyjąć na wiarę.
+
 ## [0.1.2] - 2026-07-28
 
 Odporność na niestabilne zewnętrzne źródła po przeglądzie logów produkcyjnych 0.1.1 — dwa

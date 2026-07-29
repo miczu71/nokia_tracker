@@ -3,15 +3,16 @@
 Home Assistant add-on — osobisty asystent inwestycyjny dla akcji Nokia (NOKIA.HE, Nasdaq Helsinki).
 
 Śledzi kurs, historię, newsy i sentyment (AI), generuje prognozy z weryfikacją trafności, porównuje
-Nokię z benchmarkiem (Ericsson, OMXH25), prowadzi prosty portfel i rozliczenie podatku od dywidend,
-i wystawia wszystko do Home Assistant przez MQTT Discovery — plus pełny web UI na ingressie. Docelowo
-(0.2.0): rozliczenie akcji z pracowniczego planu (ESPP/LTI) i dywidend z polskim urzędem skarbowym
-(PIT-38), na podstawie wyciągów Computershare/EquatePlus.
+Nokię z benchmarkiem (Ericsson, OMXH25), prowadzi portfel oparty na lotach FIFO i pełne rozliczenie
+podatkowe (PIT-38: przychody kapitałowe, dywidendy zagraniczne, PIT/ZG) dla pracowniczego planu akcji
+Nokii (ESPP + LTI) na podstawie wyciągów Computershare/EquatePlus, i wystawia wszystko do Home
+Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.1.2** — rynek, AI, prosty portfel, web UI, odporność na niestabilne źródła
-(GDELT, router LLM). Rozliczenie podatkowe PIT-38 (0.2.0) w budowie.
+**Status:** wydanie **0.2.0** — rynek, AI, portfel oparty na lotach, import wyciągów Computershare
+(przyrostowy, idempotentny), granty ESPP/LTI z auto-vestingiem, pełny silnik podatkowy PIT-38
+(trzy polityki kosztu, sekcja G, PIT/ZG, symulacja „co jeśli sprzedam teraz", eksport CSV/XLSX/PDF).
 
 ## Instalacja
 
@@ -27,11 +28,15 @@ Dodatek wystawia własny interfejs na ingressie (panel „Nokia Tracker” w boc
 | Strona | Zawartość |
 |---|---|
 | **Pulpit** | Kurs, zmiana dzienna, sesja, trend, RSI, wykres cenowy 90 dni, karta portfela, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
-| **Portfel** | Formularz stanu posiadania (ilość akcji + średni koszt zakupu) |
+| **Portfel** | Stan posiadania — automatycznie z lotów, gdy istnieją (FIFO), formularz ręczny jako fallback |
+| **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu, formularz rejestracji sprzedaży (konsumuje FIFO), tabela wszystkich lotów z kursem NBP zamrożonym per lot |
+| **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare — wyłącznie odczyt, status transz (oczekuje/nabyte/zaległe) |
 | **Dywidendy** | Formularz dodania wypłaty dywidendy (przelicza podatek u źródła/PL/odzysk na bieżąco), historia i podsumowanie, klauzula podatkowa |
+| **Importy** | Upload wyciągu Computershare (PDF), kolejka konfliktów (rozbieżności vs poprzedni import, w tym potwierdzenie realnej sprzedaży Withhold-to-Cover), historia importów |
+| **PIT-38** | Selektor roku podatkowego, trzy polityki kosztu, sekcja G (dywidendy zagraniczne), PIT/ZG, ślad obliczeń per lot, symulacja „co jeśli sprzedam teraz”, eksport CSV/XLSX/widok do druku |
 | **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza) |
 | **Prognozy** | Historia prognoz 1w/1m/12m vs zrealizowana cena, trafność (MAPE) |
-| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia (0.2.0) |
+| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia |
 
 ## Odporność na niestabilne źródła
 
@@ -44,6 +49,33 @@ Newsy i AI ciągną z zewnętrznych usług, których dostępność nie jest gwar
 - **Łańcuch AI** (`ai/provider.py`): każde ogniwo (`local`/`gemini`/`anthropic`) ma circuit breaker
   — po 3 kolejnych porażkach z rzędu jest pomijane przez 30 minut zamiast wywoływane (i ponawiane)
   w każdym cyklu ocen newsów. Po 30 minutach obwód sam się zamyka i ogniwo dostaje kolejną szansę.
+
+## Silnik podatkowy PIT-38
+
+> **To kalkulator pomocniczy, nie doradztwo podatkowe.** Wartości do PIT-38 potwierdź z własnym
+> rozliczeniem lub doradcą. Add-on pokazuje **jak** policzył każdą liczbę (rozwijany ślad obliczeń
+> per lot na stronie „PIT-38"), żeby dało się to zweryfikować, a nie przyjąć na wiarę.
+
+Kursy walut przelicza się kursem średnim NBP **z ostatniego dnia roboczego poprzedzającego**
+zdarzenie (art. 11a ustawy o PIT) — zamrożonym raz na zawsze w momencie zapisu, nigdy nie
+przeliczanym ponownie. Loty konsumowane są metodą FIFO. Programy motywacyjne (ESPP, LTI) mają
+opodatkowanie odroczone do zbycia (art. 24 ust. 11-12a) — stąd trzy równoległe polityki kosztu
+uznanego przy sprzedaży, liczone naraz i pokazywane obok siebie:
+
+| Polityka | Koszt uznany | Uzasadnienie |
+|---|---|---|
+| **`own_only`** (domyślna) | tylko akcje kupione za własne pieniądze | Za pozostałe nic nie zapłacono, opodatkowanie odroczono do zbycia — nie ma czego odliczyć |
+| `own_plus_drip` | własne + reinwestowane dywidendy (DRIP) | DRIP kupuje się za pieniądze już opodatkowane jako dywidenda |
+| `all_at_acquisition` | wszystkie loty w wartości z dnia nabycia | Dopuszczalne TYLKO jeśli wartość dokładki/LTI była wykazana jako przychód ze stosunku pracy (PIT-11) |
+
+Sekcja G (dywidendy zagraniczne) liczy łańcuch: podatek pobrany u źródła w Finlandii (35% bez
+uproszczonej procedury) → zaliczenie w Polsce ograniczone do stawki traktatowej (15 pp) → Belka
+(19%) → dopłata w PL i kwota do odzyskania z fińskiego Vero — **w PLN, na kursie NBP zamrożonym na
+dzień wypłaty dywidendy**, nie na kursie bieżącym.
+
+Strona **PIT-38** dodaje symulację „co jeśli sprzedam teraz" (ta sama alokacja FIFO co realna
+sprzedaż, żaden zapis do bazy) i eksporty: CSV, XLSX (arkusze: Podsumowanie / Ślad per lot /
+Dywidendy) oraz widok do druku (PDF przez przeglądarkę).
 
 ## Encje MQTT Discovery
 
@@ -123,10 +155,38 @@ prefiks niezależnie od nazwy encji).
 | `sensor.nokia_tracker_reclaimable_from_finland_eur` | Kwota do odzyskania z fińskiego Vero (nadpłacone ponad stawkę traktatową) |
 | `sensor.nokia_tracker_dividend_yield_on_cost_pct` | Stopa dywidendy na koszcie |
 
-> **Klauzula:** kalkulator dywidend liczy na **bieżących** ustawieniach procentowych (stawka
-> traktatowa, Belka), nie na zamrożonym kursie NBP z dnia poprzedzającego wypłatę wymaganym przez
-> pełne rozliczenie PIT-38 — to dochodzi w wydaniu 0.2.0. To narzędzie pomocnicze, nie doradztwo
-> podatkowe; wartości potwierdź z własnym rozliczeniem lub doradcą przed wpisaniem do deklaracji.
+> **Klauzula:** te encje liczą na **bieżących** ustawieniach procentowych (stawka traktatowa, Belka)
+> i bieżącym kursie EUR/PLN — orientacyjny podgląd, nie pełne rozliczenie. Wersja liczona na kursie
+> NBP zamrożonym na dzień wypłaty (zgodna z art. 11a) jest w grupie „PIT-38 i symulacja" niżej oraz
+> na stronie web UI **PIT-38**. To narzędzie pomocnicze, nie doradztwo podatkowe; wartości potwierdź
+> z własnym rozliczeniem lub doradcą przed wpisaniem do deklaracji.
+
+### Loty i FIFO
+
+| Encja | Opis |
+|---|---|
+| `sensor.nokia_tracker_lots_total_qty` | Suma otwartych lotów (wszystkie typy) |
+| `sensor.nokia_tracker_lots_open_count` | Liczba otwartych lotów; podział per typ w atrybucie `by_type` |
+| `sensor.nokia_tracker_lots_cost_basis_pln` | Koszt bazowy otwartych lotów wg aktywnej polityki kosztu |
+| `sensor.nokia_tracker_realized_income_pln` | Zrealizowany dochód ze sprzedaży w bieżącym roku podatkowym |
+| `sensor.nokia_tracker_realized_tax_pln` | Podatek od zrealizowanego dochodu (19%, wg aktywnej polityki) |
+
+### Granty ESPP/LTI
+
+| Encja | Opis |
+|---|---|
+| `sensor.nokia_tracker_unvested_qty` | Suma transz jeszcze nie uwolnionych (status `pending`) |
+| `sensor.nokia_tracker_next_vest_date` | Najbliższa przyszła data uwolnienia; ilość w atrybucie `next_vest_qty` |
+
+### PIT-38 i symulacja
+
+| Encja | Opis |
+|---|---|
+| `sensor.nokia_tracker_pit38_income_pln` | Dochód kapitałowy w roku podatkowym wg aktywnej polityki kosztu |
+| `sensor.nokia_tracker_pit38_tax_pln` | Podatek 19% od dochodu kapitałowego (poz. C) |
+| `sensor.nokia_tracker_pit38_dividend_due_pln` | Dopłata w PL od dywidend (sekcja G), na kursie NBP zamrożonym per wypłata |
+| `sensor.nokia_tracker_pit38_reclaimable_pln` | Kwota do odzyskania z fińskiego Vero (sekcja G), w PLN |
+| `sensor.nokia_tracker_whatif_sell_all_tax_pln` | Podatek, gdyby dziś sprzedać całą otwartą pozycję po cenie bieżącej — `unknown` bez otwartych lotów/ceny |
 
 ## Serwisy
 

@@ -217,6 +217,25 @@ def test_lots_sell_post_consumes_fifo_and_redirects(client, _fake_nbp_rate):
     assert "6.0000" in html  # qty_remaining po sprzedaży 4 z 10
 
 
+def test_lots_sell_post_uses_optional_real_proceeds_over_price_times_quantity(
+        client, _fake_nbp_rate):
+    # krok 19: pole "Realne wpływy brutto" w formularzu /lots/sell zastępuje ilość×cenę.
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "8.0", "sale_fee_eur": "1.0",
+        "sale_proceeds_eur": "33.5",  # != 4*8.0=32.0
+    })
+    resp = client.get("/sales")
+    html = resp.get_data(as_text=True)
+    # revenue_pln = (33.5 - 1.0) * 4.0 (kurs stub) = 130.00, NIE (4*8.0-1.0)*4.0 = 124.00
+    assert "130.00" in html
+    assert "124.00" not in html
+
+
 def test_lots_sell_post_insufficient_quantity_redirects_with_error(client, _fake_nbp_rate):
     client.post("/lots", data={
         "acquired_date": "2024-01-10", "lot_type": "own",
@@ -651,6 +670,35 @@ def test_imports_confirm_sale_books_real_sale_and_resolves_conflict(tmp_path, mo
     assert sale is not None
     assert sale["quantity"] == pytest.approx(784.0)
     assert sale["price_eur"] == pytest.approx(5.31)
+    conn.close()
+
+
+def test_imports_confirm_sale_uses_real_sale_proceeds_not_price_times_quantity(
+        tmp_path, monkeypatch):
+    # krok 19: Sale Price w PDF jest zaokrąglona do 2 miejsc, więc quantity*price != realne
+    # Sale Proceeds z wyciągu (znalezione na realnych danych: 784*5.31=4162.94 EUR,
+    # a wyciąg podaje 4161.47 EUR) - confirm-sale musi zaksięgować to drugie.
+    app, conflict_id, db_path = _make_withhold_conflict_app(tmp_path, monkeypatch)
+    from nokia_tracker import db as dbm
+    conn = dbm.get_conn(db_path)
+    import json as _json
+    row = conn.execute(
+        "SELECT * FROM import_conflicts WHERE id = ?", (conflict_id,)).fetchone()
+    incoming = _json.loads(row["incoming_json"])
+    incoming["sale_proceeds_eur"] = 4161.47  # różni się od 784*5.31=4162.94
+    conn.execute(
+        "UPDATE import_conflicts SET incoming_json = ? WHERE id = ?",
+        (_json.dumps(incoming), conflict_id))
+    conn.commit()
+    conn.close()
+
+    with app.test_client() as c:
+        c.post(f"/imports/conflicts/{conflict_id}/confirm-sale")
+
+    conn = dbm.get_conn(db_path)
+    sale = conn.execute("SELECT * FROM sales").fetchone()
+    # revenue_pln = (4161.47 - 8.32) * 4.0 (kurs stub), NIE (784*5.31 - 8.32) * 4.0
+    assert sale["revenue_pln"] == pytest.approx((4161.47 - 8.32) * 4.0)
     conn.close()
 
 

@@ -51,6 +51,18 @@ _VESTED_MATCHING_LINE = (
     "0.48                       16.98 PLN\n"
 )
 
+_VESTED_DIVIDEND_LINE = (
+    "Vested  Dividend  Shares                                            20 Feb  2023"
+    "                       4.48 EUR                     -1.43 EUR                             "
+    "0.04                        0.56 PLN\n"
+)
+
+
+def _shares_summary_block(total_qty: float) -> str:
+    # own (19.21982) + dividend_drip (0.19028) z _FULL_TEXT sumują się do 19.41010 -
+    # wywołujący podaje total_qty jawnie, żeby testować zarówno zgodność jak i rozjazd.
+    return f" {total_qty}                                                           1.0\n Shares                                      1.00 PLN            Share  inSuccess  Plan 2019-2026             1.00 PLN\n"
+
 _FULL_TEXT = (_HEADER + _PURCHASE_LINE + _MATCHING_LINE + _RS_AWARD_LINE + _DIVIDEND_LINE
              + _WITHHOLD_A_LINE + _WITHHOLD_B_LINE)
 
@@ -229,3 +241,118 @@ def test_import_statement_modified_purchase_value_goes_to_conflicts_not_overwrit
         "SELECT * FROM import_conflicts WHERE entity_type = 'lot'").fetchone()
     assert conflict is not None
     assert conflict["resolved"] == 0
+
+
+# ---- krok 19: Vested Dividend Shares jako źródło zapasowe (wyciągi 2022-2024 bez
+# sekcji "Dividend (Reinvested)" transakcyjnej) ----
+
+def test_import_statement_creates_drip_lot_from_vested_dividend_shares_when_no_transactions_section(
+        conn, monkeypatch):
+    text = _HEADER + _VESTED_DIVIDEND_LINE  # brak _DIVIDEND_LINE - jak realny wyciąg 2023/2024
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    report = cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    lot = conn.execute("SELECT * FROM lots WHERE lot_type = 'dividend_drip'").fetchone()
+    assert lot is not None
+    assert lot["acquired_date"] == "2023-02-20"
+    assert lot["quantity"] == 0.04
+    assert lot["price_eur"] == 4.48
+    assert lot["source"] == "holdings_snapshot"
+    assert report["rows_inserted"] >= 1
+
+
+def test_reimporting_vested_dividend_shares_fallback_is_idempotent(conn, monkeypatch):
+    text = _HEADER + _VESTED_DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    count_after_first = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'dividend_drip'").fetchone()["c"]
+
+    report2 = cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+
+    assert count_after_first == 1
+    count_after_second = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'dividend_drip'").fetchone()["c"]
+    assert count_after_second == 1
+    assert report2["rows_inserted"] == 0
+    assert report2["rows_unchanged"] >= 1
+
+
+def test_import_statement_skips_vested_dividend_fallback_when_transactions_section_present(
+        conn, monkeypatch):
+    # _FULL_TEXT ma _DIVIDEND_LINE (sekcja Dividend (Reinvested) obecna, jak w wyciągu 2025) -
+    # dołączony wiersz Vested Dividend Shares NIE może utworzyć drugiego, zdublowanego lotu.
+    text = _FULL_TEXT + _VESTED_DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    drip_count = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'dividend_drip'").fetchone()["c"]
+    assert drip_count == 1  # tylko z Dividend (Reinvested); fallback pominięty
+
+
+# ---- krok 19: kontrola krzyżowa salda (BLUEPRINT §3a) ----
+
+def test_import_statement_no_conflict_when_balance_matches(conn, monkeypatch):
+    # own (19.21982) + dividend_drip (0.19028) = 19.41010, zgodne z "Shares" w PDF.
+    text = _HEADER + _shares_summary_block(19.41010) + _PURCHASE_LINE + _DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    balance_conflicts = conn.execute(
+        "SELECT COUNT(*) c FROM import_conflicts WHERE entity_type = 'balance'").fetchone()["c"]
+    assert balance_conflicts == 0
+
+
+def test_import_statement_flags_balance_mismatch(conn, monkeypatch):
+    # "Shares" w PDF = 50, a baza po imporcie ma tylko 19.41010 - rozjazd musi trafić
+    # do kolejki konfliktów, nie zniknąć po cichu.
+    text = _HEADER + _shares_summary_block(50.0) + _PURCHASE_LINE + _DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    conflict = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'balance'").fetchone()
+    assert conflict is not None
+    assert conflict["resolved"] == 0
+    incoming = __import__("json").loads(conflict["incoming_json"])
+    assert incoming["shares_total_from_pdf"] == 50.0
+
+
+def test_import_statement_balance_check_skipped_when_importing_an_older_backfill(
+        conn, monkeypatch):
+    # Najpierw wgrywamy wyciąg 2026 (nowszy as_of_date) - staje się "najnowszym znanym
+    # stanem". Potem wgrywamy wyciąg 2023 (starszy, celowo z rozjeżdżającym się saldem,
+    # np. backfill danych historycznych) - kontrola NIE powinna się uruchomić, bo
+    # porównanie starego zdjęcia salda z pełną, dzisiejszą bazą byłoby mylące.
+    text_2026 = _HEADER + _shares_summary_block(19.41010) + _PURCHASE_LINE + _DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text_2026)
+    cp.import_statement(conn, b"fake-pdf-bytes", "test-2026.pdf")
+
+    older_header = "                1 Jan2023  - 1 Jan2024                     User  ID: 00000000\nas of 1 Jan2024\n"
+    text_2023 = older_header + _shares_summary_block(999.0)  # rażąco błędne, celowo
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text_2023)
+    cp.import_statement(conn, b"different-bytes", "test-2023.pdf")
+
+    balance_conflicts = conn.execute(
+        "SELECT COUNT(*) c FROM import_conflicts WHERE entity_type = 'balance'").fetchone()["c"]
+    assert balance_conflicts == 0

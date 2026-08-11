@@ -172,6 +172,83 @@ def test_reverse_sale_unknown_id_is_noop(conn):
     assert lots.reverse_sale(conn, 999999) is False
 
 
+# ---- krok 19: FIFO nie może sięgać po loty z przyszłości względem sprzedaży ----
+# (błąd znaleziony na realnych danych: sprzedaż z 2025-10-27 skonsumowała lot
+# nabyty TEGO SAMEGO DNIA zamiast zgłosić brak pokrycia ze starszych lotów —
+# przypadkowe, bo open_lots() nie filtrował po dacie względem sprzedaży)
+
+def test_open_lots_as_of_excludes_lots_acquired_after_the_date(conn):
+    older = lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    lots.add_lot(conn, "2024-06-01", "own", 5, 5.0)  # nabyty PO as_of
+    open_rows = lots.open_lots(conn, as_of="2024-03-01")
+    assert [r["id"] for r in open_rows] == [older]
+
+
+def test_open_lots_as_of_includes_lots_acquired_same_day(conn):
+    lot_id = lots.add_lot(conn, "2024-06-01", "own", 5, 5.0)
+    open_rows = lots.open_lots(conn, as_of="2024-06-01")
+    assert [r["id"] for r in open_rows] == [lot_id]
+
+
+def test_record_sale_does_not_consume_lot_acquired_after_sale_date(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    lots.add_lot(conn, "2024-06-15", "own", 5, 5.0)  # nabyty PO dacie sprzedaży
+    with pytest.raises(lots.InsufficientLotsError):
+        lots.record_sale(conn, "2024-06-01", 8, 6.0)
+    # transakcja wycofana w całości: brak sales, oba loty nietknięte
+    assert conn.execute("SELECT COUNT(*) c FROM sales").fetchone()["c"] == 0
+    remaining_total = conn.execute(
+        "SELECT SUM(qty_remaining) t FROM lots").fetchone()["t"]
+    assert remaining_total == pytest.approx(10)
+
+
+def test_record_sale_can_consume_lot_acquired_same_day_as_sale(conn):
+    lot_id = lots.add_lot(conn, "2024-06-01", "own", 5, 5.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 5, 6.0)
+    allocs = conn.execute(
+        "SELECT * FROM sale_allocations WHERE sale_id = ?", (sale_id,)).fetchall()
+    assert len(allocs) == 1
+    assert allocs[0]["lot_id"] == lot_id
+
+
+# ---- krok 19: przychód z realnych wpływów zamiast cena×ilość ----
+# (błąd znaleziony na realnych danych: PDF podaje Sale Price zaokrągloną do 2 miejsc,
+# więc price_eur*quantity wprowadza kilkuzłotowy błąd vs. rzeczywisty Sale Proceeds/
+# Net proceeds z wyciągu; Withhold-to-Cover Typ B parsuje już `sale_proceeds_eur`)
+
+def test_record_sale_uses_price_times_quantity_when_proceeds_not_given(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 10, 6.0, fee_eur=1.0)
+    row = conn.execute("SELECT revenue_pln FROM sales WHERE id = ?", (sale_id,)).fetchone()
+    assert row["revenue_pln"] == pytest.approx((10 * 6.0 - 1.0) * 4.30)
+
+
+def test_record_sale_uses_real_proceeds_when_given(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    # Cena zaokrąglona (6.0) różni się od realnych wpływów z wyciągu (58.7 EUR netto) -
+    # revenue_pln musi wyjść z proceeds_eur, nie z price*quantity.
+    sale_id = lots.record_sale(
+        conn, "2024-06-01", 10, 6.0, fee_eur=1.0, proceeds_eur=58.7)
+    row = conn.execute("SELECT revenue_pln FROM sales WHERE id = ?", (sale_id,)).fetchone()
+    assert row["revenue_pln"] == pytest.approx((58.7 - 1.0) * 4.30)
+
+
+def test_record_sale_proceeds_eur_also_reflected_in_per_lot_allocations(conn):
+    # Znaleziony na realnych danych: allocation trace (sale_allocations.revenue_pln,
+    # to co widać rozwinięte na /sales) liczyło się z price_eur nawet gdy proceeds_eur
+    # było podane - suma alokacji rozjeżdżała się z sales.revenue_pln. Muszą się zgadzać.
+    lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    lots.add_lot(conn, "2024-03-01", "own", 5, 5.5)
+    sale_id = lots.record_sale(
+        conn, "2024-06-01", 8, 6.0, fee_eur=1.0, proceeds_eur=58.7)
+    sale_revenue = conn.execute(
+        "SELECT revenue_pln FROM sales WHERE id = ?", (sale_id,)).fetchone()["revenue_pln"]
+    alloc_total = conn.execute(
+        "SELECT SUM(revenue_pln) t FROM sale_allocations WHERE sale_id = ?",
+        (sale_id,)).fetchone()["t"]
+    assert alloc_total == pytest.approx(sale_revenue)
+
+
 def test_reverse_sale_then_resell_works(conn):
     # Cofnięcie musi naprawdę zwolnić loty do ponownego użycia, nie tylko
     # zerowo wyglądać w sales/sale_allocations.

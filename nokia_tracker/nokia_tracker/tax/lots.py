@@ -92,12 +92,25 @@ def backfill_missing_rates(conn: sqlite3.Connection) -> int:
     return filled
 
 
-def open_lots(conn: sqlite3.Connection) -> list[dict]:
+def open_lots(conn: sqlite3.Connection, as_of: str | None = None) -> list[dict]:
     """Loty z `qty_remaining > 0` (epsilon), w kolejności FIFO
-    (`acquired_date`, potem `id` jako tie-break — NIE kolejność wstawienia)."""
-    rows = conn.execute(
-        "SELECT * FROM lots WHERE qty_remaining > ? ORDER BY acquired_date ASC, id ASC",
-        (_EPS,)).fetchall()
+    (`acquired_date`, potem `id` jako tie-break — NIE kolejność wstawienia).
+
+    `as_of`: gdy podane, wyklucza loty nabyte PO tej dacie (`acquired_date > as_of`).
+    Krok 19: bez tego filtra sprzedaż mogła przypadkowo skonsumować lot nabyty
+    tego samego dnia co sprzedaż lub później — znalezione na realnych danych
+    (sprzedaż z 2025-10-27 zjadła część zakupu z tego samego dnia zamiast zgłosić
+    brak pokrycia). Data nabycia == `as_of` jest dozwolona (dzień nabycia = dzień
+    zbycia bywa prawnie dopuszczalny), tylko przyszłość względem `as_of` nie."""
+    if as_of is None:
+        rows = conn.execute(
+            "SELECT * FROM lots WHERE qty_remaining > ? ORDER BY acquired_date ASC, id ASC",
+            (_EPS,)).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM lots WHERE qty_remaining > ? AND acquired_date <= ? "
+            "ORDER BY acquired_date ASC, id ASC",
+            (_EPS, as_of)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -118,15 +131,26 @@ def lots_summary(conn: sqlite3.Connection) -> dict:
 
 
 def record_sale(conn: sqlite3.Connection, sale_date: str, quantity: float,
-                price_eur: float, fee_eur: float = 0.0) -> int:
+                price_eur: float, fee_eur: float = 0.0,
+                proceeds_eur: float | None = None) -> int:
     """Zapisuje sprzedaż z własnym zamrożonym kursem D-1 i konsumuje loty
     FIFO. Podnosi `InsufficientLotsError` (brak pokrycia, sprawdzone PRZED
     jakimkolwiek zapisem) lub `CostBasisMissingError` (lot/sprzedaż bez
     zamrożonego kursu NBP mimo backfillu) — w obu przypadkach baza
-    zostaje nietknięta."""
+    zostaje nietknięta.
+
+    `proceeds_eur`: opcjonalne REALNE wpływy brutto ze sprzedaży (np. "Sale Proceeds"
+    z Withhold-to-Cover Typu B w wyciągu Computershare — patrz
+    `importers/computershare_pdf.py::parse_withhold_to_cover`), gdy różnią się od
+    `quantity * price_eur` (cena w wyciągu bywa zaokrąglona do 2 miejsc, co przy dużych
+    ilościach akcji daje kilkuzłotowy błąd — znalezione na realnych danych, krok 19).
+    Gdy podane, ZASTĘPUJE `quantity * price_eur` w liczeniu przychodu; `fee_eur` jest
+    nadal odejmowane osobno (`proceeds_eur` to wartość BRUTTO, jak "Sale Proceeds", nie
+    "Net proceeds" — nie przekazywać już-pomniejszonej o prowizję kwoty, bo `fee_eur`
+    zostałoby odjęte podwójnie)."""
     backfill_missing_rates(conn)
 
-    available = open_lots(conn)
+    available = open_lots(conn, as_of=sale_date)
     total_available = sum(l["qty_remaining"] for l in available)
     if quantity - total_available > _EPS:
         raise InsufficientLotsError(
@@ -137,7 +161,14 @@ def record_sale(conn: sqlite3.Connection, sale_date: str, quantity: float,
         raise CostBasisMissingError(
             f"Brak kursu NBP dla dnia sprzedaży {sale_date} (spróbuj ponownie później)")
     nbp_rate, nbp_rate_date = rate
-    revenue_pln = (quantity * price_eur - fee_eur) * nbp_rate
+    gross_eur = proceeds_eur if proceeds_eur is not None else quantity * price_eur
+    revenue_pln = (gross_eur - fee_eur) * nbp_rate
+    # Alokacja per-lot (sale_allocations, widoczna w rozwiniętym śladzie FIFO na /sales)
+    # liczy przychód jako take*effective_price_eur — gdy proceeds_eur nadpisuje przychód,
+    # ten "efektywny" udział na akcję musi wynikać z gross_eur, nie z nominalnego
+    # price_eur, inaczej SUM(sale_allocations.revenue_pln) rozjedzie się z revenue_pln
+    # zapisanym w sales (znalezione na realnych danych, krok 19).
+    effective_price_eur = gross_eur / quantity if quantity else price_eur
 
     try:
         cur = conn.execute(
@@ -145,7 +176,9 @@ def record_sale(conn: sqlite3.Connection, sale_date: str, quantity: float,
             "nbp_rate_date, revenue_pln) VALUES (?,?,?,?,?,?,?)",
             (sale_date, quantity, price_eur, fee_eur, nbp_rate, nbp_rate_date, revenue_pln))
         sale_id = cur.lastrowid
-        _allocate_fifo(conn, sale_id, quantity, price_eur, fee_eur, nbp_rate)
+        _allocate_fifo(
+            conn, sale_id, quantity, effective_price_eur, fee_eur, nbp_rate,
+            as_of=sale_date)
     except Exception:
         conn.rollback()
         raise
@@ -227,10 +260,9 @@ def _plan_fifo(candidates: list[dict], sale_quantity: float, price_eur: float,
 
 
 def _allocate_fifo(conn: sqlite3.Connection, sale_id: int, sale_quantity: float,
-                    price_eur: float, fee_eur: float, nbp_rate: float) -> None:
-    candidates = [dict(r) for r in conn.execute(
-        "SELECT * FROM lots WHERE qty_remaining > ? ORDER BY acquired_date ASC, id ASC",
-        (_EPS,)).fetchall()]
+                    price_eur: float, fee_eur: float, nbp_rate: float,
+                    as_of: str | None = None) -> None:
+    candidates = open_lots(conn, as_of=as_of)
     plan = _plan_fifo(candidates, sale_quantity, price_eur, fee_eur, nbp_rate)
 
     lots_by_id = {lot["id"]: lot for lot in candidates}

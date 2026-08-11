@@ -176,6 +176,37 @@ def parse_vested_matching_shares(text: str) -> list[dict]:
     return rows
 
 
+# --- Vested Dividend Shares: powtarzający się snapshot już-zvestowanego salda akcji z
+# reinwestowanej dywidendy (krok 19). Źródło ZAPASOWE — wyciągi 2022-2024 nie mają sekcji
+# "Dividend (Reinvested)" transakcyjnej (ta pojawia się dopiero od wyciągu 2025), więc
+# import_statement() używa tego parsera TYLKO gdy parse_dividends() nie znalazł żadnego
+# wiersza w całym dokumencie (patrz tam). Dane są uboższe niż transakcyjne (brak Gross/
+# Taxes/Fees, tylko cena nabycia i ilość) — wystarczają na lot `dividend_drip` do FIFO/
+# kosztu, ale NIE na sekcję G PIT-38 (podatek u źródła) tych lat — to ograniczenie
+# samego źródła (Computershare), nie błąd parsera.
+_VESTED_DIVIDEND_RE = re.compile(
+    rf"^Vested\s+Dividend\s+Shares{_SEP}({_DATE}){_SEP}"
+    rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM}){_SEP}({_NUM})\s*PLN\s*$"
+)
+
+
+def parse_vested_dividend_shares(text: str) -> list[dict]:
+    rows = []
+    for line in text.splitlines():
+        m = _VESTED_DIVIDEND_RE.match(line.strip())
+        if not m:
+            continue
+        g = m.groups()
+        rows.append({
+            "vested_date": _date_iso(g[0]),
+            "cost_basis_eur": _num(g[1]),
+            "gain_per_share_eur": _num(g[2]),
+            "quantity": _num(g[3]),
+            "estimated_value_pln": _num(g[4]),
+        })
+    return rows
+
+
 # --- RS AWARD (LTI): "<rok> RS AWARD <DD-MON(TH)-RRRR>" + 3 daty + qty + PLN ---
 _RS_AWARD_RE = re.compile(
     rf"^(\d{{4}}\s+RS\s+AWARD\s+[\d\-A-Za-z]+){_SEP}({_DATE}){_SEP}({_DATE}){_SEP}({_DATE}){_SEP}"
@@ -281,6 +312,81 @@ def parse_withhold_to_cover(text: str) -> tuple[list[dict], list[dict]]:
                 "net_proceeds_eur": _num(g[6]),
             })
     return type_a, type_b
+
+
+# --- krok 19: kontrola krzyżowa salda (BLUEPRINT §3a) — strona 1 wyciągu, sekcja
+# "Assets by type", etykieta "Shares". Liczba stoi na linii BEZPOŚREDNIO PRZED linią
+# zaczynającą się od "Shares" (małe wcięcie - odróżnia od nagłówka kolumny "Shares /
+# Total" w tabelach "Available for trading" dalej w dokumencie, który ma duże wcięcie),
+# w tej samej pozycji kolumnowej (layout mode zachowuje wyrównanie). Ograniczone do
+# "Shares" (widok wg TYPU) celowo — "Assets by plan" pokazuje te same akcje jeszcze raz
+# z innej strony (per plan), sumowanie obu widoków podwoiłoby liczbę.
+_SHARES_LABEL_RE = re.compile(r"^\s{0,3}Shares\b")
+_LEADING_NUM_RE = re.compile(rf"^\s*({_NUM})")
+
+
+def parse_shares_total(text: str) -> float | None:
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if i > 0 and _SHARES_LABEL_RE.match(line):
+            m = _LEADING_NUM_RE.match(lines[i - 1])
+            if m:
+                return _num(m.group(1))
+    return None
+
+
+def reconcile_holdings(conn: sqlite3.Connection, text: str, as_of_date: str | None,
+                        import_id: int) -> bool:
+    """Kontrola krzyżowa BLUEPRINT §3a: SUM(qty_remaining) WSZYSTKICH lotów vs "Shares"
+    ze strony 1 TEGO wyciągu. Zweryfikowane na realnych danych (krok 19): loty 'lti'
+    (RS Award) SĄ wliczane — raz zvestowane (Withhold-to-Cover Typ A) przechodzą z
+    bucketu "Restricted Shares" do zwykłego "Shares", tak samo jak dopasowania ESPP;
+    wcześniejsze założenie, że zostają osobno, było błędne i dawało fałszywe alarmy.
+
+    Odejmuje ilości z NIEROZSTRZYGNIĘTYCH konfliktów Withhold-to-Cover Typu B
+    (`entity_type='withhold_to_cover_sale'`) — Computershare pokazuje je jako już
+    sprzedane w swoim saldzie, a nasza baza świadomie NIE księguje ich automatycznie
+    dopóki użytkownik ręcznie nie potwierdzi (patrz `parse_withhold_to_cover`) — bez tego
+    każda nierozstrzygnięta prawdziwa sprzedaż wyglądałaby jak rozjazd danych.
+
+    Uruchamia się tylko, gdy `as_of_date` tego importu jest NAJNOWSZY spośród
+    wszystkich dotychczasowych importów (inaczej porównanie starego zdjęcia salda z
+    pełną, dzisiejszą bazą byłoby mylące — analogicznie do reguły „kontrola sumy używa
+    najnowszego pliku, nie ostatnio wgranego" z BLUEPRINT §3a).
+
+    Tolerancja 2,0 akcji (nie 0,01) — `parse_vested_dividend_shares` (źródło zapasowe
+    dla dywidend 2022-2024) ma udokumentowaną precyzję ~0,01/wiersz, która realnie
+    kumuluje się przez lata; to diagnostyka najlepszego wysiłku, nie księgowość co do
+    grosza (patrz `_check_dividend_arithmetic` dla tej samej filozofii).
+
+    Nie blokuje importu — rozjazd trafia do `import_conflicts` (`entity_type='balance'`),
+    widoczny jako pozycja w kolejce konfliktów na /imports. Zwraca True, jeśli zapisano
+    ostrzeżenie."""
+    expected = parse_shares_total(text)
+    if expected is None or as_of_date is None:
+        return False
+
+    latest_known = conn.execute(
+        "SELECT MAX(as_of_date) d FROM imports WHERE as_of_date IS NOT NULL").fetchone()["d"]
+    if latest_known is not None and as_of_date < latest_known:
+        return False
+
+    actual = conn.execute(
+        "SELECT COALESCE(SUM(qty_remaining), 0) t FROM lots").fetchone()["t"]
+    pending_sales = conn.execute(
+        "SELECT incoming_json FROM import_conflicts "
+        "WHERE entity_type = 'withhold_to_cover_sale' AND resolved = 0").fetchall()
+    for row in pending_sales:
+        actual -= json.loads(row["incoming_json"]).get("quantity", 0.0)
+
+    if abs(actual - expected) <= 2.0:
+        return False
+
+    nk = f"balance:{as_of_date}"
+    return _record_conflict(
+        conn, import_id, "balance", nk,
+        {"qty_remaining_total_minus_pending_sales": round(actual, 4)},
+        {"shares_total_from_pdf": expected, "as_of_date": as_of_date})
 
 
 def _record_conflict(conn: sqlite3.Connection, import_id: int, entity_type: str,
@@ -432,6 +538,29 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         elif _record_conflict(conn, import_id, "dividend", nk, dict(existing), row):
             rows_conflict += 1
 
+    dividend_transaction_rows = parse_dividends(text)
+    if not dividend_transaction_rows:
+        # Wyciąg bez sekcji "Dividend (Reinvested)" transakcyjnej (2022-2024) - jedyne
+        # źródło reinwestowanej dywidendy to snapshot "Vested Dividend Shares". Tworzy
+        # tylko lot dividend_drip (koszt/FIFO), NIE wiersz w `dividends` (brakuje Gross/
+        # Taxes/Fees do sekcji G - patrz docstring parse_vested_dividend_shares).
+        for row in parse_vested_dividend_shares(text):
+            nk = f"vested_dividend:{row['vested_date']}:{row['cost_basis_eur']}:{row['quantity']}"
+            existing = conn.execute(
+                "SELECT * FROM lots WHERE natural_key = ?", (nk,)).fetchone()
+            if existing is None:
+                taxlots.add_lot(
+                    conn, row["vested_date"], "dividend_drip", row["quantity"],
+                    row["cost_basis_eur"], source="holdings_snapshot", natural_key=nk,
+                    notes="Ilość/cena z podsumowania Vested Dividend Shares (wyciąg bez "
+                          "sekcji transakcyjnej Dividend (Reinvested)) - precyzja ~0,01.")
+                rows_inserted += 1
+            elif (abs(existing["quantity"] - row["quantity"]) < _EPS
+                  and abs(existing["price_eur"] - row["cost_basis_eur"]) < _EPS):
+                rows_unchanged += 1
+            elif _record_conflict(conn, import_id, "lot", nk, dict(existing), row):
+                rows_conflict += 1
+
     vested_matching_dates = {row["vested_date"] for row in parse_vested_matching_shares(text)}
 
     type_a, type_b = parse_withhold_to_cover(text)
@@ -467,6 +596,9 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
                 "Withhold-to-Cover Typ B (prawdziwa sprzedaż): %s, %.4f akcji, %.2f EUR "
                 "netto — wymaga ręcznego potwierdzenia przez /lots/sell",
                 row["execution_date"], row["quantity"], row["net_proceeds_eur"])
+
+    if reconcile_holdings(conn, text, meta["as_of_date"], import_id):
+        rows_conflict += 1
 
     conn.execute(
         "UPDATE imports SET rows_inserted = ?, rows_unchanged = ?, rows_conflict = ? "

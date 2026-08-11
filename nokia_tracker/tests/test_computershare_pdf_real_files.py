@@ -197,7 +197,13 @@ def test_reconcile_vesting_resolves_exactly_the_provable_tranches(conn, monkeypa
 def test_import_statement_full_pipeline_on_real_files_reimport_gives_zero_inserted(conn, monkeypatch):
     """Pełny pipeline (BLUEPRINT §5 DoD kroku 13): import_statement() na realnym pliku
     parsuje bez błędów i zapisuje do bazy; ponowny import TEGO SAMEGO pliku daje
-    rows_inserted=0, rows_unchanged=N - zero duplikatów w lots/grants/vests/dividends."""
+    rows_inserted=0, rows_unchanged=N - zero duplikatów w lots/grants/vests/dividends.
+
+    Krok 19: najnowszy plik importowany PO CAŁEJ historii (2022-2025), nie w izolacji
+    na pustej bazie — kontrola krzyżowa salda (reconcile_holdings) porównuje sumę
+    WSZYSTKICH lotów z „Shares" tego wyciągu, więc na pustej bazie z samym tylko
+    najnowszym plikiem zawsze wyszłaby (poprawnie!) jako rozjazd — brakowałoby czterech
+    lat wcześniejszych lotów. Import pełnej sekwencji to realny scenariusz użycia."""
     monkeypatch.setattr(
         "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
         lambda conn, event_date: (4.30, "stub"))
@@ -206,6 +212,8 @@ def test_import_statement_full_pipeline_on_real_files_reimport_gives_zero_insert
         lambda conn, event_date: (4.30, "stub"))
 
     pdf_path = _pdf_files()[-1]  # najnowszy, najbardziej złożony wyciąg (8 stron)
+    for earlier_path in _pdf_files()[:-1]:
+        cp.import_statement(conn, earlier_path.read_bytes(), earlier_path.name)
     data = pdf_path.read_bytes()
 
     report1 = cp.import_statement(conn, data, pdf_path.name)

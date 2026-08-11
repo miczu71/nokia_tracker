@@ -106,10 +106,16 @@
       <label>Prowizja (EUR, opcjonalnie)
         <input type="number" step="0.01" name="sale_fee_eur" value="0">
       </label>
+      <label>Realne wpływy brutto (EUR, opcjonalnie)
+        <input type="number" step="0.0001" name="sale_proceeds_eur">
+      </label>
     </div>
     <p class="muted">
       Loty konsumowane metodą FIFO (najstarsza data nabycia pierwsza) ·
-      <a href="{{ url_for('sales_get') }}">zobacz rozliczenie sprzedaży</a>
+      <a href="{{ url_for('sales_get') }}">zobacz rozliczenie sprzedaży</a> ·
+      „Realne wpływy brutto" zastępuje ilość×cenę w wyliczeniu przychodu, gdy znasz
+      dokładną kwotę z wyciągu (cena bywa zaokrąglona do 2 miejsc) — prowizja jest
+      wtedy nadal odejmowana osobno, nie wpisuj już kwoty pomniejszonej o prowizję.
     </p>
     <div class="form-actions">
       <button class="btn primary" type="submit">Zarejestruj sprzedaż</button>

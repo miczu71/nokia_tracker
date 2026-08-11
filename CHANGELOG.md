@@ -1,6 +1,44 @@
 # Changelog
 
-## [0.5.0] - 2026-08-10
+## [0.5.1] - 2026-08-11
+
+Poprawki silnika FIFO/importera znalezione podczas diagnozy rozbieżności podatku
+(krok 19, `docs/PLAN_KROK_19_tax_lot_fixes.md`) — użytkownik zgłosił, że podatek
+pokazany dla sprzedaży z 2025-10-27 (1711,41 zł) różnił się o ~200 zł od kwoty
+faktycznie zapłaconej. Śledztwo na realnych 5 wyciągach Computershare wykazało, że
+główną przyczyną była nieaktualna suma w ręcznym arkuszu użytkownika (nie błąd
+add-onu) — ale po drodze znalezione zostały cztery realne, mniejsze błędy w silniku,
+naprawione tutaj niezależnie od tamtej sprawy. **Sprzedaż z 2025-10-27 pozostaje
+nietknięta** — jej `sale_allocations` mają zamrożony koszt na zawsze z definicji, więc
+te poprawki wpływają tylko na przyszłe sprzedaże/dywidendy i na historię 2022-2024.
+
+### Naprawiono
+- **FIFO mogło skonsumować lot nabyty tego samego dnia co sprzedaż lub później** —
+  `open_lots()`/`record_sale()` filtrują teraz po `acquired_date <= sale_date`
+  (`tax/lots.py`). Wcześniej brak filtra pozwalał przypadkowo zjeść świeżo kupiony
+  lot zamiast zgłosić brak pokrycia ze starszych.
+- **Dywidendy reinwestowane z lat 2022-2024 nigdy nie stawały się lotami ani wpisami
+  w rejestrze dywidend** — te wyciągi nie mają sekcji „Dividend (Reinvested)"
+  transakcyjnej (pojawia się dopiero od wyciągu 2025); nowy parser zapasowy
+  `parse_vested_dividend_shares()` czyta snapshot „Vested Dividend Shares" tylko gdy
+  sekcja transakcyjna jest nieobecna w danym wyciągu — tworzy lot `dividend_drip`
+  (koszt/FIFO), sekcja G tych lat pozostaje niepełna (źródło nie ma Gross/Taxes/Fees).
+- **Realne wpływy ze sprzedaży zamiast ceny×ilości** — `record_sale()` przyjmuje
+  opcjonalne `proceeds_eur` (Sale Price w PDF bywa zaokrąglona do 2 miejsc, co przy
+  dużych ilościach akcji dawało kilkuzłotowy błąd). Podłączone automatycznie do
+  potwierdzenia Withhold-to-Cover Typu B na `/imports` oraz jako opcjonalne pole w
+  formularzu `/lots` „Zarejestruj sprzedaż". Rozwinięty ślad FIFO na `/sales`
+  (`sale_allocations`) prorata się teraz z tych samych realnych wpływów, nie z
+  nominalnej ceny — bez tego suma per-lot rozjeżdżała się z sumą całej sprzedaży.
+- **Brak kontroli krzyżowej salda z BLUEPRINT §3a** — nowa `reconcile_holdings()`
+  porównuje sumę wszystkich lotów (minus nierozstrzygnięte sprzedaże Typu B, których
+  celowo nie księgujemy automatycznie) z liczbą „Shares" na stronie 1 każdego wyciągu.
+  Rozjazd > 2 akcje (tolerancja uwzględnia niższą precyzję źródła zapasowego dywidend)
+  trafia do kolejki konfliktów na `/imports` jako nowa pozycja, nie blokuje importu.
+
+### Techniczne
+- 22 nowe testy (529 → 551), TDD przez cały czas — każdy błąd miał czerwony test
+  przed poprawką.
 
 Piąte wydanie: złotówki na pulpicie, podgląd na żywo przed zapisem, jedna
 matematyka dywidendowa, nawigacja w 5 sekcjach (krok 18,

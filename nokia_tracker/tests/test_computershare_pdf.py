@@ -126,6 +126,54 @@ def test_parse_vested_matching_shares_ignores_vested_dividend_shares():
     assert cp.parse_vested_matching_shares(line) == []
 
 
+# --- krok 19: Vested Dividend Shares jako źródło zapasowe dla wyciągów 2022-2024,
+# które nie mają sekcji "Dividend (Reinvested)" transakcyjnej (ta pojawia się dopiero
+# od wyciągu 2025) — bez tego akcje z reinwestowanej dywidendy sprzed 2025 nigdy nie
+# stają się lotami, a sekcja G PIT-38 tych lat wychodzi zerowa mimo realnych dywidend.
+
+def test_parse_vested_dividend_shares_basic_row():
+    line = (
+        "Vested  Dividend  Shares                                            20 Feb  2023"
+        "                       4.48 EUR                     -1.43 EUR                             "
+        "0.04                        0.56 PLN"
+    )
+    rows = cp.parse_vested_dividend_shares(line)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["vested_date"] == "2023-02-20"
+    assert r["cost_basis_eur"] == 4.48
+    assert r["gain_per_share_eur"] == -1.43
+    assert r["quantity"] == 0.04
+    assert r["estimated_value_pln"] == 0.56
+
+
+def test_parse_vested_dividend_shares_multiple_rows_same_date():
+    # Realny przypadek: dwie transze tej samej dywidendy tego samego dnia (różne ilości).
+    text = (
+        "Vested  Dividend  Shares                                            13 Nov  2023"
+        "                       3.28 EUR                     -0.23 EUR                             "
+        "0.38                        5.06 PLN\n"
+        "Vested  Dividend  Shares                                            13 Nov  2023"
+        "                       3.28 EUR                     -0.23 EUR                             "
+        "0.19                        2.51 PLN\n"
+    )
+    rows = cp.parse_vested_dividend_shares(text)
+    assert len(rows) == 2
+    assert {r["quantity"] for r in rows} == {0.38, 0.19}
+    assert all(r["vested_date"] == "2023-11-13" for r in rows)
+
+
+def test_parse_vested_dividend_shares_ignores_vested_matching_shares():
+    # Symetria testu odwrotnego (test_parse_vested_matching_shares_ignores_vested_dividend_shares)
+    # - kształt kolumn identyczny, kategoria inna, regex musi rozróżniać po etykiecie.
+    line = (
+        "Vested  Matching   Shares                                             28 Aug  2025"
+        "                        3.71 EUR                      4.51 EUR                               "
+        "0.48                       16.98 PLN"
+    )
+    assert cp.parse_vested_dividend_shares(line) == []
+
+
 def test_parse_rs_award_multiple_tranches_same_grant():
     text = (
         f"2025  RS AWARD    07-JUL-2025                                         7Jul 2025                     5 Jul 2028                   5 Jul2028                          633.00                  14{_THIN}882.25  PLN\n"
@@ -168,6 +216,46 @@ def test_parse_dividends_extracts_all_ten_fields():
     assert r["purchase_price_eur"] == 6.3015
     assert r["purchased_shares"] == 0.19028
     assert r["residual_amount_eur"] == 0.0
+
+
+# --- krok 19: kontrola krzyżowa salda (BLUEPRINT §3a) — "Shares" na stronie 1 wyciągu
+# (sekcja "Assets by type") vs SUM(qty_remaining) w bazie.
+
+def test_parse_shares_total_basic():
+    # Kształt zmierzony na realnym wyciągu: liczba na linii BEZPOŚREDNIO PRZED linią
+    # "Shares", w tej samej pozycji kolumnowej (layout mode zachowuje wyrównanie).
+    text = (
+        " 61.491555                                                           90.735665\n"
+        f" Shares                                      1{_THIN}445.71 PLN            "
+        f"Share  inSuccess  Plan 2019-2026             2{_THIN}133.26 PLN\n"
+    )
+    assert cp.parse_shares_total(text) == 61.491555
+
+
+def test_parse_shares_total_single_column_variant():
+    # Wyciąg z małym portfelem (2022): tylko jedna kolumna na tej linii, bez pary planu.
+    text = (
+        " 14.657496                                                          21.986244\n"
+        " Shares                                       297.93 PLN            Share in "
+        "Success Plan 2019-2026              446.89  PLN\n"
+    )
+    assert cp.parse_shares_total(text) == 14.657496
+
+
+def test_parse_shares_total_ignores_shares_total_column_header_far_in_document():
+    # "Shares" pojawia się też jako nagłówek kolumny w tabelach "Available for trading"
+    # (daleko po prawej, duży wcięcie) - to NIE jest suma z Assets by type, regex musi
+    # ją ignorować (wymaga małego wcięcia).
+    text = (
+        " " * 140 + "Shares                       Total\n"
+        "    Available        for  trading\n"
+        "                                            163.187488               2 169.16 PLN\n"
+    )
+    assert cp.parse_shares_total(text) is None
+
+
+def test_parse_shares_total_returns_none_when_absent():
+    assert cp.parse_shares_total("brak żadnej sekcji Assets by type tutaj") is None
 
 
 def test_parse_withhold_to_cover_type_a_zero_effect_confirmation():

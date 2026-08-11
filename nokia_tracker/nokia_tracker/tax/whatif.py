@@ -38,7 +38,7 @@ def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
     if sale_date is None:
         sale_date = datetime.now().strftime("%Y-%m-%d")
 
-    open_rows = taxlots.open_lots(conn)
+    open_rows = taxlots.open_lots(conn, as_of=sale_date)
     total_available = sum(lot["qty_remaining"] for lot in open_rows)
     if quantity - total_available > taxlots._EPS:
         raise taxlots.InsufficientLotsError(

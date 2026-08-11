@@ -423,9 +423,13 @@ def create_app(db_path: str) -> Flask:
             quantity = float(request.form.get("sale_quantity") or 0)
             price_eur = float(request.form.get("sale_price_eur") or 0)
             fee_eur = float(request.form.get("sale_fee_eur") or 0)
+            proceeds_raw = request.form.get("sale_proceeds_eur") or ""
+            proceeds_eur = float(proceeds_raw) if proceeds_raw.strip() else None
             try:
                 with dbm.WRITE_LOCK:
-                    taxlots.record_sale(conn, sale_date, quantity, price_eur, fee_eur=fee_eur)
+                    taxlots.record_sale(
+                        conn, sale_date, quantity, price_eur, fee_eur=fee_eur,
+                        proceeds_eur=proceeds_eur)
                 return redirect(url_for("lots_get", sold="1"))
             except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
                 return redirect(url_for("lots_get", error=str(e)))
@@ -767,7 +771,8 @@ def create_app(db_path: str) -> Flask:
                 with dbm.WRITE_LOCK:
                     sale_id = taxlots.record_sale(
                         conn, incoming["execution_date"], incoming["quantity"],
-                        incoming["sale_price_eur"], fee_eur=incoming.get("fees_eur", 0.0))
+                        incoming["sale_price_eur"], fee_eur=incoming.get("fees_eur", 0.0),
+                        proceeds_eur=incoming.get("sale_proceeds_eur"))
                     conn.execute(
                         "UPDATE import_conflicts SET resolved = 1, resolution = ? WHERE id = ?",
                         (f"zaksięgowano automatycznie jako sprzedaż (sale_id={sale_id})",

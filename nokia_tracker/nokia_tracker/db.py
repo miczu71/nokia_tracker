@@ -238,6 +238,15 @@ _MIGRATIONS = [
     """
     ALTER TABLE vests ADD COLUMN available_from TEXT;
     """,
+    # v6 — krok 22: powiadomienia push o newsach (docs/PLAN_KROK_22_notify.md).
+    # Drugi statement jest kluczowy: bez niego pierwszy fetch_news() po
+    # aktualizacji zobaczyłby CAŁĄ historię newsów jako "niewysłaną" i
+    # wystrzeliłby lawinę pushy na telefon — migracja zamyka backlog raz
+    # na zawsze, powiadamiane są tylko newsy dodane OD TEJ CHWILI.
+    """
+    ALTER TABLE news ADD COLUMN notified_at TEXT;
+    UPDATE news SET notified_at = datetime('now');
+    """,
 ]
 
 

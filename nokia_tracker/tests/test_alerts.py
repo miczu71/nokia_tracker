@@ -173,32 +173,6 @@ def test_divergence_below_threshold_does_not_fire(conn):
     assert fired == []
 
 
-# --- high_impact_news ---
-
-def test_high_impact_news_fires(conn):
-    mqtt = _FakeMqtt()
-    values = {"top_news_attrs": {"items": [
-        {"title": "Nokia traci duży kontrakt", "impact": 3, "thesis_pl": "Poważne ryzyko.",
-         "url": "https://example.com/a"},
-    ]}}
-    fired = alerts.check_and_fire(conn, _cfg(), values, mqtt)
-    assert fired[0]["kind"] == "high_impact_news"
-    assert fired[0]["url"] == "https://example.com/a"
-
-
-def test_high_impact_news_ignores_lower_impact(conn):
-    mqtt = _FakeMqtt()
-    values = {"top_news_attrs": {"items": [{"title": "Zwykły news", "impact": 1}]}}
-    fired = alerts.check_and_fire(conn, _cfg(), values, mqtt)
-    assert fired == []
-
-
-def test_high_impact_news_no_items_does_not_crash(conn):
-    mqtt = _FakeMqtt()
-    fired = alerts.check_and_fire(conn, _cfg(), {}, mqtt)
-    assert fired == []
-
-
 # --- odpalenie: alerts_log + mqtt + notify ---
 
 def test_fire_writes_alerts_log_row(conn):

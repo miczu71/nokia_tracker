@@ -1,5 +1,5 @@
 name: Nokia Tracker
-version: "0.6.0"
+version: "0.7.0"
 slug: nokia_tracker
 description: >-
   Osobisty asystent inwestycyjny dla akcji Nokia (NOKIA.HE, Nasdaq Helsinki).
@@ -53,6 +53,11 @@ options:
   alert_price_move_pct: 3.0
   alert_on_forecast_break: true
   alert_min_interval_minutes: 120
+  # --- powiadomienia: newsy push + dzienny digest AI ---
+  notify_news_enabled: true
+  notify_news_min_impact: 1
+  notify_digest_enabled: true
+  digest_time: "20:10"
   # --- portfel i podatki (loty edytowane w UI w 0.2.0, tu tylko wartości startowe) ---
   position_qty: 0.0
   avg_cost_eur: 0.0
@@ -100,6 +105,10 @@ schema:
   alert_price_move_pct: float
   alert_on_forecast_break: bool
   alert_min_interval_minutes: int
+  notify_news_enabled: bool
+  notify_news_min_impact: int
+  notify_digest_enabled: bool
+  digest_time: str
   position_qty: float
   avg_cost_eur: float
   broker_fee_pct: float

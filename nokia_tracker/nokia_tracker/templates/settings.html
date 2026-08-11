@@ -74,8 +74,26 @@
       <input type="checkbox" name="alert_on_forecast_break" {{ "checked" if cfg.alert_on_forecast_break }}>
       Alertuj, gdy kurs wyjdzie poza przedział prognozy
     </label>
-    <label>Usługa powiadomień (np. notify.family, puste = wyłączone)
+  </div>
+
+  <div class="card">
+    <div class="card-title">Powiadomienia</div>
+    <label>Usługa powiadomień (np. notify.mobile_app_op12, puste = wszystkie powiadomienia wyłączone)
       <input type="text" name="notify_service" value="{{ cfg.notify_service }}">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="notify_news_enabled" {{ "checked" if cfg.notify_news_enabled }}>
+      Push za każdy nowo oceniony news (sentyment, wpływ, link, podsumowanie AI)
+    </label>
+    <label>Minimalny wpływ newsa wysyłanego jako push (0=każdy, 3=tylko wysoki)
+      <input type="number" step="1" min="0" max="3" name="notify_news_min_impact" value="{{ cfg.notify_news_min_impact }}">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="notify_digest_enabled" {{ "checked" if cfg.notify_digest_enabled }}>
+      Dzienny digest AI (kurs, portfel, briefing, rekomendacja) w dni robocze
+    </label>
+    <label>Godzina wysyłki digestu (HH:MM, wymaga restartu dodatku)
+      <input type="text" name="digest_time" value="{{ cfg.digest_time }}" pattern="[0-9]{2}:[0-9]{2}">
     </label>
   </div>
 

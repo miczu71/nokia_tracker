@@ -47,12 +47,19 @@ def get_numeric_state(entity_id: str) -> float | None:
         return None
 
 
-def notify(service: str, title: str, message: str) -> bool:
-    """Wysyła powiadomienie, np. service='notify/family'."""
+def notify(service: str, title: str, message: str, data: dict | None = None) -> bool:
+    """Wysyła powiadomienie, np. service='notify/family'.
+
+    data: opcjonalny słownik przekazywany jako klucz 'data' w payloadzie
+    (np. url/clickAction/tag/group dla mobile_app — krok 22, notifier.py).
+    """
+    payload = {"title": title, "message": message}
+    if data:
+        payload["data"] = data
     try:
         resp = requests.post(
             f"{_BASE}/services/{service}", headers=_headers(),
-            json={"title": title, "message": message}, timeout=10,
+            json=payload, timeout=10,
         )
         return resp.status_code < 400
     except requests.RequestException as exc:

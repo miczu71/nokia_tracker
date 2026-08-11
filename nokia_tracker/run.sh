@@ -37,6 +37,10 @@ export ALERT_SENTIMENT_DROP=$(jq -r '.alert_sentiment_drop // "0.5"' "$CONFIG")
 export ALERT_PRICE_MOVE_PCT=$(jq -r '.alert_price_move_pct // "3.0"' "$CONFIG")
 export ALERT_ON_FORECAST_BREAK=$(jq -r '.alert_on_forecast_break // "true"' "$CONFIG")
 export ALERT_MIN_INTERVAL_MINUTES=$(jq -r '.alert_min_interval_minutes // "120"' "$CONFIG")
+export NOTIFY_NEWS_ENABLED=$(jq -r '.notify_news_enabled // "true"' "$CONFIG")
+export NOTIFY_NEWS_MIN_IMPACT=$(jq -r '.notify_news_min_impact // "1"' "$CONFIG")
+export NOTIFY_DIGEST_ENABLED=$(jq -r '.notify_digest_enabled // "true"' "$CONFIG")
+export DIGEST_TIME=$(jq -r '.digest_time // "20:10"' "$CONFIG")
 
 # --- portfel i podatki (wartości startowe; baza ma pierwszeństwo po pierwszym starcie) ---
 export POSITION_QTY=$(jq -r '.position_qty // "0"' "$CONFIG")

@@ -908,6 +908,11 @@ def create_app(db_path: str) -> Flask:
                 "alert_min_interval_minutes": int(
                     request.form.get("alert_min_interval_minutes") or 120),
                 "notify_service": request.form.get("notify_service", ""),
+                "notify_news_enabled": 1 if request.form.get("notify_news_enabled") else 0,
+                "notify_news_min_impact": int(
+                    request.form.get("notify_news_min_impact") or 1),
+                "notify_digest_enabled": 1 if request.form.get("notify_digest_enabled") else 0,
+                "digest_time": request.form.get("digest_time", "20:10"),
                 "cost_basis_policy": request.form.get("cost_basis_policy", "own_only"),
                 # Krok 18: dawniej tylko odczytywalne (domyślne 35% pokazywane jako
                 # tekst na /dywidendy bez możliwości zmiany) — te cztery stawki

@@ -33,6 +33,11 @@ SETTINGS_TYPES: dict[str, type] = {
     "alert_price_move_pct": float,
     "alert_on_forecast_break": int,
     "alert_min_interval_minutes": int,
+    # --- powiadomienia (krok 22: newsy push + dzienny digest) ---
+    "notify_news_enabled": int,
+    "notify_news_min_impact": int,
+    "notify_digest_enabled": int,
+    "digest_time": str,
     # --- portfel (0.1.0: stan posiadania) ---
     "position_qty": float,
     "avg_cost_eur": float,
@@ -73,6 +78,10 @@ DEFAULTS: dict[str, object] = {
     "alert_price_move_pct": 3.0,
     "alert_on_forecast_break": 1,
     "alert_min_interval_minutes": 120,
+    "notify_news_enabled": 1,
+    "notify_news_min_impact": 1,
+    "notify_digest_enabled": 1,
+    "digest_time": "20:10",
     "position_qty": 0.0,
     "avg_cost_eur": 0.0,
     "broker_fee_pct": 0.0,

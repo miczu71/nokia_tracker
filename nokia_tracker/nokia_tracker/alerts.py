@@ -24,7 +24,6 @@ from . import ha_client
 logger = logging.getLogger(__name__)
 
 _DIVERGENCE_THRESHOLD_PP = 5.0
-_HIGH_IMPACT = 3
 
 # Ostatni znany sentyment — w pamięci procesu, per BLUEPRINT §1 (restart =
 # świeży start, nie fałszywy alarm z odczytu sprzed restartu).
@@ -96,19 +95,6 @@ def _check_divergence(values: dict) -> dict | None:
     }
 
 
-def _check_high_impact_news(values: dict) -> dict | None:
-    items = (values.get("top_news_attrs") or {}).get("items") or []
-    for item in items:
-        if item.get("impact") == _HIGH_IMPACT:
-            return {
-                "kind": "high_impact_news", "severity": "warning",
-                "title": "Wysoki wpływ: " + (item.get("title") or "")[:100],
-                "message": item.get("thesis_pl") or item.get("title") or "",
-                "url": item.get("url"),
-            }
-    return None
-
-
 def _allow_fire(conn: sqlite3.Connection, kind: str, min_interval_minutes: int) -> bool:
     if min_interval_minutes <= 0:
         return True
@@ -154,7 +140,6 @@ def check_and_fire(conn: sqlite3.Connection, cfg: dict, values: dict, mqtt_pub=N
         _check_price_move(cfg, values),
         _check_forecast_break(conn, cfg, values),
         _check_divergence(values),
-        _check_high_impact_news(values),
     ]
     fired = []
     for alert in candidates:

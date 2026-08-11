@@ -16,7 +16,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
 from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
-from . import news, portfolio, quotes, sensors
+from . import news, notifier, portfolio, quotes, sensors
 from . import settings as settingsm
 from .importers import computershare_pdf
 from .tax import dividends as taxdiv
@@ -87,6 +87,10 @@ def main() -> None:
         "alert_price_move_pct": _env("ALERT_PRICE_MOVE_PCT", "3.0"),
         "alert_on_forecast_break": "1" if _env("ALERT_ON_FORECAST_BREAK") == "true" else "0",
         "alert_min_interval_minutes": _env("ALERT_MIN_INTERVAL_MINUTES", "120"),
+        "notify_news_enabled": "1" if _env("NOTIFY_NEWS_ENABLED", "true") == "true" else "0",
+        "notify_news_min_impact": _env("NOTIFY_NEWS_MIN_IMPACT", "1"),
+        "notify_digest_enabled": "1" if _env("NOTIFY_DIGEST_ENABLED", "true") == "true" else "0",
+        "digest_time": _env("DIGEST_TIME", "20:10"),
         "position_qty": _env("POSITION_QTY", "0"),
         "avg_cost_eur": _env("AVG_COST_EUR", "0"),
         "broker_fee_pct": _env("BROKER_FEE_PCT", "0"),
@@ -281,6 +285,12 @@ def main() -> None:
                 ai_scoring.score_pending(c, _ai_cfg(c))
             except Exception:
                 logger.exception("Ocena AI newsów nieudana")
+            try:
+                cfg = settingsm.get_settings(c)
+                if cfg["notify_news_enabled"] and cfg["notify_service"]:
+                    notifier.notify_new_news(c, cfg)
+            except Exception:
+                logger.exception("Powiadomienia o newsach nieudane")
             finally:
                 c.close()
 
@@ -400,6 +410,35 @@ def main() -> None:
             finally:
                 c.close()
 
+    def daily_digest_job() -> None:
+        """Zastępuje dawną automatyzację HA 'Nokia Stock Telegram' (20:00,
+        tylko dni robocze — tu odtworzone przez day_of_week zamiast
+        binary_sensor.workday). Składa `values` tym samym łańcuchem co
+        publish_sensors, ale BEZ odpytywania providerów — digest tylko
+        czyta aktualny stan bazy, nie pobiera nowych cen."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                cfg = settingsm.get_settings(c)
+                if not (cfg["notify_digest_enabled"] and cfg["notify_service"]):
+                    return
+                values = sensors.market_values(c, instrument_id)
+                values.update(sensors.benchmark_values(
+                    c, instrument_id, ericsson_id, omxh25_id, eurpln_id))
+                values.update(sensors.ai_values(c))
+                values.update(sensors.forecast_values(c))
+                dividends = sensors.dividends_values(
+                    c, cfg, cfg["position_qty"] * cfg["avg_cost_eur"])
+                values.update(portfolio.position_values_auto(
+                    c, cfg, values.get("price_eur"), values.get("eurpln_rate"),
+                    dividends_net_total_eur=dividends["dividends_net_eur"]))
+                values.update(dividends)
+                notifier.send_daily_digest(c, cfg, values)
+            except Exception:
+                logger.exception("Dzienny digest nieudany")
+            finally:
+                c.close()
+
     poll_minutes = int(_env("POLL_INTERVAL_MINUTES", "10") or 10)
     analysis_time = _env("ANALYSIS_TIME", "19:00")
     try:
@@ -409,6 +448,14 @@ def main() -> None:
                        analysis_time)
         analysis_hour, analysis_minute = 19, 0
 
+    digest_time = _env("DIGEST_TIME", "20:10")
+    try:
+        digest_hour, digest_minute = (int(x) for x in digest_time.split(":", 1))
+    except ValueError:
+        logger.warning("DIGEST_TIME=%r nieprawidłowy (oczekiwano HH:MM) — używam 20:10",
+                       digest_time)
+        digest_hour, digest_minute = 20, 10
+
     scheduler = BackgroundScheduler(timezone=_env("TZ", "Europe/Warsaw"))
     scheduler.add_job(publish_sensors, "interval", minutes=poll_minutes,
                       next_run_time=datetime.now())
@@ -417,6 +464,11 @@ def main() -> None:
     scheduler.add_job(fetch_news, "interval", minutes=30,
                       next_run_time=datetime.now())
     scheduler.add_job(run_daily_analysis, "cron", hour=analysis_hour, minute=analysis_minute)
+    # day_of_week odtwarza warunek binary_sensor.workday z dawnej automatyzacji
+    # HA "Nokia Stock Telegram" bez sięgania po encję HA (digest_time > 19:00
+    # analysis_time, więc zawsze widzi świeży briefing z tego samego dnia).
+    scheduler.add_job(daily_digest_job, "cron", hour=digest_hour, minute=digest_minute,
+                      day_of_week="mon-fri")
     scheduler.add_job(backfill_nbp_rates, "cron", hour=6, minute=15)
     scheduler.add_job(check_vest_reminders, "cron", hour=6, minute=30)
     scheduler.add_job(prune_intraday_job, "cron", hour=3, minute=0)

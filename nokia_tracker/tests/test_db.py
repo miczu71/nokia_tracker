@@ -22,7 +22,7 @@ def test_migrate_creates_all_tables(conn):
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 5  # v5: krok 21 - vests.available_from
+    assert version == 6  # v6: krok 22 - news.notified_at
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):
@@ -85,6 +85,39 @@ def test_vests_has_available_from_column(conn):
     # z wyciągu Computershare) - odrębna od vest_date, patrz docs/PLAN_KROK_21_portfel_calkowity.md.
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(vests)").fetchall()}
     assert "available_from" in cols
+
+
+def test_news_has_notified_at_column(conn):
+    # Krok 22 (migracja v6): znacznik wysyłki push per news (notifier.py).
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(news)").fetchall()}
+    assert "notified_at" in cols
+
+
+def test_migration_v6_marks_pre_existing_news_as_notified(tmp_path):
+    """Newsy zapisane PRZED aktualizacją do 0.7.0 muszą wyjść z migracji już
+    oznaczone jako wysłane — inaczej pierwszy fetch_news() po starcie
+    zobaczyłby całą historię jako "nową" i wystrzeliłby lawinę pushy na
+    telefon (patrz komentarz przy migracji v6 w db.py)."""
+    from nokia_tracker import db as dbm
+
+    c = dbm.get_conn(str(tmp_path / "legacy.db"))
+    for script in dbm._MIGRATIONS[:5]:  # tylko v1..v5, jak przed 0.7.0
+        c.executescript(script)
+    c.execute("PRAGMA user_version = 5")
+    c.commit()
+
+    c.execute(
+        "INSERT INTO news (title, url_canonical, title_hash, published_at) "
+        "VALUES ('Stary news sprzed aktualizacji', 'https://example.com/old', 'h1', "
+        "'2026-01-01T00:00:00+00:00')")
+    c.commit()
+
+    dbm.migrate(c)  # dogania do v6
+
+    row = c.execute("SELECT notified_at FROM news WHERE url_canonical = "
+                    "'https://example.com/old'").fetchone()
+    assert row["notified_at"] is not None
+    c.close()
 
 
 def test_lots_natural_key_unique(conn):

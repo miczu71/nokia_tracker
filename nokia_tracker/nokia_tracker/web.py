@@ -69,6 +69,13 @@ def _ids(conn) -> dict:
     }
 
 
+# Krok 18: kopia LOT_TYPE_LABELS z templates/_macros.html — ta strona żyje w
+# Pythonie (JSON /api/preview/sale), tamta w Jinja (tabele HTML); nie da się
+# ich zeszyć w jedno miejsce bez importowania Jinja env do zwykłej funkcji.
+_LOT_TYPE_LABELS_PY = {"own": "własne", "matched": "podarowane", "lti": "LTI",
+                       "dividend_drip": "dywidenda"}
+
+
 def _is_future_date(date_str: str) -> bool:
     """Krok 16 (§8.2): NBP zwraca HTTP 400 dla dat przyszłych — bez tej
     walidacji `fx_nbp.rate_on_or_before` podnosi `QuoteProviderError`, który
@@ -142,12 +149,23 @@ def create_app(db_path: str) -> Flask:
                 conn, cfg, values.get("price_eur"), values.get("eurpln_rate"),
                 dividends_net_total_eur=dividends["dividends_net_eur"])
 
+            # Krok 18: metadane kursu EUR/PLN (skąd, kiedy) dla linii rozgraniczającej
+            # kurs bieżący (Yahoo/ECB, prezentacyjny) od kursu NBP zamrożonego na
+            # zdarzenie (podatkowy, patrz /dywidendy i /pit38). Sama wartość kursu
+            # to już `values["eurpln_rate"]` (sensors.py::benchmark_values).
+            eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+            fx_info = {
+                "rate": eurpln_row["close"] if eurpln_row else None,
+                "ts": eurpln_row["ts"] if eurpln_row else None,
+                "source": eurpln_row["source"] if eurpln_row else None,
+            }
+
             recent_alerts = conn.execute(
                 "SELECT * FROM alerts_log ORDER BY fired_at DESC LIMIT 5").fetchall()
 
             return render_template(
                 "dashboard.html", active="dashboard", version=__version__,
-                values=values, position=position, dividends=dividends,
+                values=values, position=position, dividends=dividends, fx_info=fx_info,
                 chart_ranges=list(_CHART_RANGES), default_chart_range=_DEFAULT_CHART_RANGE,
                 chart_api_url=url_for("chart_api"),
                 alerts=[dict(r) for r in recent_alerts],
@@ -227,7 +245,17 @@ def create_app(db_path: str) -> Flask:
         mechanizm co `/pit38`), nie osobny kalkulator EUR na bieżących stawkach
         jak przed ujednoliceniem formularza. `backfill_missing_dividend_rates`
         dogania dywidendy wpisane ręcznie przed tym krokiem (surowy INSERT
-        wtedy nie zamrażał kursu)."""
+        wtedy nie zamrażał kursu).
+
+        Krok 18: `totals` liczone SUMOWANIEM `items` (a nie osobnym wywołaniem
+        `sensors.dividends_values`) — przed tą zmianą strona pokazywała dwie
+        niezgodne matematyki 40px od siebie: kafelki na kursach BIEŻĄCYCH w EUR
+        (`sensors.dividends_values`), tabela pod nimi na kursach NBP ZAMROŻONYCH
+        na Record Date w PLN (`compute_dividend_tax_pln`, ten sam co tu). Zero
+        nowych zapytań do NBP — `items` już ma policzone `*_pln` per wiersz.
+        `sensors.dividends_values` zostaje nietknięte dla sensorów MQTT i dla
+        linii dywidend na pulpicie (tam liczone po kursie bieżącym, spójnie z
+        resztą pulpitu — patrz krok 2)."""
         conn = _conn()
         try:
             cfg = settingsm.get_settings(conn)
@@ -244,8 +272,48 @@ def create_app(db_path: str) -> Flask:
                         (d["reinvested_lot_id"],)).fetchone()
                     d["reinvested_lot"] = dict(lot) if lot else None
                 items.append(d)
-            cost_basis_eur = cfg["position_qty"] * cfg["avg_cost_eur"]
-            totals = sensors.dividends_values(conn, cfg, cost_basis_eur)
+
+            gross_pln = sum(i["gross_pln"] or 0 for i in items)
+            withholding_paid_pln = sum(i.get("withholding_paid_pln") or 0 for i in items)
+
+            # Krok 18: kafelki EUR pod PLN — NIE jest to osobna konwersja walutowa (a
+            # więc nie wraca "dwóch matematyk"): `compute_dividend_tax` liczy tymi samymi
+            # % (u źródła z wiersza / traktat / Belka z `cfg`) co `compute_dividend_tax_pln`
+            # powyżej, po prostu bez mnożenia przez zamrożony kurs NBP — EUR to naturalna
+            # waluta wypłaty, PLN to waluta rozliczenia z fiskusem. Jedno źródło procentów.
+            eur_totals = [
+                taxdiv.compute_dividend_tax(
+                    i["gross_eur"],
+                    i["withholding_pct"] if i["withholding_pct"] is not None
+                    else cfg["finnish_withholding_pct"],
+                    cfg["treaty_withholding_pct"], cfg["pl_capital_gains_tax_pct"])
+                for i in items
+            ]
+            gross_eur = sum(i["gross_eur"] for i in items)
+
+            # Krok 18: dawniej `cost_basis_eur = cfg["position_qty"] * cfg["avg_cost_eur"]` —
+            # pola ręczne z ustawień, które po pierwszym imporcie PDF są zerami (stan
+            # posiadania żyje w lotach). Kafelek „Yield on cost" pokazywał wtedy `—` na
+            # stałe u każdego użytkownika po imporcie. `position_values_auto` przełącza
+            # się na loty automatycznie, tak jak już robi to pulpit (web.py:141-143).
+            position = portfoliom.position_values_auto(conn, cfg, None, None)
+            cost_basis_eur = position["cost_basis_eur"]
+            totals = {
+                "dividends_gross_pln": gross_pln,
+                "dividends_gross_eur": gross_eur,
+                "withholding_paid_pln": withholding_paid_pln,
+                "withholding_paid_eur": sum(t["withholding_paid_eur"] for t in eur_totals),
+                "dividends_net_pln": gross_pln - withholding_paid_pln,
+                "dividends_net_eur": sum(t["net_received_eur"] for t in eur_totals),
+                "pl_tax_due_pln": sum(i.get("pl_tax_due_pln") or 0 for i in items),
+                "pl_tax_due_eur": sum(t["pl_tax_due_eur"] for t in eur_totals),
+                "reclaimable_from_finland_pln": sum(
+                    i.get("reclaimable_from_finland_pln") or 0 for i in items),
+                "reclaimable_from_finland_eur": sum(
+                    t["reclaimable_from_finland_eur"] for t in eur_totals),
+                "dividend_yield_on_cost_pct": (
+                    gross_eur / cost_basis_eur * 100 if cost_basis_eur else None),
+            }
             return render_template(
                 "dividends.html", active="dividends", version=__version__,
                 items=items, totals=totals, cfg=cfg, saved=request.args.get("saved") == "1",
@@ -364,6 +432,176 @@ def create_app(db_path: str) -> Flask:
         finally:
             conn.close()
 
+    # Krok 18: podgląd na żywo przed zapisem — dywidenda/lot/sprzedaż. Trzy
+    # zasady dla wszystkich trzech endpointów: (1) tylko odczyt, zero zapisu do
+    # `lots`/`sales`/`dividends`/`sale_allocations` (2) ten sam silnik co POST,
+    # żeby podgląd nigdy nie rozjechał się z tym, co realnie zostanie zapisane
+    # (3) błędy (brak pokrycia, brak kursu NBP, data w przyszłości) wracają jako
+    # `{ok: false, error: ...}` z HTTP 200, nigdy 500 — formularz ma ostrzegać,
+    # nie się wywalać. `rate_for_event`/`simulate_sale` mogą zrobić `INSERT OR
+    # IGNORE` do `nbp_rates` (cache kursów publicznych) — nie do encji domenowych.
+
+    @app.get("/api/preview/lot")
+    def preview_lot():
+        conn = _conn()
+        try:
+            acquired_date = request.args.get("acquired_date") or ""
+            if not acquired_date:
+                return {"ok": False, "error": "Podaj datę nabycia."}
+            if _is_future_date(acquired_date):
+                return {"ok": False, "error": "Data nabycia nie może być w przyszłości "
+                                              "(NBP nie publikuje kursów na przyszłe daty)."}
+            try:
+                quantity = float(request.args.get("quantity") or 0)
+                price_eur = float(request.args.get("price_eur") or 0)
+                fee_eur = float(request.args.get("fee_eur") or 0)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+            if quantity <= 0 or price_eur <= 0:
+                return {"ok": False, "error": "Podaj ilość i cenę większe od zera."}
+
+            rate = fx_nbp.rate_for_event(conn, acquired_date)
+            if rate is None:
+                return {"ok": False,
+                        "error": f"Brak kursu NBP dla dnia {acquired_date} "
+                                 "(spróbuj ponownie później)."}
+            nbp_rate, nbp_rate_date = rate
+            cost_eur = quantity * price_eur + fee_eur
+            cost_pln = cost_eur * nbp_rate
+            deriv = taxtrace.fx_derivation(conn, acquired_date, nbp_rate, nbp_rate_date, "nabycie")
+            return {
+                "ok": True,
+                "nbp_rate": nbp_rate,
+                "nbp_rate_date": nbp_rate_date,
+                "explanation_pl": deriv["explanation_pl"],
+                "table_urls": deriv.get("urls"),
+                "lines": [
+                    {"label": "Koszt", "value": round(cost_eur, 2), "unit": "EUR"},
+                    {"label": "Koszt", "value": round(cost_pln, 2), "unit": "PLN",
+                     "emphasis": True},
+                ],
+            }
+        finally:
+            conn.close()
+
+    @app.get("/api/preview/sale")
+    def preview_sale():
+        conn = _conn()
+        try:
+            # sale_date opcjonalna — /pit38 „co jeśli sprzedam teraz" nie zbiera
+            # daty (zawsze dziś, tak samo jak `simulate_sale(sale_date=None)`);
+            # /lots „Zarejestruj sprzedaż" ją wysyła i wtedy jest walidowana.
+            sale_date = request.args.get("sale_date") or None
+            if sale_date and _is_future_date(sale_date):
+                return {"ok": False, "error": "Data sprzedaży nie może być w przyszłości "
+                                              "(NBP nie publikuje kursów na przyszłe daty)."}
+            try:
+                quantity = float(request.args.get("quantity") or 0)
+                price_eur = float(request.args.get("price_eur") or 0)
+                fee_eur = float(request.args.get("fee_eur") or 0)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+            if quantity <= 0 or price_eur <= 0:
+                return {"ok": False, "error": "Podaj ilość i cenę większe od zera."}
+
+            cfg = settingsm.get_settings(conn)
+            try:
+                result = taxwhatif.simulate_sale(conn, cfg, quantity, price_eur, fee_eur, sale_date)
+            except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
+                return {"ok": False, "error": str(e)}
+
+            active = result["policies"][result["active_policy"]]
+            sale_fx = (result["lots_consumed_detailed"] or {}).get("sale_fx") or {}
+            lots_line = " · ".join(
+                f"{_LOT_TYPE_LABELS_PY.get(a['lot_type'], a['lot_type'])} "
+                f"{a['quantity']:.4f} @ {a['acquired_date']}"
+                for a in result["lots_consumed"])
+            return {
+                "ok": True,
+                "nbp_rate": result["nbp_rate"],
+                "nbp_rate_date": result["nbp_rate_date"],
+                "explanation_pl": sale_fx.get("explanation_pl"),
+                "table_urls": sale_fx.get("urls"),
+                "lines": [
+                    {"label": "Loty (FIFO)", "value": lots_line or "—", "unit": None},
+                    {"label": "Przychód", "value": result["revenue_pln"], "unit": "PLN"},
+                    {"label": "Koszt", "value": active["cost_pln"], "unit": "PLN"},
+                    {"label": "Podatek", "value": active["tax_pln"], "unit": "PLN"},
+                    {"label": "Na rękę", "value": result["net_proceeds_pln"], "unit": "PLN",
+                     "emphasis": True},
+                ],
+            }
+        finally:
+            conn.close()
+
+    @app.get("/api/preview/dividend")
+    def preview_dividend():
+        conn = _conn()
+        try:
+            pay_date = request.args.get("pay_date") or ""
+            if not pay_date:
+                return {"ok": False, "error": "Podaj datę wypłaty."}
+            if _is_future_date(pay_date):
+                return {"ok": False, "error": "Data wypłaty nie może być w przyszłości "
+                                              "(NBP nie publikuje kursów na przyszłe daty)."}
+            try:
+                gross_eur = float(request.args.get("gross_eur") or 0)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+            if gross_eur <= 0:
+                return {"ok": False, "error": "Podaj kwotę brutto większą od zera."}
+
+            cfg = settingsm.get_settings(conn)
+            withholding_raw = request.args.get("withholding_pct")
+            withholding_pct = (float(withholding_raw) if withholding_raw
+                               else cfg["finnish_withholding_pct"])
+
+            rate = fx_nbp.rate_for_event(conn, pay_date)
+            if rate is None:
+                return {"ok": False,
+                        "error": f"Brak kursu NBP dla dnia {pay_date} (spróbuj ponownie później)."}
+            nbp_rate, nbp_rate_date = rate
+            gross_pln = gross_eur * nbp_rate
+            tax = taxdiv.compute_dividend_tax_pln(
+                {"gross_pln": gross_pln, "withholding_pct": withholding_pct}, cfg)
+            deriv = taxtrace.fx_derivation(conn, pay_date, nbp_rate, nbp_rate_date, "dywidenda")
+
+            lines = [
+                {"label": "Brutto", "value": round(gross_pln, 2), "unit": "PLN"},
+                {"label": "Pobrane u źródła", "value": tax["withholding_paid_pln"], "unit": "PLN"},
+                {"label": "Belka (19%)", "value": tax["belka_pln"], "unit": "PLN"},
+                {"label": "Dopłata w PL", "value": tax["pl_tax_due_pln"], "unit": "PLN",
+                 "emphasis": True},
+                {"label": "Do odzyskania z Vero", "value": tax["reclaimable_from_finland_pln"],
+                 "unit": "PLN"},
+            ]
+
+            drip_shares_raw = request.args.get("drip_shares")
+            drip_price_raw = request.args.get("drip_price_eur")
+            drip_date = request.args.get("drip_purchase_date")
+            if drip_shares_raw and drip_price_raw and drip_date:
+                try:
+                    drip_shares = float(drip_shares_raw)
+                    drip_price = float(drip_price_raw)
+                    lines.append({
+                        "label": "Powstanie lot",
+                        "value": f"{drip_shares:.4f} akcji @ {drip_price:.4f} EUR ({drip_date})",
+                        "unit": None,
+                    })
+                except ValueError:
+                    pass
+
+            return {
+                "ok": True,
+                "nbp_rate": nbp_rate,
+                "nbp_rate_date": nbp_rate_date,
+                "explanation_pl": deriv["explanation_pl"],
+                "table_urls": deriv.get("urls"),
+                "lines": lines,
+            }
+        finally:
+            conn.close()
+
     @app.get("/sales")
     def sales_get():
         """Zrealizowane sprzedaże — pełne rozbicie do numeru tabeli NBP per
@@ -447,9 +685,12 @@ def create_app(db_path: str) -> Flask:
 
             espp = grantsm.list_espp(conn)
             lti = grantsm.list_lti_grouped(conn)
+            # Krok 18: `sensors.grants_values` już liczy to dla MQTT — strona *o
+            # vestingu* go dotąd nie pokazywała wcale.
+            vesting = sensors.grants_values(conn)
             return render_template(
                 "grants.html", active="grants", version=__version__,
-                espp=espp, lti=lti, valuation=valuation)
+                espp=espp, lti=lti, valuation=valuation, vesting=vesting)
         finally:
             conn.close()
 
@@ -542,16 +783,17 @@ def create_app(db_path: str) -> Flask:
     def news_page():
         conn = _conn()
         try:
+            # Krok 18: `s.horizon`/`s.tags` odpytywane tu wcześniej, ale szablon
+            # nigdy ich nie renderował — martwa robota na każde żądanie, usunięte.
+            # `ns.kind` (rss/gdelt/finnhub/marketaux) dołożone jako kolumna „Źródło" —
+            # dotąd niewidoczne w UI mimo że news.py śledzi providera per wpis.
             rows = conn.execute(
-                "SELECT n.*, s.sentiment, s.impact, s.horizon, s.thesis_pl, s.tags "
+                "SELECT n.*, s.sentiment, s.impact, s.thesis_pl, ns.kind AS source_kind "
                 "FROM news n LEFT JOIN news_scores s ON s.news_id = n.id "
+                "LEFT JOIN news_sources ns ON ns.id = n.source_id "
                 "ORDER BY n.published_at DESC LIMIT 50"
             ).fetchall()
-            items = []
-            for r in rows:
-                d = dict(r)
-                d["tags"] = json.loads(d["tags"]) if d.get("tags") else []
-                items.append(d)
+            items = [dict(r) for r in rows]
             return render_template("news.html", active="news", version=__version__, items=items)
         finally:
             conn.close()
@@ -563,9 +805,13 @@ def create_app(db_path: str) -> Flask:
             rows = conn.execute(
                 "SELECT * FROM forecasts ORDER BY created_at DESC LIMIT 60"
             ).fetchall()
+            # Krok 18: jedyna liczba, po którą się tu przychodzi ("czy prognozy się
+            # sprawdzają") żyła dotąd tylko na pulpicie (`sensors.forecast_values`);
+            # ta strona pokazywała samą historię bez podsumowania.
+            accuracy_pct = sensors.forecast_values(conn).get("forecast_accuracy_pct")
             return render_template(
                 "forecasts.html", active="forecasts", version=__version__,
-                items=[dict(r) for r in rows])
+                items=[dict(r) for r in rows], accuracy_pct=accuracy_pct)
         finally:
             conn.close()
 
@@ -602,6 +848,16 @@ def create_app(db_path: str) -> Flask:
                     request.form.get("alert_min_interval_minutes") or 120),
                 "notify_service": request.form.get("notify_service", ""),
                 "cost_basis_policy": request.form.get("cost_basis_policy", "own_only"),
+                # Krok 18: dawniej tylko odczytywalne (domyślne 35% pokazywane jako
+                # tekst na /dywidendy bez możliwości zmiany) — te cztery stawki
+                # wpływają na każdą kwotę PLN w aplikacji, więc trafiają do UI.
+                "finnish_withholding_pct": float(
+                    request.form.get("finnish_withholding_pct") or 35.0),
+                "treaty_withholding_pct": float(
+                    request.form.get("treaty_withholding_pct") or 15.0),
+                "pl_capital_gains_tax_pct": float(
+                    request.form.get("pl_capital_gains_tax_pct") or 19.0),
+                "tax_year": int(request.form.get("tax_year") or 0),
             }
             with dbm.WRITE_LOCK:
                 settingsm.set_settings(conn, updates)

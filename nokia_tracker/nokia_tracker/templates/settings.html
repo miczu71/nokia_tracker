@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import POLICY_LABELS %}
 {% block title %}Ustawienia — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -79,14 +80,31 @@
   </div>
 
   <div class="card">
-    <div class="card-title">Podatki (0.2.0 — schemat gotowy, tu tylko domyślna polityka)</div>
+    <div class="card-title">Podatki</div>
     <label>Polityka kosztu nabycia
       <select name="cost_basis_policy">
         {% for opt in ("own_only", "own_plus_drip", "all_at_acquisition") %}
-        <option value="{{ opt }}" {{ "selected" if cfg.cost_basis_policy == opt }}>{{ opt }}</option>
+        <option value="{{ opt }}" {{ "selected" if cfg.cost_basis_policy == opt }}>{{ POLICY_LABELS.get(opt, opt) }}</option>
         {% endfor %}
       </select>
     </label>
+    <p class="muted">Porównanie skutków wszystkich trzech polityk: <a href="{{ url_for('lots_get') }}">Loty</a>.</p>
+    <div class="row2">
+      <label>Podatek u źródła w Finlandii — domyślny (%)
+        <input type="number" step="0.1" name="finnish_withholding_pct" value="{{ cfg.finnish_withholding_pct }}">
+      </label>
+      <label>Stawka traktatowa PL-FI, limit zaliczenia (%)
+        <input type="number" step="0.1" name="treaty_withholding_pct" value="{{ cfg.treaty_withholding_pct }}">
+      </label>
+    </div>
+    <div class="row2">
+      <label>Belka — podatek od zysków kapitałowych w PL (%)
+        <input type="number" step="0.1" name="pl_capital_gains_tax_pct" value="{{ cfg.pl_capital_gains_tax_pct }}">
+      </label>
+      <label>Rok podatkowy — domyślny na /PIT-38 (puste = rok bieżący)
+        <input type="number" step="1" name="tax_year" value="{{ cfg.tax_year or '' }}">
+      </label>
+    </div>
   </div>
 
   <div class="form-actions">

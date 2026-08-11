@@ -56,7 +56,7 @@
 
 <div class="card">
   <div class="card-title">Dodaj lot</div>
-  <form class="form" method="post" action="{{ url_for('lots_post') }}">
+  <form class="form" id="lot-form" method="post" action="{{ url_for('lots_post') }}">
     <div class="row3">
       <label>Data nabycia
         <input type="date" name="acquired_date" required>
@@ -85,11 +85,12 @@
       <button class="btn primary" type="submit">Dodaj lot</button>
     </div>
   </form>
+  <div class="preview-box" id="lot-preview" hidden></div>
 </div>
 
 <div class="card">
   <div class="card-title">Zarejestruj sprzedaż</div>
-  <form class="form" method="post" action="{{ url_for('lots_sell_post') }}">
+  <form class="form" id="sell-form" method="post" action="{{ url_for('lots_sell_post') }}">
     <div class="row3">
       <label>Data sprzedaży
         <input type="date" name="sale_date" required>
@@ -114,6 +115,7 @@
       <button class="btn primary" type="submit">Zarejestruj sprzedaż</button>
     </div>
   </form>
+  <div class="preview-box" id="sell-preview" hidden></div>
 </div>
 
 <div class="card">
@@ -157,4 +159,26 @@
   {% endif %}
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>
+NT.initFormPreview({
+  formId: "lot-form", boxId: "lot-preview",
+  url: {{ url_for('preview_lot')|tojson }},
+  requiredFields: ["acquired_date", "quantity", "price_eur"],
+  fields: [
+    ["acquired_date", "acquired_date"], ["quantity", "quantity"],
+    ["price_eur", "price_eur"], ["fee_eur", "fee_eur"],
+  ],
+});
+NT.initFormPreview({
+  formId: "sell-form", boxId: "sell-preview",
+  url: {{ url_for('preview_sale')|tojson }},
+  requiredFields: ["sale_date", "sale_quantity", "sale_price_eur"],
+  fields: [
+    ["sale_date", "sale_date"], ["sale_quantity", "quantity"],
+    ["sale_price_eur", "price_eur"], ["sale_fee_eur", "fee_eur"],
+  ],
+});
+</script>
 {% endblock %}

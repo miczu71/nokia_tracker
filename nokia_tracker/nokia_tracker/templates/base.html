@@ -11,20 +11,41 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Nokia Tracker">
 </head>
+{# Krok 18: 11 płaskich linków → 5 sekcji (Pulpit / Portfel / Podatki / Dane /
+   Ustawienia), żeby pasek mieścił się w jednej linii na telefonie. Każda grupa to
+   `<details>` — bez JS rozwija się natywnie w miejscu (pełny fallback, żadna
+   nawigacja nie zależy od skryptu); `NT.initNavGroups()` (app.js) dokłada
+   pływające menu (tylko jedno otwarte naraz, klik poza zamyka, Escape zamyka —
+   Enter/Space działają z natywnej semantyki `<summary>` bez dodatkowego kodu).
+   Grupa zawierająca aktywną stronę jest domyślnie rozwinięta, żeby nie zgubić
+   kontekstu po przejściu. #}
+{% set NAV_GROUPS = {
+  'portfel': {'label': 'Portfel', 'pages': [
+    ('portfolio_get', 'portfolio', 'Portfel'), ('lots_get', 'lots', 'Loty'),
+    ('sales_get', 'sales', 'Sprzedaże'), ('grants_get', 'grants', 'Granty')]},
+  'podatki': {'label': 'Podatki', 'pages': [
+    ('dividends_get', 'dividends', 'Dywidendy'), ('pit38_get', 'pit38', 'PIT-38')]},
+  'dane': {'label': 'Dane', 'pages': [
+    ('imports_get', 'imports', 'Importy'), ('news_page', 'news', 'Newsy'),
+    ('forecasts_page', 'forecasts', 'Prognozy')]},
+} %}
 <body{% if print_mode is defined and print_mode %} class="print-mode"{% endif %}>
 <nav class="nav">
   <span class="nav-brand">📈 Nokia Tracker</span>
   <div class="nav-links">
     <a href="{{ url_for('dashboard') }}" {% if active == 'dashboard' %}class="active"{% endif %}>Pulpit</a>
-    <a href="{{ url_for('portfolio_get') }}" {% if active == 'portfolio' %}class="active"{% endif %}>Portfel</a>
-    <a href="{{ url_for('lots_get') }}" {% if active == 'lots' %}class="active"{% endif %}>Loty</a>
-    <a href="{{ url_for('sales_get') }}" {% if active == 'sales' %}class="active"{% endif %}>Sprzedaże</a>
-    <a href="{{ url_for('grants_get') }}" {% if active == 'grants' %}class="active"{% endif %}>Granty</a>
-    <a href="{{ url_for('dividends_get') }}" {% if active == 'dividends' %}class="active"{% endif %}>Dywidendy</a>
-    <a href="{{ url_for('pit38_get') }}" {% if active == 'pit38' %}class="active"{% endif %}>PIT-38</a>
-    <a href="{{ url_for('imports_get') }}" {% if active == 'imports' %}class="active"{% endif %}>Importy</a>
-    <a href="{{ url_for('news_page') }}" {% if active == 'news' %}class="active"{% endif %}>Newsy</a>
-    <a href="{{ url_for('forecasts_page') }}" {% if active == 'forecasts' %}class="active"{% endif %}>Prognozy</a>
+    {% for key, group in NAV_GROUPS.items() %}
+    {% set group_pages = group.pages | map(attribute=1) | list %}
+    {% set is_active_group = active in group_pages %}
+    <details class="nav-group{% if is_active_group %} active{% endif %}" {% if is_active_group %}open{% endif %}>
+      <summary>{{ group.label }}</summary>
+      <div class="nav-group-links">
+        {% for endpoint, page_key, label in group.pages %}
+        <a href="{{ url_for(endpoint) }}" {% if active == page_key %}class="active"{% endif %}>{{ label }}</a>
+        {% endfor %}
+      </div>
+    </details>
+    {% endfor %}
     <a href="{{ url_for('settings_get') }}" {% if active == 'settings' %}class="active"{% endif %}>Ustawienia</a>
   </div>
   <span class="nav-version">v{{ version }}</span>
@@ -34,6 +55,7 @@
 </main>
 <script src="{{ url_for('static', filename='chart.umd.min.js') }}?v={{ version }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
+<script>NT.initNavGroups();</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

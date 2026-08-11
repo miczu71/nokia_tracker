@@ -3,9 +3,14 @@
    żeby oba widoki pokazywały TĘ SAMĄ matematykę (tax/trace.py::enrich_allocations).
    Skondensowane w kroku 17: kurs sprzedaży pokazany RAZ nad tabelą (nie przy
    każdym locie), polityki jako jedna linia zamiast drugiej tabeli.
-   Oczekuje w kontekście: `detail` (wynik enrich_allocations), oraz — z template'u
-   wywołującego — `lot_type_labels`/`policy_labels` (już zdefiniowane na /pit38 i /sales). #}
 
+   Oczekuje w kontekście wyłącznie `detail` (wynik enrich_allocations) — krok 18:
+   etykiety importowane BEZPOŚREDNIO tutaj (nie przez niejawny kontrakt na to, że
+   wołający je wcześniej zdefiniował), żeby ten partial dało się włączyć z każdej
+   strony bez ryzyka `UndefinedError`. #}
+{% from "_macros.html" import LOT_TYPE_LABELS, POLICY_LABELS %}
+
+{% if detail.allocations %}
 <p class="fx-line">
   Kurs sprzedaży: {{ detail.sale_fx.explanation_pl }}
   {% if detail.sale_fx.urls %}
@@ -31,7 +36,7 @@
             title="cena nabycia {{ '%.4f'|format(a.lot_price_eur) }} EUR/akcję{% if a.lot_fee_eur %} + prowizja {{ '%.2f'|format(a.lot_fee_eur) }} EUR{% endif %}">
           #{{ a.lot_id }} · {{ a.acquired_date }}
         </td>
-        <td>{{ lot_type_labels.get(a.lot_type, a.lot_type) }}</td>
+        <td>{{ LOT_TYPE_LABELS.get(a.lot_type, a.lot_type) }}</td>
         <td class="num">{{ '%.4f'|format(a.qty_taken) }} / {{ '%.4f'|format(a.lot_quantity) }}</td>
         <td class="num">
           {% if a.lot_fx.rate is not none %}
@@ -45,7 +50,7 @@
         <td class="num">{{ '%.2f'|format(a.revenue_pln) }}</td>
         <td class="num">{{ '%.2f'|format(a.income_pln) }}</td>
         <td class="muted wrap">
-          {% for name in a.counted_in %}{{ policy_labels.get(name, name) }}{% if not loop.last %}, {% endif %}{% endfor %}
+          {% for name in a.counted_in %}{{ POLICY_LABELS.get(name, name) }}{% if not loop.last %}, {% endif %}{% endfor %}
         </td>
       </tr>
       {% endfor %}
@@ -56,7 +61,7 @@
 <p class="policy-line">
   Polityki:
   {% for name, data in detail.policies.items() %}
-    {{ policy_labels.get(name, name) }} {{ '%.2f'|format(data.tax_pln) }} zł
+    {{ POLICY_LABELS.get(name, name) }} {{ '%.2f'|format(data.tax_pln) }} zł
     {% if name == detail.active_policy %}<span class="badge saved">aktywna</span>
     {% else %}<span class="{{ 'bad' if data.delta_vs_active_pln > 0 else 'good' }}">({{ '%+.2f'|format(data.delta_vs_active_pln) }})</span>
     {% endif %}
@@ -73,3 +78,6 @@
     w PLN, kurs sprzedaży)
   {% endif %}
 </p>
+{% else %}
+<p class="muted">Brak alokacji do pokazania.</p>
+{% endif %}

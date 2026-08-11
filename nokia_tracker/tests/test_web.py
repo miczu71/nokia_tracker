@@ -1027,3 +1027,181 @@ def test_pit38_export_xlsx_returns_xlsx_attachment(client, _fake_nbp_rate_pit38)
     assert "pit38_2024.xlsx" in resp.headers["Content-Disposition"]
     # niepusty realny plik XLSX (magic bytes ZIP - openpyxl zapisuje jako zip)
     assert resp.data[:2] == b"PK"
+
+
+# --- krok 18: PLN na pulpicie (kurs bieżący, nie NBP) ---
+
+def _make_pln_dashboard_app(tmp_path, filename="pln_dashboard.db"):
+    from nokia_tracker import db as dbm, quotes as quotesm
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / filename)
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    eurpln_id = quotesm.ensure_instrument(conn, "EURPLN=X", "EUR/PLN", "PLN", "fx")
+    quotesm.store_single_price(conn, eurpln_id, 4.3, source="yahoo",
+                               ts="2026-08-10T16:00:00+00:00")
+    primary_id = quotesm.ensure_instrument(conn, "NOKIA.HE", "Nokia Oyj", "EUR", "primary")
+    quotesm.store_single_price(conn, primary_id, 4.0, source="yahoo",
+                               ts="2026-08-10T16:00:00+00:00")
+    conn.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES "
+        "('position_qty', '100'), ('avg_cost_eur', '3.5')")
+    conn.commit()
+    conn.close()
+    return create_app(db_path)
+
+
+def test_dashboard_shows_pln_alongside_eur(tmp_path):
+    app = _make_pln_dashboard_app(tmp_path)
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "zł" in html
+        assert "≈" in html
+        # market_value_eur = 100 * 4.0 = 400 EUR -> PLN = 400 * 4.3 = 1720
+        assert "1720" in html
+
+
+def test_dashboard_labels_current_rate_not_nbp(tmp_path):
+    app = _make_pln_dashboard_app(tmp_path)
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "kurs bieżący, nie tabela NBP" in html
+
+
+def test_dashboard_omits_pln_when_no_fx_rate(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "zł" not in html
+    assert "None" not in html
+    assert "kurs EUR/PLN niedostępny" in html
+
+
+# --- krok 18: podgląd na żywo (/api/preview/lot, /sale, /dividend) ---
+
+def test_preview_lot_returns_nbp_rate_and_cost_pln(client, _fake_nbp_rate):
+    resp = client.get(
+        "/api/preview/lot?acquired_date=2024-01-10&quantity=10&price_eur=5&fee_eur=0")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["nbp_rate"] == 4.0
+    pln_line = next(l for l in data["lines"] if l["label"] == "Koszt" and l["unit"] == "PLN")
+    assert pln_line["value"] == 200.0  # 10 * 5 * 4.0
+
+
+def test_preview_sale_matches_recorded_sale(client, _fake_nbp_rate):
+    # Regresja: podgląd (przed zapisem) i realna zapisana sprzedaż (po zapisie)
+    # muszą dać DOKŁADNIE tę samą kwotę podatku — silnik (`simulate_sale`) jest
+    # ten sam co pod `/lots/sell`.
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "20", "price_eur": "5.0", "fee_eur": "0",
+    })
+    preview = client.get(
+        "/api/preview/sale?sale_date=2024-06-01&quantity=4&price_eur=11.25&fee_eur=0"
+    ).get_json()
+    assert preview["ok"] is True
+    preview_tax = next(l["value"] for l in preview["lines"] if l["label"] == "Podatek")
+    preview_net = next(l["value"] for l in preview["lines"] if l["label"] == "Na rękę")
+
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "4",
+        "sale_price_eur": "11.25", "sale_fee_eur": "0",
+    })
+    html = client.get("/sales").get_data(as_text=True)
+    assert f"{preview_tax:.2f}" in html
+    assert f"{preview_net:.2f}" in html
+
+
+def test_preview_sale_insufficient_lots_returns_ok_false_not_500(client):
+    resp = client.get(
+        "/api/preview/sale?sale_date=2024-06-01&quantity=5&price_eur=8&fee_eur=0")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert "error" in data
+
+
+def test_preview_dividend_matches_stored_row(client, _fake_nbp_rate):
+    preview = client.get(
+        "/api/preview/dividend?pay_date=2024-06-15&gross_eur=100&withholding_pct=35"
+    ).get_json()
+    assert preview["ok"] is True
+    preview_due = next(l["value"] for l in preview["lines"] if l["label"] == "Dopłata w PL")
+
+    client.post("/dividends", data={
+        "pay_date": "2024-06-15", "gross_eur": "100", "withholding_pct": "35"})
+    html = client.get("/dividends").get_data(as_text=True)
+    assert f"{preview_due:.2f}" in html
+
+
+def test_preview_rejects_future_date(client):
+    resp = client.get(
+        "/api/preview/lot?acquired_date=2099-01-01&quantity=1&price_eur=1&fee_eur=0")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert "przyszłości" in data["error"]
+
+
+# --- krok 18: jedna matematyka dywidendowa (PLN na kursie NBP zamrożonym) ---
+
+def test_dividends_totals_use_frozen_nbp_not_current_rate(client, _fake_nbp_rate):
+    client.post("/dividends", data={
+        "pay_date": "2024-06-15", "gross_eur": "100", "withholding_pct": "35"})
+    client.post("/dividends", data={
+        "pay_date": "2024-07-15", "gross_eur": "50", "withholding_pct": "35"})
+    html = client.get("/dividends").get_data(as_text=True)
+    # Kafelek "Brutto" musi być sumą wierszy tabeli (400.00 + 200.00), oba na
+    # zamrożonym kursie NBP 4.0 z fixture'a — nie osobną kalkulacją EUR na
+    # kursie bieżącym (dawny sensors.dividends_values w tej trasie).
+    assert "400.00" in html
+    assert "200.00" in html
+    assert '<span class="stat-value">600<span class="stat-unit">PLN</span></span>' in html
+
+
+def test_dividends_yield_on_cost_uses_lots_not_manual_settings(client, _fake_nbp_rate):
+    import re
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "100", "price_eur": "3.5", "fee_eur": "0",
+    })
+    client.post("/dividends", data={
+        "pay_date": "2024-06-15", "gross_eur": "100", "withholding_pct": "35"})
+    html = client.get("/dividends").get_data(as_text=True)
+    m = re.search(r'Yield on cost</span>\s*<span class="stat-value">([^<]+)', html)
+    assert m is not None
+    value = m.group(1).strip()
+    assert value != "—"
+    float(value)  # musi się dać sparsować jako liczba, nie pozostać myślnikiem
+
+
+# --- krok 18: /grants — brak fantomowych wierszy dla niezrealizowanych transz ---
+
+def test_grants_no_phantom_rows_for_unrealized_vests(tmp_path):
+    # _make_grants_app tworzy 3 transze (1 ESPP + 2 LTI), żadna nie ma
+    # zrealizowanej sprzedaży — przed fixem każda dostawała pusty
+    # `<tr><td colspan="N">` mimo braku treści do pokazania.
+    app = _make_grants_app(tmp_path)
+    with app.test_client() as c:
+        html = c.get("/grants").get_data(as_text=True)
+        assert 'colspan="8"' not in html
+        assert 'colspan="6"' not in html
+
+
+# --- krok 18: nawigacja w 5 sekcjach — fallback bez JS ---
+
+def test_nav_groups_render_without_js(client):
+    html = client.get("/").get_data(as_text=True)
+    assert '<details class="nav-group' in html
+    for label in ["Pulpit", "Portfel", "Loty", "Sprzedaże", "Granty", "Dywidendy",
+                  "PIT-38", "Importy", "Newsy", "Prognozy", "Ustawienia"]:
+        assert label in html
+
+
+# --- krok 18: /pit38 Sekcja G schowana, gdy brak dywidend ---
+
+def test_pit38_section_g_hidden_when_no_dividends(client):
+    html = client.get("/pit38").get_data(as_text=True)
+    assert "Brak dywidend w" in html
+    assert "Dywidendy brutto" not in html

@@ -1,22 +1,17 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat, tax_disclaimer, LOT_TYPE_LABELS, POLICY_LABELS %}
 {% block title %}Sprzedaże — Nokia Tracker{% endblock %}
 {% block content %}
 
-{% set lot_type_labels = {'own': 'własne', 'matched': 'podarowane', 'lti': 'LTI',
-                          'dividend_drip': 'dywidenda'} %}
-{% set policy_labels = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
-                        'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
+{% set lot_type_labels = LOT_TYPE_LABELS %}
+{% set policy_labels = POLICY_LABELS %}
 
 <div class="page-head">
   <h1>Sprzedaże</h1>
   {% if deleted %}<span class="badge saved">Sprzedaż cofnięta</span>{% endif %}
 </div>
 
-<p class="disclaimer">
-  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Rozwiń sprzedaż, żeby zobaczyć
-  dokładnie z których lotów poszła, jaki kurs NBP zastosowano (z linkiem do konkretnej
-  tabeli) i ile finalnie zostaje na rękę w PLN i EUR.
-</p>
+{{ tax_disclaimer('sales') }}
 
 {% if years %}
 <form class="year-form no-print" method="get" action="{{ url_for('sales_get') }}">
@@ -31,36 +26,20 @@
 </form>
 {% endif %}
 
+{% if totals.count %}
 <div class="card">
   <div class="card-title">Podsumowanie {{ year or 'wszystkie lata' }}</div>
   <div class="grid stats">
-    <div class="stat">
-      <span class="stat-label">Sprzedaże</span>
-      <span class="stat-value">{{ totals.count }}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Przychód</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.revenue_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Koszt</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.cost_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Dochód</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.income_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Podatek</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.tax_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Na rękę</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.net_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
+    {{ stat('Sprzedaże', totals.count) }}
+    {{ stat('Przychód', '%.0f'|format(totals.revenue_pln), 'PLN') }}
+    {{ stat('Koszt', '%.0f'|format(totals.cost_pln), 'PLN') }}
+    {{ stat('Dochód', '%.0f'|format(totals.income_pln), 'PLN') }}
+    {{ stat('Podatek', '%.0f'|format(totals.tax_pln), 'PLN') }}
+    {{ stat('Na rękę', '%.0f'|format(totals.net_pln), 'PLN') }}
   </div>
   <p class="muted">Wg aktywnej polityki kosztu ({{ policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }}).</p>
 </div>
+{% endif %}
 
 <div class="card">
   <div class="card-title">Rejestr sprzedaży</div>
@@ -69,10 +48,10 @@
     <table class="table">
       <thead>
         <tr>
-          <th></th><th>Data</th><th class="num">Ilość</th><th class="num">Cena EUR</th>
-          <th class="num">Kurs NBP</th><th class="num">Przychód PLN</th>
+          <th></th><th>Data</th><th class="num">Ilość</th>
+          <th class="num">Przychód PLN</th>
           <th class="num">Koszt PLN</th><th class="num">Dochód PLN</th>
-          <th class="num">Podatek PLN</th><th class="num">Na rękę PLN</th>
+          <th class="num">Podatek PLN</th><th class="num">Na rękę PLN</th><th class="no-print"></th>
         </tr>
       </thead>
       <tbody>
@@ -83,24 +62,24 @@
           <td><span class="chevron">▸</span></td>
           <td class="nowrap">{{ item.sale.sale_date }}</td>
           <td class="num">{{ '%.4f'|format(item.sale.quantity) }}</td>
-          <td class="num">{{ '%.4f'|format(item.sale.price_eur) }}</td>
-          <td class="num">{{ '%.4f'|format(item.sale.nbp_rate) if item.sale.nbp_rate is not none else '—' }}</td>
           <td class="num">{{ '%.2f'|format(item.detail.revenue_pln) }}</td>
           <td class="num">{{ '%.2f'|format(active_data.cost_pln) }}</td>
           <td class="num">{{ '%.2f'|format(active_data.income_pln) }}</td>
           <td class="num">{{ '%.2f'|format(active_data.tax_pln) }}</td>
           <td class="num">{{ '%.2f'|format(item.detail.net_pln) }}</td>
+          <td class="no-print">
+            <form method="post" action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
+                  onclick="event.stopPropagation();"
+                  onsubmit="return confirm('Cofnąć tę sprzedaż? Przywróci ilość akcji do lotów i usunie wpis nieodwracalnie.');">
+              <button class="btn small" type="submit">Cofnij</button>
+            </form>
+          </td>
         </tr>
         <tr class="row-detail" id="sale-{{ item.sale.id }}" hidden>
-          <td colspan="10">
+          <td colspan="9">
             <div class="row-detail-inner">
               {% set detail = item.detail %}
               {% include "_alloc_detail.html" %}
-              <form class="no-print" method="post"
-                    action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
-                    onsubmit="return confirm('Cofnąć tę sprzedaż? Przywróci ilość akcji do lotów i usunie wpis nieodwracalnie.');">
-                <button class="btn small" type="submit">Cofnij tę sprzedaż</button>
-              </form>
             </div>
           </td>
         </tr>

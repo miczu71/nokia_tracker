@@ -1,5 +1,107 @@
 # Changelog
 
+## [0.5.0] - 2026-08-10
+
+Piąte wydanie: złotówki na pulpicie, podgląd na żywo przed zapisem, jedna
+matematyka dywidendowa, nawigacja w 5 sekcjach (krok 18,
+`docs/PLAN_KROK_18_ux_pln.md`) — pełny przegląd wszystkich stron pod kątem
+uproszczenia wizualnego i funkcjonalnego.
+
+### Dodano — PLN na pulpicie
+- Karta „Portfel": ilość, **nowy kafelek Koszt bazowy**, wartość rynkowa,
+  niezrealizowany P&L — każda kwota EUR z drugą linią `≈ X zł` po kursie
+  bieżącym (Yahoo/ECB, ten sam co reszta pulpitu).
+- Linia pod kartą jawnie rozgraniczająca kurs bieżący (prezentacyjny) od kursu
+  NBP zamrożonego używanego w rozliczeniu podatkowym (`/dywidendy`, `/pit38`).
+- Bez kursu EUR/PLN w bazie: strona nie pokazuje `None` ani pustego `≈`, tylko
+  „kurs EUR/PLN niedostępny”.
+
+### Dodano — podgląd na żywo przed zapisem
+- Trzy nowe endpointy JSON: `GET /api/preview/lot`, `/api/preview/sale`,
+  `/api/preview/dividend` — zero nowej logiki podatkowej, każdy woła istniejący
+  silnik (`fx_nbp.rate_for_event`, `tax/whatif.py::simulate_sale`,
+  `tax/dividends.py::compute_dividend_tax_pln`), więc podgląd nigdy nie
+  rozjeżdża się z tym, co faktycznie zostanie zapisane. Błędy (brak pokrycia,
+  brak kursu NBP, data w przyszłości) wracają jako `{ok: false, error}` z
+  HTTP 200, nigdy 500.
+- `NT.initFormPreview()` (`static/app.js`) — debounce 400 ms, `AbortController`
+  na wyścigi, `.preview-box` startuje `hidden` (formularz działa identycznie
+  bez JS jak przed 0.5.0).
+- Podpięte na `/lots` (dodanie lotu + rejestracja sprzedaży), `/dividends`
+  (dodanie wypłaty, w tym linia „powstanie lot” dla reinwestycji DRIP) i
+  `/pit38` (symulacja „co jeśli sprzedam teraz” — wynik bez przeładowania
+  strony, fallback GET z query params zostaje).
+
+### Naprawiono — jedna matematyka dywidendowa
+- `/dywidendy`: kafelki podsumowania liczone teraz sumowaniem wierszy tabeli
+  (kurs NBP zamrożony na Record Date), nie osobnym wywołaniem
+  `sensors.dividends_values()` na kursach bieżących — usunięta rozbieżność
+  między kafelkami a tabelą na tej samej stronie.
+- Kafelek „Yield on cost” liczył koszt bazowy z porzuconych ręcznych pól
+  ustawień (zawsze zero po imporcie PDF) — pokazywał trwały `—`. Przełączony
+  na `portfoliom.position_values_auto()`, tak jak reszta aplikacji.
+
+### Naprawiono — `/granty` fantomowe wiersze
+- `<tr><td colspan="N">{{ realized_details(...) }}</td></tr>` renderował się
+  dla KAŻDEJ transzy niezależnie od tego, czy miała zrealizowaną sprzedaż —
+  pusty wiersz-widmo przy każdej niezrealizowanej transzy. Warunek przeniesiony
+  z treści makra na sam wiersz.
+- Dołożony pasek kafelków „Niezvestowane / Następny vesting / Ilość w
+  następnym vestingu” (dane już liczone dla sensorów MQTT, dotąd nieobecne w UI).
+- „Zrealizowano” dostało EUR jako podlinię obok PLN.
+
+### Zmieniono — nawigacja w 5 sekcjach
+- 11 płaskich linków → Pulpit / **Portfel** (Portfel, Loty, Sprzedaże, Granty) /
+  **Podatki** (Dywidendy, PIT-38) / **Dane** (Importy, Newsy, Prognozy) /
+  Ustawienia. Grupa z aktywną stroną domyślnie rozwinięta.
+- `<details class="nav-group">` — bez JS rozwija się natywnie w miejscu,
+  pełny fallback; `NT.initNavGroups()` dokłada pływające menu (jedno otwarte
+  naraz, klik poza/Escape zamyka).
+
+### Zmieniono — przegląd pozostałych stron
+- `/sales`: tabela 10→9 kolumn (kurs NBP i cena EUR przeniesione do
+  rozwinięcia — już tam były), przycisk „Cofnij” wystawiony w wierszu głównym
+  zamiast schowany w rozwinięciu; kafelki podsumowania schowane przy zerze
+  sprzedaży w wybranym roku.
+- `/pit38`: akapit PIT/ZG (dosłowny alias kafelków sekcji G) zwinięty do
+  jednej linii; sekcja G schowana przy zerze dywidend w roku; usunięty
+  redundantny przycisk „Pokaż” obok auto-submitującego selektora roku.
+- `/imports`: trzy rozwlekłe akapity → jeden + `<details>`; tabela historii
+  7→5 kolumn; surowe repry dictów Pythona w kolejce konfliktów sformatowane
+  jako `klucz: wartość`; badge „Sprzedaż zaksięgowana” przeniesiony do nagłówka.
+- `/settings`: karta „Podatki” dostała 4 brakujące pola (podatek u źródła
+  Finlandia, stawka traktatowa, Belka, domyślny rok podatkowy — dotąd tylko
+  odczyt); polityka kosztu przez czytelne etykiety zamiast surowych enumów;
+  usunięty numer wersji przeciekający do tytułu karty.
+- `/portfolio`: formularz ręczny zwinięty do `<details>`, gdy istnieją loty
+  (i tak nieaktywny — dawniej dwa akapity prozy mówiące to samo); dołożone
+  linie PLN i kafelek „Całkowity zwrot”.
+- `/news`: usunięte martwe zapytanie o `horizon`/`tags` (nigdy nierenderowane);
+  dołożona kolumna źródła i legenda kropek „Wpływ”; link do pulpitu.
+- `/forecasts`: dołożony kafelek trafności historycznej (dawniej tylko na
+  pulpicie); ceny z jednostką EUR; kolumna `Model` przeniesiona do `title`.
+- `_alloc_detail.html`: etykiety (`LOT_TYPE_LABELS`/`POLICY_LABELS`) importowane
+  bezpośrednio z nowego `templates/_macros.html` zamiast niejawnego kontraktu
+  na to, że wołający wcześniej je zdefiniował; guard na pustą listę alokacji.
+
+### Dodano — `templates/_macros.html`
+- Wspólne `stat()` (kafelek KPI, bajtowo identyczny z dotychczasową ręczną
+  wersją), `tax_disclaimer()` (3 warianty ostrzeżenia ⚠️, dawniej 4 kopie w
+  4 plikach), `LOT_TYPE_LABELS`, `POLICY_LABELS` — zero duplikacji etykiet
+  między `/lots`, `/sales`, `/pit38`, `/portfolio`, `/settings`.
+
+### Bez zmian
+- `tax/*.py` — cała logika podatkowa nietknięta; zmiany są prezentacyjne albo
+  wołają istniejące, przetestowane funkcje.
+- Schemat bazy, eksporty CSV/XLSX, sensory MQTT (`sensors.py`).
+
+### Testy
+- 529 testów (516 + 13 nowych): PLN na pulpicie (w tym degradacja bez kursu),
+  regresja podgląd-vs-zapis dla sprzedaży i dywidendy, błędy podglądu jako
+  `ok: false` nie 500, rekoncyliacja kafelków dywidend z tabelą, kafelek
+  „Yield on cost” po imporcie lotów, brak fantomowych wierszy na `/granty`,
+  nawigacja renderuje się bez JS, sekcja G schowana bez dywidend.
+
 ## [0.4.0] - 2026-07-29
 
 Czwarte wydanie: pełna szerokość ekranu + skondensowane Sprzedaże i PIT-38

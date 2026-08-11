@@ -1,11 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat, tax_disclaimer, LOT_TYPE_LABELS, POLICY_LABELS %}
 {% block title %}PIT-38 — Nokia Tracker{% endblock %}
 {% block content %}
 
-{% set lot_type_labels = {'own': 'własne', 'matched': 'podarowane', 'lti': 'LTI',
-                          'dividend_drip': 'dywidenda'} %}
-{% set policy_labels = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
-                        'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
+{% set lot_type_labels = LOT_TYPE_LABELS %}
+{% set policy_labels = POLICY_LABELS %}
 {% set active_data = report.policies[cfg.cost_basis_policy] %}
 
 <div class="page-head">
@@ -18,7 +17,6 @@
         {% endfor %}
       </select>
     </label>
-    <button class="btn small" type="submit">Pokaż</button>
   </form>
   <div class="form-actions no-print">
     <a class="btn" href="{{ url_for('pit38_get', year=year, print=1) }}" target="_blank">Widok do druku</a>
@@ -27,40 +25,17 @@
   </div>
 </div>
 
-<p class="disclaimer">
-  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Kursy NBP są zamrożone
-  na dzień roboczy poprzedzający zdarzenie (art. 11a ustawy o PIT) w momencie
-  zapisu i nigdy nie są przeliczane ponownie. Wartości potwierdź z własnym
-  rozliczeniem lub doradcą przed wpisaniem do PIT-38.
-</p>
+{{ tax_disclaimer() }}
 
 <div class="card">
   <div class="card-title">Do wpisania w deklarację (wg aktywnej polityki: {{ policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }})</div>
   <div class="grid stats">
-    <div class="stat">
-      <span class="stat-label">Poz. C — przychód</span>
-      <span class="stat-value">{{ '%.2f'|format(active_data.revenue_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Poz. C — koszt</span>
-      <span class="stat-value">{{ '%.2f'|format(active_data.cost_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Poz. C — dochód</span>
-      <span class="stat-value">{{ '%.2f'|format(active_data.income_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Poz. C — podatek</span>
-      <span class="stat-value">{{ '%.2f'|format(active_data.tax_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Sekcja G — dopłata w PL</span>
-      <span class="stat-value">{{ '%.2f'|format(report.section_g.pl_tax_due_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat highlight">
-      <span class="stat-label">RAZEM DO ZAPŁATY</span>
-      <span class="stat-value">{{ '%.2f'|format(report.total_due_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
+    {{ stat('Poz. C — przychód', '%.2f'|format(active_data.revenue_pln), 'PLN') }}
+    {{ stat('Poz. C — koszt', '%.2f'|format(active_data.cost_pln), 'PLN') }}
+    {{ stat('Poz. C — dochód', '%.2f'|format(active_data.income_pln), 'PLN') }}
+    {{ stat('Poz. C — podatek', '%.2f'|format(active_data.tax_pln), 'PLN') }}
+    {{ stat('Sekcja G — dopłata w PL', '%.2f'|format(report.section_g.pl_tax_due_pln), 'PLN') }}
+    {{ stat('RAZEM DO ZAPŁATY', '%.2f'|format(report.total_due_pln), 'PLN', cls='highlight') }}
   </div>
 </div>
 
@@ -108,39 +83,28 @@
 
 <div class="card">
   <div class="card-title">Sekcja G — dywidendy zagraniczne (PIT/ZG)</div>
+  {% if report.section_g.dividend_count %}
   <div class="grid stats">
-    <div class="stat">
-      <span class="stat-label">Dywidendy brutto</span>
-      <span class="stat-value">{{ '%.2f'|format(report.section_g.gross_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Pobrane u źródła (Finlandia)</span>
-      <span class="stat-value">{{ '%.2f'|format(report.section_g.withholding_paid_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Dopłata w PL</span>
-      <span class="stat-value">{{ '%.2f'|format(report.section_g.pl_tax_due_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Do odzyskania z Vero</span>
-      <span class="stat-value">{{ '%.2f'|format(report.section_g.reclaimable_from_finland_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
+    {{ stat('Dywidendy brutto', '%.2f'|format(report.section_g.gross_pln), 'PLN') }}
+    {{ stat('Pobrane u źródła (Finlandia)', '%.2f'|format(report.section_g.withholding_paid_pln), 'PLN') }}
+    {{ stat('Dopłata w PL', '%.2f'|format(report.section_g.pl_tax_due_pln), 'PLN') }}
+    {{ stat('Do odzyskania z Vero', '%.2f'|format(report.section_g.reclaimable_from_finland_pln), 'PLN') }}
   </div>
   <p class="muted">
     Zaliczenie traktatowe {{ '%.2f'|format(report.section_g.credit_pln) }} PLN ·
     Belka (19%) {{ '%.2f'|format(report.section_g.belka_pln) }} PLN ·
-    {{ report.section_g.dividend_count }} dywidend w {{ year }} roku.
+    {{ report.section_g.dividend_count }} dywidend w {{ year }} roku ·
+    PIT/ZG: {{ report.pit_zg.country }} (dochód zagraniczny = brutto powyżej,
+    podatek zapłacony za granicą = pobrane u źródła powyżej — te same kwoty).
   </p>
-  <p class="muted">
-    PIT/ZG: {{ report.pit_zg.country }} · dochód zagraniczny
-    {{ '%.2f'|format(report.pit_zg.foreign_income_pln) }} PLN · podatek zapłacony za granicą
-    {{ '%.2f'|format(report.pit_zg.foreign_tax_paid_pln) }} PLN.
-  </p>
+  {% else %}
+  <p class="muted">Brak dywidend w {{ year }} roku — brak pozycji PIT/ZG do wpisania.</p>
+  {% endif %}
 </div>
 
 <div class="card no-print">
   <div class="card-title">„Co jeśli sprzedam teraz"</div>
-  <form class="inline-form" method="get" action="{{ url_for('pit38_get') }}">
+  <form class="inline-form" id="whatif-form" method="get" action="{{ url_for('pit38_get') }}">
     <input type="hidden" name="year" value="{{ year }}">
     <label>Ilość akcji
       <input type="number" step="0.0001" name="whatif_qty"
@@ -152,6 +116,7 @@
     </label>
     <button class="btn primary" type="submit">Symuluj</button>
   </form>
+  <div class="preview-box" id="whatif-preview" hidden></div>
 
   {% if whatif_error %}
   <p class="disclaimer error">⚠️ {{ whatif_error }}</p>
@@ -224,4 +189,14 @@
   {% endif %}
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>
+NT.initFormPreview({
+  formId: "whatif-form", boxId: "whatif-preview",
+  url: {{ url_for('preview_sale')|tojson }},
+  requiredFields: ["whatif_qty", "whatif_price"],
+  fields: [["whatif_qty", "quantity"], ["whatif_price", "price_eur"]],
+});
+</script>
 {% endblock %}

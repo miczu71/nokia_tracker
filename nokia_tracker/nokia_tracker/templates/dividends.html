@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat, tax_disclaimer %}
 {% block title %}Dywidendy — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -7,12 +8,7 @@
   {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
 </div>
 
-<p class="disclaimer">
-  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Kwoty w PLN liczone na
-  kursie NBP zamrożonym na Record Date (dzień roboczy poprzedzający, art. 11a
-  ustawy o PIT) — dokładnie ten sam kurs co w rozliczeniu PIT-38. Wartości
-  potwierdź z własnym rozliczeniem lub doradcą przed wpisaniem do deklaracji.
-</p>
+{{ tax_disclaimer('dividends') }}
 
 {% if error %}
 <p class="disclaimer error">⚠️ {{ error }}</p>
@@ -21,38 +17,26 @@
 <div class="card">
   <div class="card-title">Podsumowanie</div>
   <div class="grid stats">
-    <div class="stat">
-      <span class="stat-label">Brutto</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.dividends_gross_eur) }}<span class="stat-unit">EUR</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Netto (po podatku u źródła)</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.dividends_net_eur) }}<span class="stat-unit">EUR</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Pobrane u źródła (FI)</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.withholding_paid_eur) }}<span class="stat-unit">EUR</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Dopłata w PL</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.pl_tax_due_eur) }}<span class="stat-unit">EUR</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Do odzyskania z Vero</span>
-      <span class="stat-value">{{ '%.0f'|format(totals.reclaimable_from_finland_eur) }}<span class="stat-unit">EUR</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Yield on cost</span>
-      <span class="stat-value">
-        {{ '%.2f'|format(totals.dividend_yield_on_cost_pct) if totals.dividend_yield_on_cost_pct is not none else '—' }}
-        <span class="stat-unit">%</span></span>
-    </div>
+    {{ stat('Brutto', '%.0f'|format(totals.dividends_gross_pln), 'PLN',
+            sub='%.0f'|format(totals.dividends_gross_eur) + ' EUR') }}
+    {{ stat('Netto (po podatku u źródła)', '%.0f'|format(totals.dividends_net_pln), 'PLN',
+            sub='%.0f'|format(totals.dividends_net_eur) + ' EUR') }}
+    {{ stat('Pobrane u źródła (FI)', '%.0f'|format(totals.withholding_paid_pln), 'PLN',
+            sub='%.0f'|format(totals.withholding_paid_eur) + ' EUR') }}
+    {{ stat('Dopłata w PL', '%.0f'|format(totals.pl_tax_due_pln), 'PLN',
+            sub='%.0f'|format(totals.pl_tax_due_eur) + ' EUR') }}
+    {{ stat('Do odzyskania z Vero', '%.0f'|format(totals.reclaimable_from_finland_pln), 'PLN',
+            sub='%.0f'|format(totals.reclaimable_from_finland_eur) + ' EUR') }}
+    {{ stat('Yield on cost',
+            '%.2f'|format(totals.dividend_yield_on_cost_pct)
+            if totals.dividend_yield_on_cost_pct is not none else '—',
+            '%' if totals.dividend_yield_on_cost_pct is not none else None) }}
   </div>
 </div>
 
 <div class="card">
   <div class="card-title">Dodaj wypłatę dywidendy</div>
-  <form class="form" method="post" action="{{ url_for('dividends_post') }}">
+  <form class="form" id="dividend-form" method="post" action="{{ url_for('dividends_post') }}">
     <div class="row3">
       <label>Data wypłaty
         <input type="date" name="pay_date" required>
@@ -90,6 +74,7 @@
       <button class="btn primary" type="submit">Dodaj</button>
     </div>
   </form>
+  <div class="preview-box" id="dividend-preview" hidden></div>
 </div>
 
 <div class="card">
@@ -142,4 +127,19 @@
   {% endif %}
 </div>
 
+{% endblock %}
+{% block scripts %}
+<script>
+NT.initFormPreview({
+  formId: "dividend-form", boxId: "dividend-preview",
+  url: {{ url_for('preview_dividend')|tojson }},
+  requiredFields: ["pay_date", "gross_eur"],
+  fields: [
+    ["pay_date", "pay_date"], ["gross_eur", "gross_eur"],
+    ["withholding_pct", "withholding_pct"],
+    ["drip_purchase_date", "drip_purchase_date"],
+    ["drip_price_eur", "drip_price_eur"], ["drip_shares", "drip_shares"],
+  ],
+});
+</script>
 {% endblock %}

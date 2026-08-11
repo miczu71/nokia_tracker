@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat %}
 {% block title %}Granty — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -15,6 +16,17 @@
   patrz <a href="{{ url_for('sales_get') }}">Sprzedaże</a>) — to fakt, nie prognoza.
 </p>
 
+<div class="card">
+  <div class="grid stats">
+    {{ stat('Niezvestowane', '%.4f'|format(vesting.unvested_qty), 'akcji') }}
+    {{ stat('Następny vesting', vesting.next_vest_date or '—') }}
+    {{ stat('Ilość w następnym vestingu',
+            '%.4f'|format(vesting.next_vest_date_attrs.next_vest_qty)
+            if vesting.next_vest_date_attrs.next_vest_qty is not none else '—',
+            'akcji' if vesting.next_vest_date_attrs.next_vest_qty is not none else None) }}
+  </div>
+</div>
+
 {% macro valuation_cells(vest_id) %}
   {% set val = valuation.get(vest_id) %}
   {% if val %}
@@ -26,6 +38,7 @@
     <td class="num">
       {% if val.realized %}
         {{ '%.2f'|format(val.realized_value_pln) }} PLN
+        <span class="muted">({{ '%.2f'|format(val.realized_value_eur) }} EUR)</span>
       {% else %}—{% endif %}
     </td>
   {% else %}
@@ -92,7 +105,10 @@
           </td>
           {{ valuation_cells(g.vest_id) }}
         </tr>
+        {% set val = valuation.get(g.vest_id) %}
+        {% if val and val.realized %}
         <tr><td colspan="8">{{ realized_details(g.vest_id) }}</td></tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
@@ -131,7 +147,10 @@
             </td>
             {{ valuation_cells(v.id) }}
           </tr>
+          {% set val = valuation.get(v.id) %}
+          {% if val and val.realized %}
           <tr><td colspan="6">{{ realized_details(v.id) }}</td></tr>
+          {% endif %}
           {% endfor %}
         </tbody>
       </table>

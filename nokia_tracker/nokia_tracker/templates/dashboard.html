@@ -1,6 +1,10 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat %}
 {% block title %}Pulpit — Nokia Tracker{% endblock %}
 {% block content %}
+
+{% set price_pln = (values.price_eur * fx_info.rate)
+                   if values.price_eur is not none and fx_info.rate is not none else none %}
 
 <div class="page-head">
   <h1>NOKIA.HE</h1>
@@ -11,11 +15,10 @@
 
 <div class="card">
   <div class="grid stats">
-    <div class="stat">
-      <span class="stat-label">Kurs</span>
-      <span class="stat-value">{{ '%.3f'|format(values.price_eur) if values.price_eur is not none else '—' }}
-        <span class="stat-unit">EUR</span></span>
-    </div>
+    {{ stat('Kurs',
+            '%.3f'|format(values.price_eur) if values.price_eur is not none else '—',
+            'EUR',
+            sub=('≈ %s zł'|format('%.2f'|format(price_pln)) if price_pln is not none else none)) }}
     <div class="stat">
       <span class="stat-label">Zmiana dziś</span>
       <span class="stat-value {{ 'up' if (values.change_pct_day or 0) > 0 else 'down' }}">
@@ -50,33 +53,45 @@
 
 <div class="card">
   <div class="card-title">Portfel</div>
+  {% set dividends_net_pln = (dividends.dividends_net_eur * fx_info.rate)
+                             if fx_info.rate is not none else none %}
   <div class="grid stats">
-    <div class="stat">
-      <span class="stat-label">Ilość</span>
-      <span class="stat-value">{{ position.position_qty }}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Wartość rynkowa</span>
-      <span class="stat-value">
-        {{ '%.0f'|format(position.market_value_eur) if position.market_value_eur is not none else '—' }}
-        <span class="stat-unit">EUR</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Niezrealizowany P&L</span>
-      <span class="stat-value {{ 'up' if (position.unrealized_pnl_eur or 0) > 0 else 'down' }}">
-        {{ '%+.0f'|format(position.unrealized_pnl_eur) if position.unrealized_pnl_eur is not none else '—' }}
-        <span class="stat-unit">EUR</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Całkowity zwrot</span>
-      <span class="stat-value {{ 'up' if (position.total_return_pct or 0) > 0 else 'down' }}">
-        {{ '%+.1f'|format(position.total_return_pct) if position.total_return_pct is not none else '—' }}
-        <span class="stat-unit">%</span></span>
-    </div>
+    {{ stat('Ilość', position.position_qty) }}
+    {{ stat('Koszt bazowy',
+            '%.0f'|format(position.cost_basis_eur) if position.cost_basis_eur is not none else '—',
+            'EUR',
+            sub=('≈ %s zł'|format('%.0f'|format(position.cost_basis_pln))
+                 if position.cost_basis_pln is not none else none)) }}
+    {{ stat('Wartość rynkowa',
+            '%.0f'|format(position.market_value_eur) if position.market_value_eur is not none else '—',
+            'EUR',
+            sub=('≈ %s zł'|format('%.0f'|format(position.market_value_pln))
+                 if position.market_value_pln is not none else none)) }}
+    {{ stat('Niezrealizowany P&L',
+            '%+.0f'|format(position.unrealized_pnl_eur) if position.unrealized_pnl_eur is not none else '—',
+            'EUR',
+            value_cls=('up' if (position.unrealized_pnl_eur or 0) > 0 else 'down'),
+            sub=('≈ %s zł'|format('%+.0f'|format(position.unrealized_pnl_pln))
+                 if position.unrealized_pnl_pln is not none else none)) }}
+    {{ stat('Całkowity zwrot',
+            '%+.1f'|format(position.total_return_pct) if position.total_return_pct is not none else '—',
+            '%',
+            value_cls=('up' if (position.total_return_pct or 0) > 0 else 'down')) }}
   </div>
-  <p class="muted">Dywidendy netto: {{ '%.0f'|format(dividends.dividends_net_eur) }} EUR ·
+  <p class="muted">Dywidendy netto: {{ '%.0f'|format(dividends.dividends_net_eur) }} EUR
+    {%- if dividends_net_pln is not none %} · ≈ {{ '%.0f'|format(dividends_net_pln) }} zł{% endif %} ·
     <a href="{{ url_for('dividends_get') }}">szczegóły</a></p>
   <a class="btn small" href="{{ url_for('portfolio_get') }}">Edytuj stan posiadania</a>
+  <p class="muted">
+    {% if fx_info.rate is not none %}
+      EUR/PLN {{ '%.4f'|format(fx_info.rate) }} · {{ fx_info.source or '—' }} ·
+      {{ fx_info.ts[:16] if fx_info.ts else '—' }} — kurs bieżący, nie tabela NBP
+      używana w rozliczeniu podatkowym (patrz <a href="{{ url_for('dividends_get') }}">Dywidendy</a>
+      / <a href="{{ url_for('pit38_get') }}">PIT-38</a>)
+    {% else %}
+      kurs EUR/PLN niedostępny
+    {% endif %}
+  </p>
 </div>
 
 <div class="card">
@@ -87,7 +102,8 @@
       {{ '%+.2f'|format(values.sentiment_score) if values.sentiment_score is not none else '—' }}
       ({{ values.sentiment_label or 'brak danych' }})
     </strong>
-    · {{ values.news_count_24h or 0 }} artykułów w 24h
+    · {{ values.news_count_24h or 0 }} artykułów w 24h ·
+    <a href="{{ url_for('news_page') }}">wszystkie newsy</a>
   </p>
   {% if values.daily_briefing_attrs and values.daily_briefing_attrs.text %}
     <p>{{ values.daily_briefing_attrs.text }}</p>

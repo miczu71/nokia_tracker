@@ -56,6 +56,39 @@ body {
 .nav-links a.active, .nav-links a:hover { background: var(--grid); color: var(--ink); }
 .nav-version { color: var(--muted); font-size: 11px; margin-left: 4px; }
 
+/* Krok 18: grupy nawigacji (Portfel/Podatki/Dane) — <details> rozwija się w
+   miejscu bez JS; `.js-nav` (dopisywane przez NT.initNavGroups()) przełącza
+   `.nav-group-links` na pływające menu. */
+.nav-group { position: relative; }
+.nav-group > summary {
+  list-style: none; cursor: pointer; user-select: none;
+  color: var(--ink-2); padding: 6px 10px; border-radius: 8px; font-weight: 500; font-size: 14px;
+}
+.nav-group > summary::-webkit-details-marker { display: none; }
+.nav-group > summary::after { content: " ▾"; font-size: 10px; color: var(--muted); }
+.nav-group > summary:hover, .nav-group[open] > summary { background: var(--grid); color: var(--ink); }
+.nav-group.active > summary { color: var(--ink); font-weight: 700; }
+.nav-group-links { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 0 2px 10px; }
+
+/* Krok 18: 5 pozycji (Pulpit/Portfel/Podatki/Dane/Ustawienia) mieszczą się w
+   jednej linii na telefonie tylko przy ciaśniejszym poziomym odstępie niż
+   desktop — dotyczy WYŁĄCZNIE górnego paska (.nav-links/.nav-group > summary
+   bezpośrednio w nav), nie rozwiniętego menu grupy (.nav-group-links a). */
+@media (max-width: 480px) {
+  .nav-links > a, .nav-links > .nav-group > summary { padding: 6px 6px; font-size: 13px; }
+}
+.nav-group-links a {
+  color: var(--ink-2); text-decoration: none;
+  padding: 6px 10px; border-radius: 8px; font-weight: 500; font-size: 14px;
+}
+.nav-group-links a.active, .nav-group-links a:hover { background: var(--grid); color: var(--ink); }
+.nav.js-nav .nav-group-links {
+  position: absolute; top: 100%; left: 0; z-index: 20;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px; margin-top: 4px; flex-direction: column; min-width: 160px;
+  box-shadow: 0 4px 16px rgba(11, 11, 11, 0.16);
+}
+
 .main { max-width: none; margin: 0; padding: 14px clamp(12px, 1.5vw, 28px) 60px; }
 
 .card {
@@ -87,6 +120,8 @@ body {
 .stat-value.up { color: var(--good); }
 .stat-value.down { color: var(--bad); }
 .stat-unit { font-size: 12px; color: var(--muted); }
+/* Krok 18: druga linia pod kafelkiem — PLN pod EUR itp. (_macros.html::stat) */
+.stat-sub { font-size: 12px; color: var(--muted); font-weight: 500; }
 
 .chart-wrap { position: relative; height: 260px; }
 
@@ -190,6 +225,18 @@ body {
 .row-detail td { padding: 0; border-bottom: 1px solid var(--grid); }
 .row-detail-inner { padding: 4px 10px 16px; }
 
+/* Krok 18: podgląd na żywo pod formularzem (dywidenda/lot/sprzedaż) */
+.preview-box {
+  border: 1px solid var(--grid); background: var(--page); border-radius: 8px;
+  padding: 10px 12px; margin-top: 10px; font-size: 13px;
+}
+.preview-box.error { border-color: var(--bad); }
+.preview-line { margin: 0 0 4px; color: var(--ink-2); }
+.preview-line:last-child { margin-bottom: 0; }
+.preview-line.emphasis { color: var(--ink); font-weight: 700; font-size: 15px; }
+.preview-box.error .preview-line { color: var(--bad); }
+.preview-line a { color: var(--series-1); }
+
 /* Krok 17: formularz jednolinijkowy (symulacja PIT-38) */
 .inline-form { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
 .inline-form label { font-size: 13px; color: var(--ink-2); }
@@ -218,6 +265,7 @@ body {
 
 @media print {
   .nav, .no-print, .form-actions { display: none !important; }
+  .nav-group[open] { display: none; } /* nav i tak ukryty wyżej; asekuracyjnie */
   body.print-mode .main { max-width: none; padding: 0; }
   .card { border: none; break-inside: avoid; margin-bottom: 10px; }
   .table th, .table td { white-space: normal; }

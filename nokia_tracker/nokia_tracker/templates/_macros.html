@@ -1,0 +1,82 @@
+{#
+  Krok 18: wspólne makra i słowniki etykiet — wcześniej cztery kopie
+  (`lots.html`, `sales.html`, `pit38.html`, `_alloc_detail.html` niejawnie
+  przez kontekst wołającego). Każda strona, która potrzebuje kafelka,
+  ostrzeżenia podatkowego albo polskiej etykiety typu lotu/polityki kosztu,
+  importuje stąd zamiast kopiować.
+
+  `{% import "_macros.html" as m %}` (bez `with context`) albo
+  `{% from "_macros.html" import stat, tax_disclaimer, LOT_TYPE_LABELS,
+  POLICY_LABELS %}` na górze szablonu.
+#}
+
+{#
+  stat(label, value, unit=None, cls='', value_cls='', sub=None)
+
+  Kafelek `.grid.stats > .stat`. `value` i `unit` to już SFORMATOWANE stringi
+  (np. `'%.0f'|format(x)`) — makro nie formatuje liczb, żeby każda strona
+  zachowała swoją dotychczasową precyzję (%.0f / %.2f / %+.2f / %.4f).
+
+  ⚠️ Twardy wymóg (tests/test_web.py:379, test_sales_page_shows_year_totals):
+  `<span class="stat-value">…<span class="stat-unit">…</span></span>` musi
+  wyjść BEZ białego znaku między wartością a jednostką i między spanami.
+  Stąd `{%- -%}` na każdym brzegu wewnątrz `.stat-value`.
+
+  `cls` = klasa na zewnętrznym `.stat` (np. `highlight` — patrz `.stat.highlight`
+  w app.css). `value_cls` = klasa na `.stat-value` (np. `up`/`down`).
+  `sub` = opcjonalna druga linia pod wartością (np. `≈ 20 105 zł`) —
+  nośnik dla PLN pod kwotami EUR (krok 2).
+#}
+{% macro stat(label, value, unit=None, cls='', value_cls='', sub=None) -%}
+<div class="stat{% if cls %} {{ cls }}{% endif %}">
+  <span class="stat-label">{{ label }}</span>
+  <span class="stat-value{% if value_cls %} {{ value_cls }}{% endif %}">{%- if value is not none -%}{{ value }}{%- else -%}&mdash;{%- endif -%}{% if unit %}<span class="stat-unit">{{ unit }}</span>{% endif %}</span>
+  {%- if sub %}
+  <span class="stat-sub">{{ sub }}</span>
+  {%- endif %}
+</div>
+{%- endmacro %}
+
+{#
+  tax_disclaimer(variant='default')
+
+  Zwija 4 kopie ostrzeżenia ⚠️. `variant='default'` to tekst bajtowo
+  identyczny dziś na `lots.html` i `pit38.html`. `dividends` i `sales` to
+  warianty specyficzne dla tamtych stron (Record Date / rozwijanie sprzedaży).
+
+  Frazy `kalkulator pomocniczy` i `nie doradztwo podatkowe` MUSZĄ zostać —
+  pinowane przez test_lots_page_empty_state, test_dividends_page_shows_disclaimer,
+  test_pit38_page_empty_state_shows_disclaimer.
+#}
+{% macro tax_disclaimer(variant='default') %}
+<p class="disclaimer">
+  {%- if variant == 'dividends' %}
+  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Kwoty w PLN liczone na
+  kursie NBP zamrożonym na Record Date (dzień roboczy poprzedzający, art. 11a
+  ustawy o PIT) — dokładnie ten sam kurs co w rozliczeniu PIT-38. Wartości
+  potwierdź z własnym rozliczeniem lub doradcą przed wpisaniem do deklaracji.
+  {%- elif variant == 'sales' %}
+  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Rozwiń sprzedaż, żeby zobaczyć
+  dokładnie z których lotów poszła, jaki kurs NBP zastosowano (z linkiem do konkretnej
+  tabeli) i ile finalnie zostaje na rękę w PLN i EUR.
+  {%- else %}
+  ⚠️ To kalkulator pomocniczy, nie doradztwo podatkowe. Kursy NBP są zamrożone
+  na dzień roboczy poprzedzający zdarzenie (art. 11a ustawy o PIT) w momencie
+  zapisu i nigdy nie są przeliczane ponownie. Wartości potwierdź z własnym
+  rozliczeniem lub doradcą przed wpisaniem do PIT-38.
+  {%- endif %}
+</p>
+{%- endmacro %}
+
+{#
+  Etykiety typu lotu i polityki kosztu — kopiowane dziś w `lots.html:5-8`,
+  `sales.html:5-8`, `pit38.html:5-8`, a `_alloc_detail.html` zakłada niejawnie,
+  że wołający je zdefiniował (patrz komentarz tam). Wartości MUSZĄ zostać
+  dosłowne — pinowane przez test_lots_page_shows_three_policies_comparison
+  i test_pit38_page_shows_three_policies_and_section_g ("Tylko własne",
+  "Własne + dywidenda", "Wszystkie w wartości nabycia").
+#}
+{% set LOT_TYPE_LABELS = {'own': 'własne', 'matched': 'podarowane', 'lti': 'LTI',
+                          'dividend_drip': 'dywidenda'} %}
+{% set POLICY_LABELS = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
+                        'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}

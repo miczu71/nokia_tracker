@@ -10,17 +10,25 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.4.0** — pełna szerokość ekranu i skondensowane strony gęste w liczbach:
-layout wypełnia cały dostępny ekran zamiast wąskiej kolumny ze scrollbarem, **Sprzedaże** to teraz
-rejestr transakcji (wiersz na sprzedaż, rozwijany detal FIFO), a **PIT-38** ma nagłówek „ile wpisać
-w deklarację" (poz. C + sekcja G + RAZEM DO ZAPŁATY) zamiast pięciu rozwlekłych kart. Wcześniej
-(0.3.0): pełna przejrzystość rozliczeń — każda kwota PLN rozkłada się aż do numeru tabeli NBP
-(rozwijane rozbicie FIFO per lot, z linkiem do tabeli), zrealizowane sprzedaże na osobnej stronie
-z możliwością cofnięcia, dywidendy z jednym źródłem prawdy (kurs NBP zamrożony, opcjonalna
-reinwestycja), granty z wyceną bieżącą i zrealizowaną, pulpit z konfigurowalnym zakresem wykresu
-(1D–MAX). Wcześniej (0.2.0): rynek, AI, portfel oparty na lotach, import wyciągów Computershare
-(przyrostowy, idempotentny), pełny silnik podatkowy PIT-38 (trzy polityki kosztu, sekcja G, PIT/ZG,
-symulacja „co jeśli sprzedam teraz", eksport CSV/XLSX/PDF).
+**Status:** wydanie **0.5.0** — złotówki tam, gdzie się o nich myśli, i podgląd na żywo przy
+wpisywaniu: **pulpit** pokazuje każdą kwotę EUR z drugą linią `≈ X zł` po kursie bieżącym
+(jawnie odróżnionym od kursu NBP używanego w rozliczeniu), formularze dodania **lotu**,
+**sprzedaży** i **dywidendy** liczą kurs NBP i podatek na żywo pod polami — zanim klikniesz
+„Dodaj” — tym samym silnikiem, który potem zapisuje dane, więc podgląd nigdy nie kłamie.
+**Dywidendy** dostały jedną matematykę zamiast dwóch (kafelki podsumowania liczone teraz z tych
+samych zamrożonych kursów NBP co tabela pod nimi). Nawigacja zwinięta z 11 płaskich linków do
+5 sekcji (Pulpit / Portfel / Podatki / Dane / Ustawienia — bez JS rozwijają się natywnie).
+Przy okazji: naprawiony błąd na **Grantach** (fantomowe puste wiersze przy niezrealizowanych
+transzach), **Ustawienia** dostały brakujące pola stawek podatkowych (dotąd tylko do odczytu),
+a **Portfel/Importy/Newsy/Prognozy** oczyszczone z powtórzonej prozy i martwych zapytań.
+Wcześniej (0.4.0): pełna szerokość ekranu, **Sprzedaże** jako rejestr transakcji (wiersz na
+sprzedaż, rozwijany detal FIFO), **PIT-38** z nagłówkiem „ile wpisać w deklarację” (poz. C +
+sekcja G + RAZEM DO ZAPŁATY). Wcześniej (0.3.0): pełna przejrzystość rozliczeń — każda kwota PLN
+rozkłada się aż do numeru tabeli NBP, zrealizowane sprzedaże z możliwością cofnięcia, dywidendy
+z jednym źródłem prawdy, granty z wyceną bieżącą i zrealizowaną, pulpit z konfigurowalnym
+zakresem wykresu (1D–MAX). Wcześniej (0.2.0): rynek, AI, portfel oparty na lotach, import
+wyciągów Computershare (przyrostowy, idempotentny), pełny silnik podatkowy PIT-38 (trzy polityki
+kosztu, sekcja G, PIT/ZG, symulacja „co jeśli sprzedam teraz", eksport CSV/XLSX/PDF).
 
 ## Instalacja
 
@@ -31,21 +39,24 @@ Wymaga działającego brokera MQTT (`core-mosquitto` domyślnie).
 ## Web UI
 
 Dodatek wystawia własny interfejs na ingressie (panel „Nokia Tracker” w bocznym menu HA) — to
-**główny sposób interakcji** z dodatkiem, dashboard Lovelace nie jest wymagany:
+**główny sposób interakcji** z dodatkiem, dashboard Lovelace nie jest wymagany. Nawigacja
+*(od 0.5.0)* jest zwinięta do 5 pozycji: Pulpit / **Portfel** (Portfel, Loty, Sprzedaże, Granty) /
+**Podatki** (Dywidendy, PIT-38) / **Dane** (Importy, Newsy, Prognozy) / Ustawienia — grupy
+rozwijają się natywnie bez JS (`<details>`), z JS jako pływające menu.
 
 | Strona | Zawartość |
 |---|---|
-| **Pulpit** | Kurs, zmiana dzienna, sesja, trend, RSI, wykres cenowy z konfigurowalnym zakresem (1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany), karta portfela, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
-| **Portfel** | Stan posiadania — automatycznie z lotów, gdy istnieją (FIFO), formularz ręczny jako fallback |
-| **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu, formularz rejestracji sprzedaży (konsumuje FIFO, odrzuca daty przyszłe), tabela wszystkich lotów z kursem NBP zamrożonym per lot, link do rozliczenia sprzedaży |
-| **Sprzedaże** *(rejestr od 0.4.0)* | Karta „Podsumowanie" z KPI za wybrany rok (przychód/koszt/dochód/podatek/na rękę), pod nią rejestr transakcji — jeden wiersz na sprzedaż z kluczowymi kwotami do porównania, klik rozwija pełne rozbicie FIFO (który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży z linkiem do tabeli, kwoty EUR/PLN); możliwość cofnięcia sprzedaży (przywraca loty) |
-| **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare, status transz (oczekuje/nabyte/zaległe), **wartość dziś** (bieżąca cena/kurs) i **wartość zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży) per transza |
-| **Dywidendy** | Formularz dodania wypłaty (waluta, opcjonalna reinwestycja/DRIP), jedno źródło prawdy z kursem NBP zamrożonym na Record Date, historia z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji |
+| **Pulpit** | Kurs (EUR, **od 0.5.0** z linią `≈ X zł` po kursie bieżącym), zmiana dzienna, sesja, trend, RSI, wykres cenowy z konfigurowalnym zakresem (1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany), karta portfela — ilość, koszt bazowy, wartość rynkowa, P&L, całkowity zwrot, każda kwota EUR z linią PLN i jawnym rozgraniczeniem od kursu NBP podatkowego, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
+| **Portfel** | Stan posiadania — automatycznie z lotów, gdy istnieją (FIFO), z liniami PLN; formularz ręczny zwinięty do `<details>` jako fallback, gdy loty istnieją |
+| **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu i formularz rejestracji sprzedaży — oba *(od 0.5.0)* z podglądem na żywo pod polami (kurs NBP, koszt/przychód/podatek PLN, plan FIFO), zanim klikniesz przycisk; odrzuca daty przyszłe; tabela wszystkich lotów z kursem NBP zamrożonym per lot, link do rozliczenia sprzedaży |
+| **Sprzedaże** | Karta „Podsumowanie" z KPI za wybrany rok (przychód/koszt/dochód/podatek/na rękę); rejestr transakcji — jeden wiersz na sprzedaż z kluczowymi kwotami i przyciskiem „Cofnij" *(od 0.5.0 widocznym od razu, nie tylko po rozwinięciu)*, klik rozwija pełne rozbicie FIFO (który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży z linkiem do tabeli, kwoty EUR/PLN) |
+| **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare, pasek kafelków *(od 0.5.0)* niezvestowane/następny vesting, status transz (oczekuje/nabyte/zaległe), **wartość dziś** (bieżąca cena/kurs) i **wartość zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży, EUR i PLN) per transza |
+| **Dywidendy** | Formularz dodania wypłaty *(od 0.5.0 z podglądem na żywo — kurs NBP, podatek, dopłata w PL — pod polami)*, jedno źródło prawdy z kursem NBP zamrożonym na Record Date, kafelki podsumowania **w PLN** z EUR jako podlinią *(od 0.5.0 — dawniej licznik EUR na kursach bieżących nie zgadzał się z tabelą poniżej)*, historia z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji |
 | **Importy** | Upload wyciągu Computershare (PDF), kolejka konfliktów (rozbieżności vs poprzedni import, w tym potwierdzenie realnej sprzedaży Withhold-to-Cover), historia importów |
-| **PIT-38** | Karta „Do wpisania w deklarację" (poz. C + sekcja G + kafelek RAZEM DO ZAPŁATY) jako pierwszy ekran; niżej: 3 kafelki polityk kosztu (podstawa prawna w zwiniętym rozbiciu), sekcja G scalona z PIT/ZG, symulacja „co jeśli sprzedam teraz” (wynik jako pasek KPI, rozbicie FIFO domyślnie zwinięte), ślad obliczeń per lot pogrupowany po dacie sprzedaży, eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku |
-| **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza) |
-| **Prognozy** | Historia prognoz 1w/1m/12m vs zrealizowana cena, trafność (MAPE) |
-| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia |
+| **PIT-38** | Karta „Do wpisania w deklarację" (poz. C + sekcja G + kafelek RAZEM DO ZAPŁATY) jako pierwszy ekran; niżej: 3 kafelki polityk kosztu (podstawa prawna w zwiniętym rozbiciu), sekcja G scalona z PIT/ZG (schowana, gdy brak dywidend w roku), symulacja „co jeśli sprzedam teraz" *(od 0.5.0 z wynikiem na żywo bez przeładowania strony)*, ślad obliczeń per lot pogrupowany po dacie sprzedaży, eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku |
+| **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza), kolumna źródła *(od 0.5.0)* |
+| **Prognozy** | Kafelek trafności historycznej (MAPE) *(od 0.5.0)*, historia prognoz 1w/1m/12m vs zrealizowana cena (EUR) |
+| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia, **stawki podatkowe** *(od 0.5.0 — podatek u źródła Finlandia, stawka traktatowa, Belka, domyślny rok podatkowy; dawniej tylko do odczytu)* |
 
 ## Odporność na niestabilne źródła
 

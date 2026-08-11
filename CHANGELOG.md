@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.3] - 2026-08-11
+
+Znalezione zaraz po wdrożeniu 0.5.2, przy weryfikacji na żywo po ponownym imporcie
+5 plików przez użytkownika: sekcja G 2022-2024 zadziałała poprawnie, ale stary,
+nieaktualny konflikt salda w kolejce (`/imports`) nadal wisiał — mimo że świeże
+przeliczenie po naprawie z 0.5.2 wykazało, że saldo się teraz zgadza.
+
+### Naprawiono
+- **Nieaktualne konflikty salda nie znikały same** — `reconcile_holdings()`
+  zapobiegała tylko NOWYM fałszywym alarmom (0.5.2), ale nigdy nie rozwiązywała
+  już istniejącego, nierozstrzygniętego konfliktu `balance` z wcześniejszego,
+  błędnego przebiegu, nawet gdy kolejny import wykazał, że saldo się teraz zgadza.
+  Teraz: gdy świeże przeliczenie mieści się w tolerancji, wszystkie dotychczas
+  nierozstrzygnięte konflikty `balance` (z dowolnego wcześniejszego importu)
+  zostają automatycznie oznaczone jako rozwiązane.
+
+### Techniczne
+- 1 nowy test, TDD.
+
 ## [0.5.2] - 2026-08-11
 
 Krok 20 (`docs/PLAN_KROK_20_reported_override.md`) — dokończenie kroku 19 po ponownym

@@ -466,6 +466,49 @@ def test_reconcile_holdings_does_not_double_subtract_an_already_booked_sale(
     assert balance_conflicts == 0  # 4.41010 == 4.41010, bez podwójnego odjęcia 15
 
 
+def test_reconcile_holdings_auto_resolves_stale_balance_conflict_once_reconciled(
+        conn, monkeypatch):
+    # krok 20 (fix): rozjazd salda z WCZEŚNIEJSZEGO, błędnego przebiegu (np. przed
+    # naprawą podwójnego odejmowania) zostawiał wiecznie nierozstrzygnięty konflikt
+    # w kolejce, nawet gdy kolejny import wykazał, że saldo się teraz zgadza -
+    # znalezione na realnych danych po ponownym imporcie 5 plików pod 0.5.2.
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    from nokia_tracker.tax import lots as taxlots
+    import json as _json
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 19.41010, 1.0)
+
+    cur = conn.execute(
+        "INSERT INTO imports (filename, file_sha256, period_start, period_end, as_of_date) "
+        "VALUES ('old.pdf','xyz','2025-01-01','2026-01-01','2025-12-31')")
+    old_import_id = cur.lastrowid
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json) VALUES (?, 'balance', 'balance:2025-12-31', '{}', '{}')",
+        (old_import_id,))
+    conn.commit()
+
+    cur2 = conn.execute(
+        "INSERT INTO imports (filename, file_sha256, period_start, period_end, as_of_date) "
+        "VALUES ('new.pdf','abc','2025-01-01','2026-01-01','2026-01-01')")
+    new_import_id = cur2.lastrowid
+    conn.commit()
+
+    text = (
+        " 19.41010                                                           1.0\n"
+        " Shares                                      1.00 PLN            Share  inSuccess  Plan 2019-2026             1.00 PLN\n"
+    )
+    result = cp.reconcile_holdings(conn, text, "2026-01-01", new_import_id)
+
+    assert result is False  # nie zapisano NOWEGO konfliktu - saldo się zgadza
+    stale = conn.execute(
+        "SELECT resolved FROM import_conflicts WHERE natural_key = 'balance:2025-12-31'"
+    ).fetchone()
+    assert stale["resolved"] == 1
+
+
 def test_import_statement_balance_check_skipped_when_importing_an_older_backfill(
         conn, monkeypatch):
     # Najpierw wgrywamy wyciąg 2026 (nowszy as_of_date) - staje się "najnowszym znanym

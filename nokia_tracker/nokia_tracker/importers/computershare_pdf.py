@@ -393,6 +393,23 @@ def reconcile_holdings(conn: sqlite3.Connection, text: str, as_of_date: str | No
         actual -= qty
 
     if abs(actual - expected) <= 2.0:
+        # krok 20 (fix): rozjazd z wcześniejszego, błędnego przebiegu (np. sprzed
+        # naprawy podwójnego odejmowania powyżej) nie może zostać w kolejce na
+        # zawsze, skoro TERAZ świeże przeliczenie wykazuje, że saldo się zgadza —
+        # bez tego stary, już nieaktualny alarm wisiałby tam wiecznie. Rozstrzyga
+        # WSZYSTKIE dotychczas nierozstrzygnięte konflikty 'balance', nie tylko
+        # z tego samego as_of_date (świeże, czyste przeliczenie unieważnia
+        # wszelkie starsze podejrzenia rozjazdu).
+        updated = conn.execute(
+            "UPDATE import_conflicts SET resolved = 1, resolution = ? "
+            "WHERE entity_type = 'balance' AND resolved = 0",
+            (f"saldo zgadza się przy kolejnym imporcie (as_of_date={as_of_date})",)
+        ).rowcount
+        conn.commit()
+        if updated:
+            logger.info(
+                "Kontrola salda %s: %d starszych konfliktów oznaczonych "
+                "rozwiązanymi - saldo się teraz zgadza", as_of_date, updated)
         return False
 
     nk = f"balance:{as_of_date}"

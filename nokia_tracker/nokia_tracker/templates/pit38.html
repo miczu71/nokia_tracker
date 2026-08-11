@@ -82,7 +82,11 @@
 </div>
 
 <div class="card">
-  <div class="card-title">Sekcja G — dywidendy zagraniczne (PIT/ZG)</div>
+  <div class="card-title">Sekcja G — dywidendy zagraniczne (PIT/ZG)
+    {% if report.section_g.has_estimated %}
+    <span class="badge" title="Część kwot poniżej to szacunek (35% u źródła założone) - źródło (wyciąg bez sekcji Dividend (Reinvested)) nie ma rozbicia Gross/Taxes/Fees, patrz /dywidendy">zawiera szacunki</span>
+    {% endif %}
+  </div>
   {% if report.section_g.dividend_count %}
   <div class="grid stats">
     {{ stat('Dywidendy brutto', '%.2f'|format(report.section_g.gross_pln), 'PLN') }}

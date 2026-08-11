@@ -127,3 +127,39 @@ def test_enrich_allocations_net_pln_uses_active_policy_tax(conn, monkeypatch):
     active_tax = result["policies"]["own_only"]["tax_pln"]
     assert result["net_pln"] == pytest.approx(result["revenue_pln"] - active_tax)
     assert result["net_eur"] == pytest.approx(result["revenue_eur"] - active_tax / 4.0)
+
+
+# ---- krok 20: zgłoszona wartość nadpisuje totale, ale nie ślad per-lot ----
+
+def test_enrich_allocations_reported_override_changes_totals_not_per_lot_trace(conn):
+    taxlots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    lot = taxlots.open_lots(conn)[0]
+    allocations = [{"lot_id": lot["id"], "quantity": 10, "cost_pln": 200.0,
+                    "revenue_pln": 320.0}]
+    sale_ctx = {"sale_date": "2026-07-28", "price_eur": 8.0, "fee_eur": 0.0,
+                "quantity": 10, "nbp_rate": 4.0, "nbp_rate_date": "2026-07-27"}
+
+    result = taxtrace.enrich_allocations(
+        conn, allocations, sale_ctx, _CFG,
+        reported={"reported_revenue_pln": 999.0, "reported_cost_pln": 111.0})
+
+    assert result["revenue_pln"] == pytest.approx(999.0)
+    assert result["revenue_pln_engine"] == pytest.approx(320.0)
+    assert result["policies"]["own_only"]["cost_pln"] == pytest.approx(111.0)
+    assert result["policies"]["own_only"]["cost_pln_engine"] == pytest.approx(200.0)
+    assert result["is_reported_override"] is True
+    # ślad per lot (co realnie wzięto) pozostaje niezmieniony
+    assert result["allocations"][0]["cost_pln"] == pytest.approx(200.0)
+    assert result["allocations"][0]["revenue_pln"] == pytest.approx(320.0)
+
+
+def test_enrich_allocations_no_reported_override_is_unaffected(conn):
+    taxlots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    lot = taxlots.open_lots(conn)[0]
+    allocations = [{"lot_id": lot["id"], "quantity": 10, "cost_pln": 200.0,
+                    "revenue_pln": 320.0}]
+    sale_ctx = {"sale_date": "2026-07-28", "price_eur": 8.0, "fee_eur": 0.0,
+                "quantity": 10, "nbp_rate": 4.0, "nbp_rate_date": "2026-07-27"}
+    result = taxtrace.enrich_allocations(conn, allocations, sale_ctx, _CFG)
+    assert result["is_reported_override"] is False
+    assert result["revenue_pln"] == pytest.approx(result["revenue_pln_engine"])

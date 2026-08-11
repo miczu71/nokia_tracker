@@ -45,30 +45,54 @@ def compute_all_policies(conn: sqlite3.Connection, cfg: dict, year: int | None =
 
     `year`: rok podatkowy (kalendarzowy, wg `sales.sale_date`). `None`
     (domyślnie, gdy też `cfg['tax_year']` nie jest ustawione) = wszystkie
-    lata łącznie."""
+    lata łącznie.
+
+    Krok 20: sprzedaż z ustawionym `reported_revenue_pln`/`reported_cost_pln`
+    (np. zgodnie z ręcznym arkuszem użytkownika, gdy deklaracja już złożona i
+    świadomie NIE jest korygowana — patrz docs/PLAN_KROK_20_reported_override.md)
+    wnosi do agregatu te nadpisane liczby zamiast sumy z `sale_allocations`.
+    `sale_allocations`/`lots` NIE są przy tym dotykane — realny ślad FIFO
+    zostaje niezmieniony i nadal widoczny per lot, tylko agregat PIT-38 się
+    różni. Ponieważ arkusz nie ma trzech wariantów kosztu jak silnik, taka
+    sprzedaż wnosi tę SAMĄ kwotę kosztu do wszystkich trzech polityk."""
     if year is None:
         year = cfg.get("tax_year") or None
 
-    query = (
-        "SELECT sa.cost_pln, sa.revenue_pln, l.lot_type "
-        "FROM sale_allocations sa "
-        "JOIN lots l ON l.id = sa.lot_id "
-        "JOIN sales s ON s.id = sa.sale_id"
-    )
+    sales_query = "SELECT id, reported_revenue_pln, reported_cost_pln FROM sales"
     params: tuple = ()
     if year:
-        query += " WHERE strftime('%Y', s.sale_date) = ?"
+        sales_query += " WHERE strftime('%Y', sale_date) = ?"
         params = (str(year),)
-    rows = conn.execute(query, params).fetchall()
+    sale_rows = conn.execute(sales_query, params).fetchall()
+
+    alloc_rows = conn.execute(
+        "SELECT sa.sale_id, sa.cost_pln, sa.revenue_pln, l.lot_type "
+        "FROM sale_allocations sa JOIN lots l ON l.id = sa.lot_id").fetchall()
+    allocs_by_sale: dict[int, list] = {}
+    for r in alloc_rows:
+        allocs_by_sale.setdefault(r["sale_id"], []).append(r)
 
     # Przychód nie zależy od polityki kosztu — to ta sama sprzedaż,
     # różni się tylko to, ile kosztu wolno od niej odjąć.
-    total_revenue_pln = sum(r["revenue_pln"] for r in rows)
+    total_revenue_pln = 0.0
+    for sale in sale_rows:
+        if sale["reported_revenue_pln"] is not None:
+            total_revenue_pln += sale["reported_revenue_pln"]
+        else:
+            total_revenue_pln += sum(
+                a["revenue_pln"] for a in allocs_by_sale.get(sale["id"], []))
     tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
 
     result: dict[str, dict] = {}
     for name, allowed_types in POLICIES.items():
-        cost_pln = sum(r["cost_pln"] for r in rows if r["lot_type"] in allowed_types)
+        cost_pln = 0.0
+        for sale in sale_rows:
+            if sale["reported_cost_pln"] is not None:
+                cost_pln += sale["reported_cost_pln"]
+            else:
+                cost_pln += sum(
+                    a["cost_pln"] for a in allocs_by_sale.get(sale["id"], [])
+                    if a["lot_type"] in allowed_types)
         income_pln = total_revenue_pln - cost_pln
         # Strata z akcji nie obniża podatku (nie miesza się ze strumieniem
         # dywidendowym - BLUEPRINT §3a, PIT-38 sekcja G) - podatek 0, nigdy ujemny.

@@ -98,3 +98,78 @@ def test_compute_all_policies_filters_by_year(conn):
 
     assert result_2023["own_only"]["revenue_pln"] == pytest.approx(10 * 8.0 * 4.0)
     assert result_2024["own_only"]["revenue_pln"] == pytest.approx(5 * 8.0 * 4.0)
+
+
+# ---- krok 20: zgłoszona wartość sprzedaży nadpisuje agregat, ale nie sale_allocations ----
+
+def test_compute_all_policies_uses_reported_values_when_set(conn):
+    sale_id = lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 10, 8.0)  # silnik: 10*8*4=320 przychód, 10*5*4=200 koszt
+    conn.execute(
+        "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ? WHERE id = ?",
+        (999.0, 111.0, sale_id))
+    conn.commit()
+
+    result = policy.compute_all_policies(conn, _base_cfg())
+
+    assert result["own_only"]["revenue_pln"] == pytest.approx(999.0)
+    assert result["own_only"]["cost_pln"] == pytest.approx(111.0)
+    assert result["own_only"]["income_pln"] == pytest.approx(999.0 - 111.0)
+    assert result["own_only"]["tax_pln"] == pytest.approx(round((999.0 - 111.0) * 0.19, 2))
+
+
+def test_compute_all_policies_reported_value_same_across_all_three_policies(conn):
+    # Arkusz nie ma trzech wariantów kosztu jak silnik - nadpisana sprzedaż wnosi
+    # tę samą kwotę do każdej z trzech polityk (w przeciwieństwie do lotów real
+    # gdzie własne/podarowane/LTI dają różne koszty per polityka).
+    sale_id = lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 10, 8.0)
+    conn.execute(
+        "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ? WHERE id = ?",
+        (999.0, 111.0, sale_id))
+    conn.commit()
+
+    result = policy.compute_all_policies(conn, _base_cfg())
+
+    for name in ("own_only", "own_plus_drip", "all_at_acquisition"):
+        assert result[name]["cost_pln"] == pytest.approx(111.0)
+
+
+def test_compute_all_policies_sale_allocations_unchanged_by_reported_override(conn):
+    # Zgłoszona wartość zmienia TYLKO agregat, nie realny ślad FIFO w sale_allocations.
+    sale_id = lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale_id = lots.record_sale(conn, "2024-06-01", 10, 8.0)
+    real_alloc = conn.execute(
+        "SELECT cost_pln, revenue_pln FROM sale_allocations WHERE sale_id = ?",
+        (sale_id,)).fetchone()
+
+    conn.execute(
+        "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ? WHERE id = ?",
+        (999.0, 111.0, sale_id))
+    conn.commit()
+    policy.compute_all_policies(conn, _base_cfg())
+
+    unchanged_alloc = conn.execute(
+        "SELECT cost_pln, revenue_pln FROM sale_allocations WHERE sale_id = ?",
+        (sale_id,)).fetchone()
+    assert unchanged_alloc["cost_pln"] == real_alloc["cost_pln"]
+    assert unchanged_alloc["revenue_pln"] == real_alloc["revenue_pln"]
+
+
+def test_compute_all_policies_mixes_reported_and_real_sales_in_same_year(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale1 = lots.record_sale(conn, "2024-03-01", 10, 8.0)  # real: revenue=320, cost=200
+    lots.add_lot(conn, "2024-02-10", "own", 5, 6.0)
+    sale2 = lots.record_sale(conn, "2024-06-01", 5, 9.0)  # will be overridden
+
+    conn.execute(
+        "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ? WHERE id = ?",
+        (500.0, 50.0, sale2))
+    conn.commit()
+
+    result = policy.compute_all_policies(conn, _base_cfg())
+
+    real_revenue = 10 * 8.0 * 4.0
+    real_cost = 10 * 5.0 * 4.0
+    assert result["own_only"]["revenue_pln"] == pytest.approx(real_revenue + 500.0)
+    assert result["own_only"]["cost_pln"] == pytest.approx(real_cost + 50.0)

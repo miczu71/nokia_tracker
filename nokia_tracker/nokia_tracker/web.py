@@ -634,7 +634,11 @@ def create_app(db_path: str) -> Flask:
                     "fee_eur": s["fee_eur"], "quantity": s["quantity"],
                     "nbp_rate": s["nbp_rate"], "nbp_rate_date": s["nbp_rate_date"],
                 }
-                detail = taxtrace.enrich_allocations(conn, allocations, sale_ctx, cfg)
+                reported = None
+                if s["reported_revenue_pln"] is not None or s["reported_cost_pln"] is not None:
+                    reported = {"reported_revenue_pln": s["reported_revenue_pln"],
+                                "reported_cost_pln": s["reported_cost_pln"]}
+                detail = taxtrace.enrich_allocations(conn, allocations, sale_ctx, cfg, reported)
                 sales.append({"sale": dict(s), "detail": detail})
 
             years = [r["y"] for r in conn.execute(
@@ -670,6 +674,34 @@ def create_app(db_path: str) -> Flask:
             with dbm.WRITE_LOCK:
                 taxlots.reverse_sale(conn, sale_id)
             return redirect(url_for("sales_get", deleted="1"))
+        finally:
+            conn.close()
+
+    @app.post("/sales/<int:sale_id>/report")
+    def sales_report(sale_id: int):
+        """Krok 20: zgłoszona wartość sprzedaży (np. zgodnie z ręcznym arkuszem
+        użytkownika, gdy deklaracja już złożona i świadomie NIE jest korygowana —
+        patrz docs/PLAN_KROK_20_reported_override.md). Nadpisuje TYLKO agregat
+        PIT-38 (`tax/policy.py::compute_all_policies`) — `sale_allocations`/`lots`
+        (realny ślad FIFO) zostają nietknięte. Puste pole = usuń nadpisanie
+        (wróć do wyliczenia silnika)."""
+        conn = _conn()
+        try:
+            exists = conn.execute("SELECT 1 FROM sales WHERE id = ?", (sale_id,)).fetchone()
+            if not exists:
+                return redirect(url_for("sales_get"))
+            revenue_raw = (request.form.get("reported_revenue_pln") or "").strip()
+            cost_raw = (request.form.get("reported_cost_pln") or "").strip()
+            note_raw = (request.form.get("reported_note") or "").strip() or None
+            reported_revenue = float(revenue_raw) if revenue_raw else None
+            reported_cost = float(cost_raw) if cost_raw else None
+            with dbm.WRITE_LOCK:
+                conn.execute(
+                    "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ?, "
+                    "notes = ? WHERE id = ?",
+                    (reported_revenue, reported_cost, note_raw, sale_id))
+                conn.commit()
+            return redirect(url_for("sales_get", reported="1"))
         finally:
             conn.close()
 

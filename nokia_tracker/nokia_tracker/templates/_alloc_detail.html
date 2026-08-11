@@ -58,6 +58,17 @@
   </table>
 </div>
 
+{% if detail.is_reported_override %}
+<p class="warn-line">
+  ⚠️ <strong>Zgłoszona wartość różni się od tego, co wyliczyłby silnik z realnych
+  lotów</strong> — powyższa tabela pokazuje realny ślad FIFO (co się faktycznie
+  stało z akcjami), ale przychód/koszt w podsumowaniu poniżej to WARTOŚĆ
+  ZGŁOSZONA (np. z ręcznego rozliczenia), nie wyliczenie silnika. Silnik
+  wyliczyłby przychód {{ '%.2f'|format(detail.revenue_pln_engine) }} PLN, koszt
+  {{ '%.2f'|format(detail.policies[detail.active_policy].cost_pln_engine) }} PLN.
+</p>
+{% endif %}
+
 <p class="policy-line">
   Polityki:
   {% for name, data in detail.policies.items() %}

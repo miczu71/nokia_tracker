@@ -346,6 +346,65 @@ def test_sales_page_filters_by_year(client, _fake_nbp_rate):
     assert "2024-06-01" in resp_2024.get_data(as_text=True)
 
 
+# ---- krok 20: zgłoszona wartość sprzedaży ----
+
+def test_sales_report_post_sets_reported_values_and_affects_pit38(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "10",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    import re
+    html = client.get("/sales").get_data(as_text=True)
+    m = re.search(r'action="(/sales/\d+/report)"', html)
+    assert m, "brak formularza zgłoszonej wartości w HTML"
+    report_url = m.group(1)
+
+    resp = client.post(report_url, data={
+        "reported_revenue_pln": "999.0", "reported_cost_pln": "111.0",
+        "reported_note": "zgodnie z arkuszem",
+    })
+    assert resp.status_code == 302
+    assert "reported=1" in resp.headers["Location"]
+
+    html_after = client.get("/sales").get_data(as_text=True)
+    assert "999" in html_after
+    assert "111" in html_after
+
+    pit38 = client.get("/pit38?year=2024").get_data(as_text=True)
+    assert "888.00" in pit38 or "888,00" in pit38  # income = 999-111 = 888
+
+
+def test_sales_report_post_can_be_cleared(client, _fake_nbp_rate):
+    client.post("/lots", data={
+        "acquired_date": "2024-01-10", "lot_type": "own",
+        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
+    })
+    client.post("/lots/sell", data={
+        "sale_date": "2024-06-01", "sale_quantity": "10",
+        "sale_price_eur": "8.0", "sale_fee_eur": "0",
+    })
+    import re
+    html = client.get("/sales").get_data(as_text=True)
+    report_url = re.search(r'action="(/sales/\d+/report)"', html).group(1)
+    client.post(report_url, data={"reported_revenue_pln": "999.0", "reported_cost_pln": "111.0"})
+
+    resp = client.post(report_url, data={"reported_revenue_pln": "", "reported_cost_pln": ""})
+    assert resp.status_code == 302
+
+    # engine: revenue=10*8*4=320, cost=10*5*4=200, income=120 (nie 888 z override)
+    pit38 = client.get("/pit38?year=2024").get_data(as_text=True)
+    assert "888.00" not in pit38 and "888,00" not in pit38
+
+
+def test_sales_report_unknown_sale_id_redirects_safely(client):
+    resp = client.post("/sales/999/report", data={"reported_revenue_pln": "1"})
+    assert resp.status_code == 302
+
+
 def test_sales_delete_restores_qty_remaining_and_redirects(client, _fake_nbp_rate):
     client.post("/lots", data={
         "acquired_date": "2024-01-10", "lot_type": "own",

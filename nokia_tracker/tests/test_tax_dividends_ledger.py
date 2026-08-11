@@ -68,6 +68,54 @@ def test_add_dividend_idempotent_on_natural_key(conn):
     assert conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"] == 1
 
 
+# ---- krok 20: linkowanie do JUŻ ISTNIEJĄCEGO lotu (bez duplikatu) ----
+
+def test_add_dividend_with_reinvested_lot_id_links_existing_lot_not_new_one(conn):
+    from nokia_tracker.tax import lots as taxlots
+    existing_lot_id = taxlots.add_lot(
+        conn, "2023-02-20", "dividend_drip", 0.04, 4.48, source="holdings_snapshot")
+
+    dividend_id = taxdiv.add_dividend(
+        conn, record_date="2023-02-20", entitled_quantity=0.04,
+        gross_eur=0.14, taxes_eur=0.049, fees_eur=0.0,
+        reinvested_lot_id=existing_lot_id, natural_key="dividend_estimated:2023-02-20:0.04")
+
+    row = conn.execute("SELECT * FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    assert row["reinvested_lot_id"] == existing_lot_id
+    lots_count = conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"]
+    assert lots_count == 1  # nie utworzono drugiego lotu
+
+
+def test_add_dividend_reinvested_lot_id_takes_precedence_over_drip_args(conn):
+    # Gdyby ktoś podał ZARÓWNO reinvested_lot_id JAK I purchase_date/price/shares,
+    # linkowanie do istniejącego lotu wygrywa - żadnego nowego add_lot().
+    from nokia_tracker.tax import lots as taxlots
+    existing_lot_id = taxlots.add_lot(
+        conn, "2023-02-20", "dividend_drip", 0.04, 4.48, source="holdings_snapshot")
+
+    taxdiv.add_dividend(
+        conn, record_date="2023-02-20", entitled_quantity=0.04,
+        purchase_date="2023-02-20",
+        purchase_price_eur=999.0, purchased_shares=999.0,
+        gross_eur=0.14, taxes_eur=0.049, fees_eur=0.0,
+        reinvested_lot_id=existing_lot_id)
+
+    assert conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"] == 1
+    lot = conn.execute("SELECT * FROM lots WHERE id = ?", (existing_lot_id,)).fetchone()
+    assert lot["price_eur"] == pytest.approx(4.48)  # niezmieniony przez drip_args
+
+
+def test_add_dividend_stores_notes(conn):
+    # Krok 20: notatka (np. oznaczenie "SZACUNEK") musi się zapisać - kolumna
+    # `notes` istniała w schemacie od kroku 13, ale add_dividend() jej nie ustawiał.
+    dividend_id = taxdiv.add_dividend(
+        conn, record_date="2023-02-20", entitled_quantity=0.04,
+        gross_eur=0.14, taxes_eur=0.049, fees_eur=0.0,
+        notes="SZACUNEK: 35% u źródła założone")
+    row = conn.execute("SELECT notes FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    assert row["notes"] == "SZACUNEK: 35% u źródła założone"
+
+
 def test_add_dividend_pl_tax_due_left_null_for_krok14(conn):
     """Zaliczenie stawki traktatowej/Belki (pl_tax_due_pln) wymaga cfg (treaty/Belka) -
     to zakres kroku 14 (tax/dividends.py orkiestracja u źródła/zaliczenie/odzysk z Vero),

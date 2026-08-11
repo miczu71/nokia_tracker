@@ -377,7 +377,20 @@ def reconcile_holdings(conn: sqlite3.Connection, text: str, as_of_date: str | No
         "SELECT incoming_json FROM import_conflicts "
         "WHERE entity_type = 'withhold_to_cover_sale' AND resolved = 0").fetchall()
     for row in pending_sales:
-        actual -= json.loads(row["incoming_json"]).get("quantity", 0.0)
+        incoming = json.loads(row["incoming_json"])
+        qty = incoming.get("quantity", 0.0)
+        exec_date = incoming.get("execution_date")
+        # krok 20: jeśli ta sprzedaż JUŻ jest w `sales` (np. zaksięgowana ręcznie
+        # przez /lots/sell zanim istniał przycisk "Zatwierdź jako sprzedaż" — tak
+        # jak sprzedaż z 2025-10-27 w kroku 13.6), qty_remaining już ją odzwierciedla.
+        # Odjęcie tu drugi raz dawało fałszywy alarm salda (znalezione na realnych
+        # danych — patrz docs/PLAN_KROK_20_reported_override.md).
+        already_booked = conn.execute(
+            "SELECT 1 FROM sales WHERE sale_date = ? AND ABS(quantity - ?) < ?",
+            (exec_date, qty, _EPS)).fetchone()
+        if already_booked:
+            continue
+        actual -= qty
 
     if abs(actual - expected) <= 2.0:
         return False
@@ -542,14 +555,18 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
     if not dividend_transaction_rows:
         # Wyciąg bez sekcji "Dividend (Reinvested)" transakcyjnej (2022-2024) - jedyne
         # źródło reinwestowanej dywidendy to snapshot "Vested Dividend Shares". Tworzy
-        # tylko lot dividend_drip (koszt/FIFO), NIE wiersz w `dividends` (brakuje Gross/
-        # Taxes/Fees do sekcji G - patrz docstring parse_vested_dividend_shares).
+        # lot dividend_drip (koszt/FIFO) I (krok 20) wiersz w `dividends` dla sekcji G,
+        # z brutto/podatkiem u źródła ODTWORZONYMI przy założeniu stałego procentu
+        # (`finnish_withholding_pct`, źródło nie ma Gross/Taxes/Fees per wiersz) -
+        # wyraźnie oznaczonym w `notes` jako szacunek, nie zmierzona wartość.
+        withholding_pct_assumed = (cfg or {}).get("finnish_withholding_pct", 35.0)
         for row in parse_vested_dividend_shares(text):
             nk = f"vested_dividend:{row['vested_date']}:{row['cost_basis_eur']}:{row['quantity']}"
             existing = conn.execute(
                 "SELECT * FROM lots WHERE natural_key = ?", (nk,)).fetchone()
+            lot_id = None
             if existing is None:
-                taxlots.add_lot(
+                lot_id = taxlots.add_lot(
                     conn, row["vested_date"], "dividend_drip", row["quantity"],
                     row["cost_basis_eur"], source="holdings_snapshot", natural_key=nk,
                     notes="Ilość/cena z podsumowania Vested Dividend Shares (wyciąg bez "
@@ -557,9 +574,33 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
                 rows_inserted += 1
             elif (abs(existing["quantity"] - row["quantity"]) < _EPS
                   and abs(existing["price_eur"] - row["cost_basis_eur"]) < _EPS):
+                lot_id = existing["id"]
                 rows_unchanged += 1
             elif _record_conflict(conn, import_id, "lot", nk, dict(existing), row):
                 rows_conflict += 1
+
+            if lot_id is not None:
+                div_nk = (f"dividend_estimated:{row['vested_date']}:"
+                          f"{row['cost_basis_eur']}:{row['quantity']}")
+                existing_div = conn.execute(
+                    "SELECT id FROM dividends WHERE natural_key = ?", (div_nk,)).fetchone()
+                if existing_div is None:
+                    reinvested_eur = row["quantity"] * row["cost_basis_eur"]
+                    gross_eur = reinvested_eur / (1 - withholding_pct_assumed / 100)
+                    taxes_eur = gross_eur - reinvested_eur
+                    taxdiv.add_dividend(
+                        conn, record_date=row["vested_date"],
+                        entitled_quantity=row["quantity"], gross_eur=gross_eur,
+                        taxes_eur=taxes_eur, fees_eur=0.0, reinvested_lot_id=lot_id,
+                        natural_key=div_nk,
+                        notes=f"SZACUNEK: brutto/podatek u źródła odtworzone z "
+                              f"założenia {withholding_pct_assumed:.0f}% (finnish_"
+                              "withholding_pct) - źródło (Vested Dividend Shares) nie "
+                              "ma rozbicia Gross/Taxes/Fees, to nie zmierzona wartość "
+                              "z wyciągu.")
+                    rows_inserted += 1
+                else:
+                    rows_unchanged += 1
 
     vested_matching_dates = {row["vested_date"] for row in parse_vested_matching_shares(text)}
 
@@ -590,6 +631,29 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
     for row in type_b:
         # Prawdziwa sprzedaż gotówkowa — NIGDY nie księgowana automatycznie.
         nk = f"wtc:{row['execution_date']}:{row['quantity']}:{row['net_proceeds_eur']}"
+        # krok 20: jeśli ta konkretna sprzedaż JUŻ istnieje w `sales` (zaksięgowana
+        # ręcznie przez /lots/sell zanim istniał przycisk "Zatwierdź jako sprzedaż" —
+        # dokładnie tak stało się ze sprzedażą z 2025-10-27 w kroku 13.6), nie ma co
+        # potwierdzać — oznacz istniejący nierozstrzygnięty konflikt jako rozwiązany
+        # automatycznie, zamiast zostawiać go wiecznie w kolejce (i podwójnie
+        # odejmowanego przez reconcile_holdings).
+        already_booked = conn.execute(
+            "SELECT id FROM sales WHERE sale_date = ? AND ABS(quantity - ?) < ?",
+            (row["execution_date"], row["quantity"], _EPS)).fetchone()
+        if already_booked:
+            updated = conn.execute(
+                "UPDATE import_conflicts SET resolved = 1, resolution = ? "
+                "WHERE entity_type = 'withhold_to_cover_sale' AND natural_key = ? "
+                "AND resolved = 0",
+                (f"już zaksięgowana jako sale_id={already_booked['id']} "
+                 "(wykryto automatycznie przy imporcie)", nk)).rowcount
+            conn.commit()
+            if updated:
+                logger.info(
+                    "Withhold-to-Cover Typ B %s: konflikt oznaczony rozwiązany — "
+                    "sprzedaż już zaksięgowana jako sale_id=%s",
+                    row["execution_date"], already_booked["id"])
+            continue
         if _record_conflict(conn, import_id, "withhold_to_cover_sale", nk, {}, row):
             rows_conflict += 1
             logger.warning(

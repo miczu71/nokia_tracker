@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.5.2] - 2026-08-11
+
+Krok 20 (`docs/PLAN_KROK_20_reported_override.md`) — dokończenie kroku 19 po ponownym
+imporcie 5 wyciągów przez użytkownika: naprawiony fałszywy alarm salda, nowy mechanizm
+zgłoszonej wartości sprzedaży, odtworzona sekcja G dywidend 2022-2024.
+
+### Naprawiono
+- **Fałszywy alarm salda w kolejce konfliktów** — `reconcile_holdings()` (krok 19)
+  odejmowała ilość z nierozstrzygniętego konfliktu Withhold-to-Cover Typu B nawet
+  gdy ta sprzedaż była już zaksięgowana wcześniej ręcznie (np. przez `/lots/sell`,
+  zanim istniał przycisk „Zatwierdź jako sprzedaż") — podwójne odjęcie tej samej
+  ilości. `import_statement()` teraz automatycznie oznacza taki konflikt jako
+  rozwiązany, gdy wykryje pasującą, już istniejącą sprzedaż.
+
+### Dodano
+- **Zgłoszona wartość sprzedaży** (`sales.reported_revenue_pln`/`reported_cost_pln`,
+  formularz na `/sales`) — dla sprzedaży, gdzie faktycznie zgłoszona/zapłacona kwota
+  różni się od tego, co wyliczyłby silnik z realnych lotów (np. deklaracja już
+  złożona wg błędnej sumy z ręcznego arkusza i świadomie NIE jest korygowana).
+  Nadpisuje TYLKO agregaty PIT-38 — realny ślad FIFO (`sale_allocations`/`lots`)
+  zostaje niezmieniony i nadal widoczny, z wyraźną adnotacją różnicy między
+  wyliczeniem silnika a wartością zgłoszoną.
+- **Sekcja G dla lat 2022-2024** — dywidendy reinwestowane z tych lat (wyciągi bez
+  sekcji „Dividend (Reinvested)" transakcyjnej, uzupełnione w kroku 19 tylko jako
+  loty) dostają teraz też wiersz w rejestrze dywidend, z brutto/podatkiem u źródła
+  odtworzonym przy założeniu 35% (jak realnie zmierzone w 2025) — wyraźnie oznaczone
+  badge'em „szacunek" na `/dywidendy` i „zawiera szacunki" w sekcji G na `/pit38`,
+  nie mieszane bez odróżnienia ze zmierzonymi wartościami.
+
+### Techniczne
+- `tax/dividends.py::add_dividend()`: nowy `reinvested_lot_id` (linkuje do już
+  istniejącego lotu zamiast tworzyć duplikat) i `notes` (nigdy wcześniej nie
+  zapisywane, mimo że kolumna istniała od kroku 13).
+- 18 nowych testów, TDD. Migracja bazy v4 (`sales.reported_revenue_pln`/
+  `reported_cost_pln`).
+
 ## [0.5.1] - 2026-08-11
 
 Poprawki silnika FIFO/importera znalezione podczas diagnozy rozbieżności podatku

@@ -27,7 +27,9 @@ def add_dividend(conn: sqlite3.Connection, record_date: str, entitled_quantity: 
                  purchase_price_eur: float | None = None,
                  purchased_shares: float | None = None, currency: str = "EUR",
                  gross_per_share_eur: float | None = None,
-                 natural_key: str | None = None) -> int:
+                 natural_key: str | None = None,
+                 reinvested_lot_id: int | None = None,
+                 notes: str | None = None) -> int:
     """Zapisuje dywidendę (rejestr, krok 13) i OPCJONALNIE tworzy JEDNOCZEŚNIE lot
     `dividend_drip` (DRIP nie ma odroczonego vestingu jak ESPP match/LTI — reinwestycja
     wykonuje się natychmiast, więc lot powstaje od razu, nie przez scheduler kroku 14).
@@ -48,7 +50,16 @@ def add_dividend(conn: sqlite3.Connection, record_date: str, entitled_quantity: 
     `pl_tax_due_pln` (zaliczenie stawki traktatowej + Belka) celowo zostaje `NULL` —
     wymaga ustawień treaty/Belka z configu, to zakres orkiestracji kroku 14
     (`tax/dividends.py`: u źródła/zaliczenie/odzysk z Vero), nie samego zapisu do rejestru.
-    """
+
+    `reinvested_lot_id` (krok 20): gdy podany, dywidenda linkuje się do JUŻ
+    ISTNIEJĄCEGO lotu `dividend_drip` zamiast tworzyć nowy — dla przypadku, gdy
+    lot już powstał gdzie indziej (np. `parse_vested_dividend_shares` w
+    `importers/computershare_pdf.py`, bo źródło dla lat bez sekcji transakcyjnej
+    ma tylko dane do lotu, nie do pełnego rekordu dywidendy — sekcja G dopisuje
+    się tu OSOBNO, przy odtworzeniu szacunkowego brutto/podatku). Ma pierwszeństwo
+    przed `purchase_date`/`purchase_price_eur`/`purchased_shares` — gdyby ktoś
+    podał oba, żadnego nowego `add_lot()` się nie wywołuje (uniknięcie
+    zdublowania akcji)."""
     if natural_key is None:
         natural_key = f"dividend:{record_date}:{purchase_date}:{entitled_quantity}"
     existing = conn.execute(
@@ -67,20 +78,23 @@ def add_dividend(conn: sqlite3.Connection, record_date: str, entitled_quantity: 
     cur = conn.execute(
         "INSERT INTO dividends (pay_date, quantity, gross_per_share_eur, gross_eur, "
         "withholding_pct, withholding_paid_eur, net_received_eur, nbp_rate, nbp_rate_date, "
-        "gross_pln, currency, natural_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        "gross_pln, currency, natural_key, notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (record_date, entitled_quantity, gross_per_share_eur, gross_eur, withholding_pct,
          withholding_paid_eur, net_received_eur, nbp_rate, nbp_rate_date, gross_pln,
-         currency, natural_key))
+         currency, natural_key, notes))
     dividend_id = cur.lastrowid
     conn.commit()
 
-    has_drip = purchase_date is not None and purchase_price_eur is not None \
-        and purchased_shares is not None
-    if has_drip:
-        drip_natural_key = f"drip:{record_date}:{purchase_date}:{entitled_quantity}"
-        lot_id = taxlots.add_lot(
-            conn, purchase_date, "dividend_drip", purchased_shares, purchase_price_eur,
-            natural_key=drip_natural_key)
+    lot_id = reinvested_lot_id
+    if lot_id is None:
+        has_drip = purchase_date is not None and purchase_price_eur is not None \
+            and purchased_shares is not None
+        if has_drip:
+            drip_natural_key = f"drip:{record_date}:{purchase_date}:{entitled_quantity}"
+            lot_id = taxlots.add_lot(
+                conn, purchase_date, "dividend_drip", purchased_shares, purchase_price_eur,
+                natural_key=drip_natural_key)
+    if lot_id is not None:
         conn.execute(
             "UPDATE dividends SET reinvested_lot_id = ? WHERE id = ?", (lot_id, dividend_id))
         conn.commit()

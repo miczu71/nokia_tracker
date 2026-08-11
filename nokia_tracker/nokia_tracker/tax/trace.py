@@ -104,7 +104,7 @@ def fx_derivation(conn: sqlite3.Connection, event_date: str, nbp_rate: float | N
 
 
 def enrich_allocations(conn: sqlite3.Connection, allocations: list[dict], sale_ctx: dict,
-                       cfg: dict) -> dict:
+                       cfg: dict, reported: dict | None = None) -> dict:
     """Dokłada do każdej alokacji FIFO (z `tax/lots.py::_plan_fifo` — symulacja —
     albo wprost z `sale_allocations` — sprzedaż zrealizowana) komplet szczegółów:
     dane lotu, wyprowadzenie obu kursów NBP (nabycie i sprzedaż), kwoty w EUR
@@ -127,7 +127,17 @@ def enrich_allocations(conn: sqlite3.Connection, allocations: list[dict], sale_c
     alokacji — pozwala to samo API użyć dla jednej sprzedaży albo dla symulacji),
     `net_pln`/`net_eur` („ile finalnie dostaję" wg aktywnej polityki — `net_eur`
     jest PREZENTACYJNE: podatek płaci się w PLN, przeliczenie na EUR służy tylko
-    porównaniu z wpływem na rachunek maklerski)."""
+    porównaniu z wpływem na rachunek maklerski).
+
+    `reported` (krok 20, opcjonalny): `{"reported_revenue_pln": ..., "reported_cost_pln": ...}`
+    z `sales.reported_revenue_pln`/`reported_cost_pln`, gdy różnią się od tego, co
+    wyliczyłby silnik z realnych lotów (np. deklaracja już złożona wg błędnej sumy z
+    arkusza użytkownika i świadomie NIE jest korygowana — patrz
+    docs/PLAN_KROK_20_reported_override.md). Nadpisuje TYLKO totale
+    (`revenue_pln`/`policies[*]["cost_pln"]`) — `allocations` (ślad per lot) zostaje
+    dokładnie tym, co realnie się stało z lotami, niezależnie od tego pola. Oryginalne
+    wyliczenia silnika zostają dostępne jako `revenue_pln_engine`/
+    `policies[*]["cost_pln_engine"]` do porównania w UI."""
     sale_quantity = sale_ctx.get("quantity") or sum(a["quantity"] for a in allocations)
     price_eur = sale_ctx["price_eur"]
     fee_eur = sale_ctx.get("fee_eur", 0.0)
@@ -184,18 +194,26 @@ def enrich_allocations(conn: sqlite3.Connection, allocations: list[dict], sale_c
         })
 
     revenue_eur_total = sum(d["revenue_eur"] for d in detailed)
-    revenue_pln_total = sum(d["revenue_pln"] for d in detailed)
+    revenue_pln_total_engine = sum(d["revenue_pln"] for d in detailed)
     tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
+
+    reported_revenue_pln = (reported or {}).get("reported_revenue_pln")
+    reported_cost_pln = (reported or {}).get("reported_cost_pln")
+    is_reported_override = reported_revenue_pln is not None or reported_cost_pln is not None
+    revenue_pln_total = (
+        reported_revenue_pln if reported_revenue_pln is not None else revenue_pln_total_engine)
 
     policies_out: dict[str, dict] = {}
     for name, allowed in taxpolicy.POLICIES.items():
-        cost_pln = sum(d["cost_pln"] for d in detailed if name in d["counted_in"])
+        cost_pln_engine = sum(d["cost_pln"] for d in detailed if name in d["counted_in"])
         cost_eur = sum((d["cost_eur"] or 0.0) for d in detailed if name in d["counted_in"])
+        cost_pln = reported_cost_pln if reported_cost_pln is not None else cost_pln_engine
         income_pln = revenue_pln_total - cost_pln
         tax_pln = round(max(0.0, income_pln * tax_rate), 2)
         policies_out[name] = {
             "cost_eur": round(cost_eur, 2),
             "cost_pln": round(cost_pln, 2),
+            "cost_pln_engine": round(cost_pln_engine, 2),
             "income_pln": round(income_pln, 2),
             "tax_pln": tax_pln,
             "legal_basis_pl": taxpolicy.LEGAL_BASIS_PL[name],
@@ -215,6 +233,8 @@ def enrich_allocations(conn: sqlite3.Connection, allocations: list[dict], sale_c
         "sale_fx": sale_fx,
         "revenue_eur": round(revenue_eur_total, 2),
         "revenue_pln": round(revenue_pln_total, 2),
+        "revenue_pln_engine": round(revenue_pln_total_engine, 2),
+        "is_reported_override": is_reported_override,
         "policies": policies_out,
         "active_policy": active_policy,
         "net_pln": net_pln,

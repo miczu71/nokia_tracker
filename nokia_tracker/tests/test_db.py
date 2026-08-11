@@ -22,7 +22,7 @@ def test_migrate_creates_all_tables(conn):
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 3  # v3: krok 16 - nbp_rates.table_no, dividends.currency
+    assert version == 4  # v4: krok 20 - sales.reported_revenue_pln/reported_cost_pln
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):
@@ -70,6 +70,14 @@ def test_dividends_has_currency_column_defaulting_to_eur(conn):
     conn.commit()
     row = conn.execute("SELECT currency FROM dividends WHERE pay_date = '2026-01-01'").fetchone()
     assert row["currency"] == "EUR"
+
+
+def test_sales_has_reported_columns(conn):
+    # Krok 20 (migracja v4): zgłoszona wartość sprzedaży (np. z ręcznego arkusza
+    # użytkownika), nadpisuje agregaty PIT-38 bez fałszowania sale_allocations/lots.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(sales)").fetchall()}
+    assert "reported_revenue_pln" in cols
+    assert "reported_cost_pln" in cols
 
 
 def test_lots_natural_key_unique(conn):

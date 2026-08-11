@@ -69,6 +69,26 @@ def test_annual_report_section_g_sums_dividends_in_pln(conn):
     assert g["reclaimable_from_finland_pln"] == pytest.approx((20.0 + 10.0) * 4.0)
 
 
+def test_annual_report_section_g_has_estimated_false_for_measured_dividends(conn):
+    _add_dividend(conn, "2024-03-15", gross_eur=100.0, taxes_eur=35.0)
+    report = pit38.annual_report(conn, _base_cfg(), year=2024)
+    assert report["section_g"]["has_estimated"] is False
+
+
+def test_annual_report_section_g_has_estimated_true_when_any_dividend_estimated(conn):
+    # krok 20: sekcja G odtworzona z założenia 35% (Vested Dividend Shares,
+    # lata bez sekcji transakcyjnej) musi być widocznie oznaczona jako szacunek.
+    _add_dividend(conn, "2024-03-15", gross_eur=100.0, taxes_eur=35.0)
+    taxdiv.add_dividend(
+        conn, record_date="2024-06-01", entitled_quantity=0.04,
+        gross_eur=0.14, taxes_eur=0.049, fees_eur=0.0,
+        natural_key="dividend_estimated:2024-06-01:0.04",
+        notes="SZACUNEK: brutto/podatek u źródła odtworzone z założenia 35%")
+
+    report = pit38.annual_report(conn, _base_cfg(), year=2024)
+    assert report["section_g"]["has_estimated"] is True
+
+
 def test_annual_report_section_g_filters_by_year(conn):
     _add_dividend(conn, "2023-03-15", gross_eur=100.0, taxes_eur=35.0)
     _add_dividend(conn, "2024-03-15", gross_eur=50.0, taxes_eur=17.5)

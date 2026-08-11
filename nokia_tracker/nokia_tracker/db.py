@@ -222,6 +222,14 @@ _MIGRATIONS = [
     ALTER TABLE nbp_rates ADD COLUMN table_no TEXT;
     ALTER TABLE dividends ADD COLUMN currency TEXT NOT NULL DEFAULT 'EUR';
     """,
+    # v4 — krok 20: zgłoszona wartość sprzedaży (docs/PLAN_KROK_20_reported_override.md).
+    # Gdy różni się od wyliczenia silnika z realnych lotów (np. arkusz użytkownika miał
+    # błąd, ale deklaracja już złożona i nie jest korygowana), nadpisuje agregaty
+    # PIT-38 — `sale_allocations`/`lots` zostają realnym, niezmienionym śladem FIFO.
+    """
+    ALTER TABLE sales ADD COLUMN reported_revenue_pln REAL;
+    ALTER TABLE sales ADD COLUMN reported_cost_pln REAL;
+    """,
 ]
 
 

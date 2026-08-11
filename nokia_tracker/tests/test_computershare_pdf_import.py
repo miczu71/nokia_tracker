@@ -284,6 +284,48 @@ def test_reimporting_vested_dividend_shares_fallback_is_idempotent(conn, monkeyp
     assert report2["rows_unchanged"] >= 1
 
 
+def test_import_statement_creates_estimated_dividend_row_for_vested_dividend_fallback(
+        conn, monkeypatch):
+    # krok 20: sekcja G 2022-2024 - "Vested Dividend Shares" nie ma Gross/Taxes/Fees,
+    # więc odtwarzamy je zakładając 35% u źródła (jak w latach z pełnymi danymi).
+    text = _HEADER + _VESTED_DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf", cfg={"finnish_withholding_pct": 35.0})
+
+    lot = conn.execute("SELECT * FROM lots WHERE lot_type = 'dividend_drip'").fetchone()
+    div = conn.execute("SELECT * FROM dividends").fetchone()
+    assert div is not None
+    assert div["reinvested_lot_id"] == lot["id"]
+    reinvested_eur = 0.04 * 4.48  # quantity * cost_basis_eur
+    expected_gross = reinvested_eur / (1 - 0.35)
+    assert div["gross_eur"] == pytest.approx(expected_gross)
+    assert div["withholding_pct"] == pytest.approx(35.0)
+    assert div["notes"] is not None
+    assert "SZACUNEK" in div["notes"]
+    # nie zdublowany lot
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'dividend_drip'").fetchone()["c"] == 1
+
+
+def test_reimporting_estimated_dividend_row_is_idempotent(conn, monkeypatch):
+    text = _HEADER + _VESTED_DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    count_after_first = conn.execute("SELECT COUNT(*) c FROM dividends").fetchone()["c"]
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+    count_after_second = conn.execute("SELECT COUNT(*) c FROM dividends").fetchone()["c"]
+
+    assert count_after_first == 1
+    assert count_after_second == 1
+
+
 def test_import_statement_skips_vested_dividend_fallback_when_transactions_section_present(
         conn, monkeypatch):
     # _FULL_TEXT ma _DIVIDEND_LINE (sekcja Dividend (Reinvested) obecna, jak w wyciągu 2025) -
@@ -301,6 +343,59 @@ def test_import_statement_skips_vested_dividend_fallback_when_transactions_secti
 
 
 # ---- krok 19: kontrola krzyżowa salda (BLUEPRINT §3a) ----
+
+def test_import_statement_auto_resolves_type_b_conflict_when_sale_already_booked(
+        conn, monkeypatch):
+    # krok 20: sprzedaż z 2025-10-27 zaksięgowana ręcznie w kroku 13.6, zanim przycisk
+    # "Zatwierdź jako sprzedaż" istniał — konflikt Typu B z PIERWSZEGO importu (przed tą
+    # poprawką) wisiał nierozstrzygnięty wiecznie. Symulujemy dokładnie ten stan
+    # produkcyjny: stary nierozstrzygnięty konflikt już w bazie + sprzedaż już
+    # zaksięgowana → PONOWNY import musi go oznaczyć rozwiązanym.
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    from nokia_tracker.tax import lots as taxlots
+    import json as _json
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 1000.0, 1.0)
+    taxlots.record_sale(conn, "2025-10-27", 784.0, 5.31, fee_eur=8.32)
+
+    cur = conn.execute(
+        "INSERT INTO imports (filename, file_sha256, period_start, period_end, as_of_date) "
+        "VALUES ('old.pdf','xyz','2025-01-01','2026-01-01','2025-12-31')")
+    old_import_id = cur.lastrowid
+    incoming = {"execution_date": "2025-10-27", "quantity": 784.0,
+                "sale_price_eur": 5.31, "net_proceeds_eur": 4153.15}
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json) VALUES (?, 'withhold_to_cover_sale', "
+        "'wtc:2025-10-27:784.0:4153.15', '{}', ?)",
+        (old_import_id, _json.dumps(incoming)))
+    conn.commit()
+
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _FULL_TEXT)
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    conflict = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'withhold_to_cover_sale'"
+    ).fetchone()
+    assert conflict is not None
+    assert conflict["resolved"] == 1
+    assert "już zaksięgowana" in conflict["resolution"]
+
+
+def test_import_statement_type_b_still_flagged_when_sale_not_yet_booked(conn, _fake_pdf):
+    # Regresja: gdy sprzedaż NIE jest jeszcze zaksięgowana, konflikt musi nadal
+    # trafić do kolejki jako nierozstrzygnięty (zachowanie sprzed kroku 20).
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    conflict = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'withhold_to_cover_sale'"
+    ).fetchone()
+    assert conflict is not None
+    assert conflict["resolved"] == 0
+
 
 def test_import_statement_no_conflict_when_balance_matches(conn, monkeypatch):
     # own (19.21982) + dividend_drip (0.19028) = 19.41010, zgodne z "Shares" w PDF.
@@ -332,6 +427,43 @@ def test_import_statement_flags_balance_mismatch(conn, monkeypatch):
     assert conflict["resolved"] == 0
     incoming = __import__("json").loads(conflict["incoming_json"])
     assert incoming["shares_total_from_pdf"] == 50.0
+
+
+def test_reconcile_holdings_does_not_double_subtract_an_already_booked_sale(
+        conn, monkeypatch):
+    # krok 20: nawet gdyby konflikt Typu B jakimś trybem zostałby nierozstrzygnięty
+    # mimo że sprzedaż już istnieje w `sales`, reconcile_holdings nie może odjąć jej
+    # ilości drugi raz (qty_remaining już ją odzwierciedla).
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    from nokia_tracker.tax import lots as taxlots
+    import json as _json
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 19.41010, 1.0)
+    taxlots.record_sale(conn, "2025-10-27", 15.0, 5.31, fee_eur=8.32)
+    # qty_remaining po sprzedaży = 19.41010 - 15 = 4.41010
+
+    cur = conn.execute(
+        "INSERT INTO imports (filename, file_sha256, period_start, period_end, as_of_date) "
+        "VALUES ('x.pdf','abc','2025-01-01','2026-01-01','2026-01-01')")
+    import_id = cur.lastrowid
+    incoming = {"execution_date": "2025-10-27", "quantity": 15.0}
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json) VALUES (?, 'withhold_to_cover_sale', 'wtc:x', '{}', ?)",
+        (import_id, _json.dumps(incoming)))
+    conn.commit()
+
+    text = (
+        " 4.41010                                                           1.0\n"
+        " Shares                                      1.00 PLN            Share  inSuccess  Plan 2019-2026             1.00 PLN\n"
+    )
+    cp.reconcile_holdings(conn, text, "2026-01-01", import_id)
+
+    balance_conflicts = conn.execute(
+        "SELECT COUNT(*) c FROM import_conflicts WHERE entity_type = 'balance'").fetchone()["c"]
+    assert balance_conflicts == 0  # 4.41010 == 4.41010, bez podwójnego odjęcia 15
 
 
 def test_import_statement_balance_check_skipped_when_importing_an_older_backfill(

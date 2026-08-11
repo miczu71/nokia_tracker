@@ -60,7 +60,9 @@
         <tr class="row-toggle" data-target="sale-{{ item.sale.id }}" tabindex="0" role="button"
             aria-expanded="false" aria-controls="sale-{{ item.sale.id }}">
           <td><span class="chevron">▸</span></td>
-          <td class="nowrap">{{ item.sale.sale_date }}</td>
+          <td class="nowrap">{{ item.sale.sale_date }}
+            {% if item.detail.is_reported_override %}<span class="badge" title="Kwoty poniżej to wartość zgłoszona, nie wyliczenie silnika">zgłoszono</span>{% endif %}
+          </td>
           <td class="num">{{ '%.4f'|format(item.sale.quantity) }}</td>
           <td class="num">{{ '%.2f'|format(item.detail.revenue_pln) }}</td>
           <td class="num">{{ '%.2f'|format(active_data.cost_pln) }}</td>
@@ -80,6 +82,34 @@
             <div class="row-detail-inner">
               {% set detail = item.detail %}
               {% include "_alloc_detail.html" %}
+
+              <details class="no-print">
+                <summary class="muted">Zgłoszona wartość (jeśli różni się od wyliczenia silnika)</summary>
+                <form class="form" method="post"
+                      action="{{ url_for('sales_report', sale_id=item.sale.id) }}">
+                  <div class="row3">
+                    <label>Przychód PLN
+                      <input type="number" step="0.01" name="reported_revenue_pln"
+                             value="{{ item.sale.reported_revenue_pln if item.sale.reported_revenue_pln is not none else '' }}">
+                    </label>
+                    <label>Koszt PLN
+                      <input type="number" step="0.01" name="reported_cost_pln"
+                             value="{{ item.sale.reported_cost_pln if item.sale.reported_cost_pln is not none else '' }}">
+                    </label>
+                    <label>Notatka
+                      <input type="text" name="reported_note" value="{{ item.sale.notes or '' }}">
+                    </label>
+                  </div>
+                  <p class="muted">
+                    Zostaw puste, żeby wrócić do wyliczenia silnika. Nie zmienia
+                    realnego śladu FIFO powyżej — nadpisuje tylko sumę użytą w
+                    agregatach PIT-38 dla tej sprzedaży.
+                  </p>
+                  <div class="form-actions">
+                    <button class="btn small" type="submit">Zapisz zgłoszoną wartość</button>
+                  </div>
+                </form>
+              </details>
             </div>
           </td>
         </tr>

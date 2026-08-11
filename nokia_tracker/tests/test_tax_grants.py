@@ -331,3 +331,231 @@ def test_valuation_returns_none_values_when_current_price_missing(conn, monkeypa
     v = result[vest_id]
     assert v["open_value_eur"] is None
     assert v["open_value_pln"] is None
+
+
+# ---- available_from (krok 21, docs/PLAN_KROK_21_portfel_calkowity.md) ----
+# Harmonogram Computershare ma trzy daty: Allocation / Vesting / Available from. Akcje
+# realnie wpływają na konto w Available from, nie Vesting - importer to już parsuje,
+# ale dotąd nigdzie nie zapisywał. Bez tego "zaległe" liczyłoby się ~4 tygodnie za wcześnie
+# (patrz sekcja audytu w planie).
+
+def test_add_vest_stores_available_from(conn):
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    vest_id = grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+    row = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert row["available_from"] == "2026-08-27"
+
+
+def test_add_vest_available_from_defaults_to_none(conn):
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2026-08-01", 29.24, "espp_vest:x")
+    row = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert row["available_from"] is None
+
+
+def test_backfill_available_from_sets_null_column(conn):
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2026-08-01", 29.24, "espp_vest:x")
+    grants.backfill_available_from(conn, vest_id, "2026-08-27")
+    row = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert row["available_from"] == "2026-08-27"
+
+
+def test_backfill_available_from_does_not_overwrite_existing_value(conn):
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    vest_id = grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+    grants.backfill_available_from(conn, vest_id, "1999-01-01")  # nie powinno nadpisać
+    row = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert row["available_from"] == "2026-08-27"
+
+
+def test_list_espp_overdue_uses_available_from_not_vest_date(conn):
+    # Zaimportowany 21 Oct 2024 -> vest_date 2025-08-01, ale available_from 2025-08-28.
+    # Na 2026-07-28 to już dawno po obu, więc overdue=True niezależnie - test rozstrzygający
+    # jest poniższy (data między vest_date a available_from).
+    grant_id = grants.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2025-08-01", 24.42, "espp_vest:x", available_from="2025-08-28")
+    rows = grants.list_espp(conn, today="2026-07-28")
+    assert rows[0]["overdue"] is True
+
+
+def test_list_espp_not_overdue_when_today_between_vest_date_and_available_from(conn):
+    # Realny przypadek z audytu: zakup 27 Apr 2026 -> vest_date 2026-08-01,
+    # available_from 2026-08-01 (te same). Inny realny wiersz: zakup 27 Oct 2025 ->
+    # vest_date 2026-08-01, available_from 2026-08-27 - "dziś" 2026-08-05 jest PO
+    # vest_date, ale PRZED available_from -> nie powinno być jeszcze oznaczone zaległe.
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+    rows = grants.list_espp(conn, today="2026-08-05")
+    assert rows[0]["overdue"] is False
+
+
+def test_list_espp_overdue_falls_back_to_vest_date_when_available_from_null(conn):
+    # Historyczne wiersze przed krokiem 21 mają available_from=NULL (kolumna dodana,
+    # ale wyciąg jeszcze nie wgrany ponownie) - overdue musi nadal działać po staremu.
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    rows = grants.list_espp(conn, today="2026-07-28")
+    assert rows[0]["overdue"] is True
+
+
+def test_list_lti_grouped_overdue_uses_available_from(conn):
+    grant_id = grants.add_grant(conn, "lti", "2023-07-06", None, "lti_grant:g1")
+    grants.add_vest(
+        conn, grant_id, "2026-07-06", 2100.0, "lti_vest:g1", available_from="2026-07-09")
+    result = grants.list_lti_grouped(conn, today="2026-07-08")
+    assert result[0]["vests"][0]["overdue"] is False  # po vest_date, przed available_from
+
+
+# ---- unvested_summary (krok 21) ----
+
+def test_unvested_summary_empty_db_returns_zeros(conn):
+    s = grants.unvested_summary(conn, today="2026-07-28")
+    assert s["pending_qty"] == 0
+    assert s["upcoming_qty"] == 0
+    assert s["overdue_qty"] == 0
+    assert s["next_vest_date"] is None
+    assert s["overdue_items"] == []
+
+
+def test_unvested_summary_splits_upcoming_and_overdue_by_available_from(conn):
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:future")
+    grants.add_vest(
+        conn, grant_id, "2027-07-05", 633.0, "lti_vest:future", available_from="2027-07-05")
+    grant_id2 = grants.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:overdue")
+    grants.add_vest(
+        conn, grant_id2, "2025-08-01", 24.42, "espp_vest:overdue", available_from="2025-08-28")
+
+    s = grants.unvested_summary(conn, today="2026-07-28")
+
+    assert s["pending_qty"] == pytest.approx(657.42)
+    assert s["upcoming_qty"] == pytest.approx(633.0)
+    assert s["overdue_qty"] == pytest.approx(24.42)
+    assert len(s["overdue_items"]) == 1
+    assert s["overdue_items"][0]["quantity"] == pytest.approx(24.42)
+
+
+def test_unvested_summary_next_vest_date_is_earliest_upcoming_available_from(conn):
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g")
+    grants.add_vest(
+        conn, grant_id, "2027-07-05", 633.0, "lti_vest:a", available_from="2027-07-05")
+    grants.add_vest(
+        conn, grant_id, "2026-08-27", 29.24, "lti_vest:b", available_from="2026-08-27")
+
+    s = grants.unvested_summary(conn, today="2026-07-28")
+
+    assert s["next_vest_date"] == "2026-08-27"
+    assert s["next_vest_qty"] == pytest.approx(29.24)
+
+
+def test_unvested_summary_values_none_without_price(conn):
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g")
+    grants.add_vest(
+        conn, grant_id, "2027-07-05", 633.0, "lti_vest:a", available_from="2027-07-05")
+    s = grants.unvested_summary(conn, price_eur=None, eurpln_rate=None, today="2026-07-28")
+    assert s["upcoming_value_eur"] is None
+    assert s["upcoming_value_pln"] is None
+
+
+def test_unvested_summary_values_computed_with_price_and_fx(conn):
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g")
+    grants.add_vest(
+        conn, grant_id, "2027-07-05", 633.0, "lti_vest:a", available_from="2027-07-05")
+    s = grants.unvested_summary(conn, price_eur=8.0, eurpln_rate=4.3, today="2026-07-28")
+    assert s["upcoming_value_eur"] == pytest.approx(633.0 * 8.0)
+    assert s["upcoming_value_pln"] == pytest.approx(633.0 * 8.0 * 4.3)
+
+
+def test_unvested_summary_ignores_vested_and_cancelled_status(conn):
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2023-08-01", 7.33, "espp_vest:x", status="vested",
+        available_from="2023-08-30")
+    s = grants.unvested_summary(conn, today="2026-07-28")
+    assert s["pending_qty"] == 0
+
+
+# ---- restricted_own_summary (krok 21) ----
+# Reguła: lot 'own' jest ograniczony dokładnie wtedy, gdy istnieje transza 'pending'
+# z grants.grant_date == lots.acquired_date (Allocation Date z wyciągu). Wyprowadzone
+# z danych, nie z nowego parsowania sekcji "Available with restrictions" - patrz plan.
+
+def test_restricted_own_summary_flags_own_lot_with_matching_pending_grant(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    taxlots.add_lot(conn, "2025-10-27", "own", 58.49, 5.41, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+
+    s = grants.restricted_own_summary(conn, today="2026-07-28")
+
+    assert s["restricted_qty"] == pytest.approx(58.49)
+    assert s["free_until"] == "2026-08-27"
+
+
+def test_restricted_own_summary_lot_becomes_free_once_grant_vested(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    taxlots.add_lot(conn, "2022-10-26", "own", 14.6575, 4.37, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2023-08-01", 7.33, "espp_vest:x", status="vested",
+        available_from="2023-08-30")
+
+    s = grants.restricted_own_summary(conn, today="2026-07-28")
+
+    assert s["restricted_qty"] == 0
+
+
+def test_restricted_own_summary_lot_without_matching_grant_is_free(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    taxlots.add_lot(conn, "2020-01-01", "own", 10.0, 3.0, source="pdf_import")
+
+    s = grants.restricted_own_summary(conn, today="2026-07-28")
+
+    assert s["restricted_qty"] == 0
+
+
+def test_restricted_own_summary_ignores_non_own_lot_types(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    taxlots.add_lot(conn, "2025-10-27", "matched", 58.49, 0.0, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+
+    s = grants.restricted_own_summary(conn, today="2026-07-28")
+
+    assert s["restricted_qty"] == 0
+
+
+def test_restricted_own_summary_values_computed_with_price_and_fx(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    taxlots.add_lot(conn, "2025-10-27", "own", 58.49, 5.41, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+
+    s = grants.restricted_own_summary(conn, price_eur=8.0, eurpln_rate=4.3, today="2026-07-28")
+
+    assert s["restricted_value_eur"] == pytest.approx(58.49 * 8.0)
+    assert s["restricted_value_pln"] == pytest.approx(58.49 * 8.0 * 4.3)
+
+
+def test_restricted_own_summary_empty_db_returns_zeros(conn):
+    s = grants.restricted_own_summary(conn, today="2026-07-28")
+    assert s["restricted_qty"] == 0
+    assert s["free_until"] is None
+    assert s["items"] == []

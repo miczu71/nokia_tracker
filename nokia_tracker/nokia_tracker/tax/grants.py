@@ -9,6 +9,8 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta
 
+from . import lots as taxlots
+
 
 def add_grant(conn: sqlite3.Connection, program: str, grant_date: str, quantity: float,
               natural_key: str, declared_amount_eur: float | None = None,
@@ -28,19 +30,39 @@ def add_grant(conn: sqlite3.Connection, program: str, grant_date: str, quantity:
 
 
 def add_vest(conn: sqlite3.Connection, grant_id: int, vest_date: str, quantity: float,
-             natural_key: str, status: str = "pending") -> int:
+             natural_key: str, status: str = "pending",
+             available_from: str | None = None) -> int:
     """Wstawia transzę vestingu; idempotentne po `natural_key`. Jeden grant (zwłaszcza LTI)
-    może mieć wiele transz — każda z własnym `natural_key`."""
+    może mieć wiele transz — każda z własnym `natural_key`.
+
+    `available_from` (krok 21, docs/PLAN_KROK_21_portfel_calkowity.md): data realnego
+    wpłynięcia akcji na konto z wyciągu Computershare — odrębna od `vest_date` (data
+    NABYCIA, nie DOSTĘPNOŚCI; w praktyce ESPP ma ~4-tygodniową różnicę). `None` gdy
+    nieznana (historyczne wiersze sprzed tego kroku) — patrz `backfill_available_from`."""
     existing = conn.execute(
         "SELECT id FROM vests WHERE natural_key = ?", (natural_key,)).fetchone()
     if existing:
         return existing["id"]
     cur = conn.execute(
-        "INSERT INTO vests (grant_id, vest_date, quantity, status, natural_key) "
-        "VALUES (?,?,?,?,?)",
-        (grant_id, vest_date, quantity, status, natural_key))
+        "INSERT INTO vests (grant_id, vest_date, quantity, status, natural_key, "
+        "available_from) VALUES (?,?,?,?,?,?)",
+        (grant_id, vest_date, quantity, status, natural_key, available_from))
     conn.commit()
     return cur.lastrowid
+
+
+def backfill_available_from(conn: sqlite3.Connection, vest_id: int,
+                            available_from: str) -> None:
+    """Uzupełnia `available_from` na transzy, która już istnieje w bazie (dodanej przed
+    krokiem 21, więc kolumna jest NULL) — `add_vest` przy istniejącym `natural_key`
+    zwraca wcześnie i NIC nie aktualizuje, więc bez tego wywołania kolumna zostałaby
+    pusta na zawsze. Nie nadpisuje wartości już ustawionej (`WHERE available_from IS
+    NULL`) — raz zapisana data z wyciągu jest ostateczna, kolejny import tego samego
+    wiersza nie powinien jej ruszać."""
+    conn.execute(
+        "UPDATE vests SET available_from = ? WHERE id = ? AND available_from IS NULL",
+        (available_from, vest_id))
+    conn.commit()
 
 
 def find_grant_by_natural_key(conn: sqlite3.Connection, natural_key: str) -> dict | None:
@@ -89,23 +111,28 @@ def mark_reminder_sent(conn: sqlite3.Connection, vest_id: int) -> None:
 def list_espp(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
     """ESPP: jeden grant = jedna transza (import_statement zawsze wstawia oba 1:1).
 
-    `overdue` (krok 13.6, docs/PLAN_KROK_13_6_vesting_gap.md): sygnał czysto DATOWY,
-    `status == 'pending' and vest_date < today` — NIE zgadujemy, czy transza faktycznie
-    zvestowała (wymagałoby kruchego dopasowania ilości do "Vested Matching Shares"/
-    Withhold-to-Cover Typu A, patrz plan) — tylko uczciwie sygnalizujemy, że harmonogram
-    już minął i warto sprawdzić wyciąg."""
+    `overdue` (krok 13.6, docs/PLAN_KROK_13_6_vesting_gap.md; przełączone na
+    `available_from` w kroku 21, docs/PLAN_KROK_21_portfel_calkowity.md): sygnał czysto
+    DATOWY, `status == 'pending' and COALESCE(available_from, vest_date) < today` — NIE
+    zgadujemy, czy transza faktycznie zvestowała (wymagałoby kruchego dopasowania ilości
+    do "Vested Matching Shares"/Withhold-to-Cover Typu A, patrz plan) — tylko uczciwie
+    sygnalizujemy, że akcje POWINNY już być dostępne i warto sprawdzić wyciąg.
+    `vest_date` (data NABYCIA) i `available_from` (data DOSTĘPNOŚCI) różnią się realnie
+    o ~4 tygodnie dla ESPP — użycie samego `vest_date` fałszywie oznaczało transze jako
+    zaległe, zanim Computershare w ogóle je zaksięgował."""
     if today is None:
         today = datetime.now().strftime("%Y-%m-%d")
     rows = conn.execute(
         "SELECT v.id AS vest_id, g.id AS grant_id, g.grant_date, g.match_pct, "
-        "v.vest_date, v.quantity, v.status "
+        "v.vest_date, v.available_from, v.quantity, v.status "
         "FROM grants g JOIN vests v ON v.grant_id = g.id "
         "WHERE g.program = 'espp' ORDER BY g.grant_date"
     ).fetchall()
     result = []
     for r in rows:
         d = dict(r)
-        d["overdue"] = d["status"] == "pending" and d["vest_date"] < today
+        effective_date = d["available_from"] or d["vest_date"]
+        d["overdue"] = d["status"] == "pending" and effective_date < today
         result.append(d)
     return result
 
@@ -241,7 +268,8 @@ def list_lti_grouped(conn: sqlite3.Connection, today: str | None = None) -> list
         vests = [dict(v) for v in conn.execute(
             "SELECT * FROM vests WHERE grant_id = ? ORDER BY vest_date", (g["id"],)).fetchall()]
         for v in vests:
-            v["overdue"] = v["status"] == "pending" and v["vest_date"] < today
+            effective_date = v["available_from"] or v["vest_date"]
+            v["overdue"] = v["status"] == "pending" and effective_date < today
         description = (g["natural_key"].split("lti_grant:", 1)[-1]
                         if g["natural_key"] else None)
         result.append({
@@ -251,3 +279,130 @@ def list_lti_grouped(conn: sqlite3.Connection, today: str | None = None) -> list
             "total_quantity": sum(v["quantity"] for v in vests),
         })
     return result
+
+
+def _value(qty: float, price_eur: float | None, eurpln_rate: float | None
+          ) -> tuple[float | None, float | None]:
+    eur = qty * price_eur if price_eur is not None else None
+    pln = eur * eurpln_rate if eur is not None and eurpln_rate else None
+    return eur, pln
+
+
+def unvested_summary(conn: sqlite3.Connection, price_eur: float | None = None,
+                     eurpln_rate: float | None = None, today: str | None = None) -> dict:
+    """Krok 21 (docs/PLAN_KROK_21_portfel_calkowity.md): jedno źródło prawdy dla
+    „ile jest jeszcze zablokowane" — zastępuje wcześniejszą, samodzielną implementację
+    w `sensors.py::grants_values` (patrz tam delegacja). Dzieli WSZYSTKIE transze
+    `pending` na `upcoming` (data dostępności w przyszłości — normalne, czekamy) i
+    `overdue` (data dostępności minęła, a transza wciąż `pending` — sygnał do
+    sprawdzenia wyciągu, patrz `list_espp`/`list_lti_grouped`). Rozstrzyga po
+    `COALESCE(available_from, vest_date)`, tak samo jak `overdue` tam.
+
+    Tylko `upcoming` wchodzi do „Razem" na pulpicie — `overdue` jest z definicji
+    niepewne (mogło już wpłynąć na konto pod inną transzą, patrz audyt ducha 24,42
+    w planie), więc pokazywane osobno jako ostrzeżenie, nigdy zsumowane po cichu.
+
+    Wyceny `None` gdy brak ceny/kursu — nie zgadujemy, milczymy uczciwie (ten sam
+    wzorzec co `sensors.whatif_values`)."""
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+    rows = conn.execute(
+        "SELECT * FROM vests WHERE status = 'pending'").fetchall()
+
+    pending_qty = 0.0
+    upcoming_qty = 0.0
+    overdue_qty = 0.0
+    overdue_items: list[dict] = []
+    upcoming_dated: list[tuple[str, float]] = []
+
+    for r in rows:
+        d = dict(r)
+        effective_date = d["available_from"] or d["vest_date"]
+        pending_qty += d["quantity"]
+        if effective_date < today:
+            overdue_qty += d["quantity"]
+            overdue_items.append(d)
+        else:
+            upcoming_qty += d["quantity"]
+            upcoming_dated.append((effective_date, d["quantity"]))
+
+    next_vest_date = None
+    next_vest_qty = None
+    if upcoming_dated:
+        upcoming_dated.sort(key=lambda x: x[0])
+        next_vest_date, next_vest_qty = upcoming_dated[0]
+
+    upcoming_value_eur, upcoming_value_pln = _value(upcoming_qty, price_eur, eurpln_rate)
+    overdue_value_eur, overdue_value_pln = _value(overdue_qty, price_eur, eurpln_rate)
+
+    return {
+        "pending_qty": pending_qty,
+        "upcoming_qty": upcoming_qty,
+        "upcoming_value_eur": upcoming_value_eur,
+        "upcoming_value_pln": upcoming_value_pln,
+        "overdue_qty": overdue_qty,
+        "overdue_value_eur": overdue_value_eur,
+        "overdue_value_pln": overdue_value_pln,
+        "next_vest_date": next_vest_date,
+        "next_vest_qty": next_vest_qty,
+        "overdue_items": overdue_items,
+    }
+
+
+def restricted_own_summary(conn: sqlite3.Connection, price_eur: float | None = None,
+                           eurpln_rate: float | None = None,
+                           today: str | None = None) -> dict:
+    """Krok 21 (docs/PLAN_KROK_21_portfel_calkowity.md): ile z JUŻ POSIADANYCH akcji
+    `own` jest objęte ograniczeniem zbycia (sprzedaż przed uwolnieniem odpowiadającego
+    dopasowania ESPP = utrata dopasowania 50%).
+
+    Reguła WYPROWADZONA z danych, nie sparsowana z sekcji „Available with restrictions"
+    wyciągu (patrz uzasadnienie w planie — wyprowadzenie samo się aktualizuje, gdy
+    dopasowanie zvestuje, a zdjęcie stanu z wyciągu zestarzeje się w tydzień): lot
+    `own` jest ograniczony dokładnie wtedy, gdy istnieje transza `pending`, której
+    grant (`grants.grant_date` = Allocation Date) ma DOKŁADNIE tę samą datę co
+    `lots.acquired_date` (Trade Date — w realnych danych te dwie daty są identyczne
+    dla wszystkich sześciu par zakup/dopasowanie). Lot bez pasującej transzy `pending`
+    jest wolny — bezpieczny kierunek błędu, nie zawyżamy ograniczeń.
+
+    Loty innych typów (`matched`/`lti`/`dividend_drip`) nigdy nie są ograniczone —
+    ograniczenie w wyciągu dotyczy wyłącznie świeżo kupionych akcji własnych czekających
+    na własne dopasowanie, nie już nabytych/podarowanych akcji."""
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+
+    pending = conn.execute(
+        "SELECT v.available_from, v.vest_date, g.grant_date FROM vests v "
+        "JOIN grants g ON g.id = v.grant_id WHERE v.status = 'pending'").fetchall()
+    effective_by_grant_date: dict[str, list[str]] = {}
+    for p in pending:
+        effective_date = p["available_from"] or p["vest_date"]
+        effective_by_grant_date.setdefault(p["grant_date"], []).append(effective_date)
+
+    restricted_qty = 0.0
+    items: list[dict] = []
+    free_dates: list[str] = []
+    for lot in taxlots.open_lots(conn, as_of=today):
+        if lot["lot_type"] != "own":
+            continue
+        matches = effective_by_grant_date.get(lot["acquired_date"])
+        if not matches:
+            continue
+        free_until = max(matches)
+        restricted_qty += lot["qty_remaining"]
+        free_dates.append(free_until)
+        items.append({
+            "acquired_date": lot["acquired_date"],
+            "quantity": lot["qty_remaining"],
+            "free_until": free_until,
+        })
+
+    value_eur, value_pln = _value(restricted_qty, price_eur, eurpln_rate)
+
+    return {
+        "restricted_qty": restricted_qty,
+        "restricted_value_eur": value_eur,
+        "restricted_value_pln": value_pln,
+        "free_until": max(free_dates) if free_dates else None,
+        "items": items,
+    }

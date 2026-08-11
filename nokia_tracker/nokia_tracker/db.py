@@ -230,6 +230,14 @@ _MIGRATIONS = [
     ALTER TABLE sales ADD COLUMN reported_revenue_pln REAL;
     ALTER TABLE sales ADD COLUMN reported_cost_pln REAL;
     """,
+    # v5 — krok 21: data realnego wpłynięcia akcji na konto
+    # (docs/PLAN_KROK_21_portfel_calkowity.md). Wyciąg Computershare ma trzy daty w
+    # harmonogramie (Allocation/Vesting/Available from) - importer parsował
+    # available_from od kroku 13, ale nigdzie go nie zapisywał, więc "zaległe"
+    # liczyło się ~4 tygodnie za wcześnie (patrz audyt w planie).
+    """
+    ALTER TABLE vests ADD COLUMN available_from TEXT;
+    """,
 ]
 
 

@@ -55,39 +55,87 @@
   <div class="card-title">Portfel</div>
   {% set dividends_net_pln = (dividends.dividends_net_eur * fx_info.rate)
                              if fx_info.rate is not none else none %}
-  <div class="grid stats">
-    {{ stat('Ilość', position.position_qty) }}
-    {{ stat('Koszt bazowy',
-            '%.0f'|format(position.cost_basis_eur) if position.cost_basis_eur is not none else '—',
-            'EUR',
-            sub=('≈ %s zł'|format('%.0f'|format(position.cost_basis_pln))
-                 if position.cost_basis_pln is not none else none)) }}
-    {{ stat('Wartość rynkowa',
-            '%.0f'|format(position.market_value_eur) if position.market_value_eur is not none else '—',
-            'EUR',
-            sub=('≈ %s zł'|format('%.0f'|format(position.market_value_pln))
-                 if position.market_value_pln is not none else none)) }}
-    {{ stat('Niezrealizowany P&L',
-            '%+.0f'|format(position.unrealized_pnl_eur) if position.unrealized_pnl_eur is not none else '—',
-            'EUR',
-            value_cls=('up' if (position.unrealized_pnl_eur or 0) > 0 else 'down'),
-            sub=('≈ %s zł'|format('%+.0f'|format(position.unrealized_pnl_pln))
-                 if position.unrealized_pnl_pln is not none else none)) }}
-    {{ stat('Całkowity zwrot',
-            '%+.1f'|format(position.total_return_pct) if position.total_return_pct is not none else '—',
-            '%',
-            value_cls=('up' if (position.total_return_pct or 0) > 0 else 'down')) }}
+
+  <div class="subcard">
+    <div class="subcard-title">W posiadaniu</div>
+    <div class="grid stats">
+      {{ stat('Ilość', position.position_qty) }}
+      {{ stat('Koszt bazowy',
+              '%.0f'|format(position.cost_basis_eur) if position.cost_basis_eur is not none else '—',
+              'EUR',
+              sub=('≈ %s zł'|format('%.0f'|format(position.cost_basis_pln))
+                   if position.cost_basis_pln is not none else none)) }}
+      {{ stat('Wartość rynkowa',
+              '%.0f'|format(position.market_value_eur) if position.market_value_eur is not none else '—',
+              'EUR',
+              sub=('≈ %s zł'|format('%.0f'|format(position.market_value_pln))
+                   if position.market_value_pln is not none else none)) }}
+      {{ stat('Niezrealizowany P&L',
+              '%+.0f'|format(position.unrealized_pnl_eur) if position.unrealized_pnl_eur is not none else '—',
+              'EUR',
+              value_cls=('up' if (position.unrealized_pnl_eur or 0) > 0 else 'down'),
+              sub=('≈ %s zł'|format('%+.0f'|format(position.unrealized_pnl_pln))
+                   if position.unrealized_pnl_pln is not none else none)) }}
+      {{ stat('Całkowity zwrot',
+              '%+.1f'|format(position.total_return_pct) if position.total_return_pct is not none else '—',
+              '%',
+              value_cls=('up' if (position.total_return_pct or 0) > 0 else 'down')) }}
+    </div>
+    {% if restricted.restricted_qty %}
+    <p class="muted">
+      wolne {{ '%.4f'|format(position.position_qty - restricted.restricted_qty) }} ·
+      z ograniczeniem {{ '%.4f'|format(restricted.restricted_qty) }} — do {{ restricted.free_until }}
+      (sprzedaż przed tą datą oznacza utratę dopasowania 50%) ·
+      <a href="{{ url_for('grants_get') }}">szczegóły</a>
+    </p>
+    {% endif %}
+    <p class="muted">Dywidendy netto: {{ '%.0f'|format(dividends.dividends_net_eur) }} EUR
+      {%- if dividends_net_pln is not none %} · ≈ {{ '%.0f'|format(dividends_net_pln) }} zł{% endif %} ·
+      <a href="{{ url_for('dividends_get') }}">szczegóły</a></p>
+    <a class="btn small" href="{{ url_for('portfolio_get') }}">Edytuj stan posiadania</a>
   </div>
-  <p class="muted">Dywidendy netto: {{ '%.0f'|format(dividends.dividends_net_eur) }} EUR
-    {%- if dividends_net_pln is not none %} · ≈ {{ '%.0f'|format(dividends_net_pln) }} zł{% endif %} ·
-    <a href="{{ url_for('dividends_get') }}">szczegóły</a></p>
-  <a class="btn small" href="{{ url_for('portfolio_get') }}">Edytuj stan posiadania</a>
+
+  <div class="subcard">
+    <div class="subcard-title">Zablokowane — jeszcze nienabyte</div>
+    <div class="grid stats">
+      {{ stat('Ilość', '%.4f'|format(unvested.upcoming_qty), 'akcji') }}
+      {{ stat('Wartość szacunkowa',
+              '%.0f'|format(unvested.upcoming_value_eur) if unvested.upcoming_value_eur is not none else '—',
+              'EUR',
+              sub=('≈ %s zł'|format('%.0f'|format(unvested.upcoming_value_pln))
+                   if unvested.upcoming_value_pln is not none else none)) }}
+      {{ stat('Najbliższa dostępność', unvested.next_vest_date or '—',
+              sub=('%.4f akcji'|format(unvested.next_vest_qty)
+                   if unvested.next_vest_qty is not none else none)) }}
+    </div>
+    {% if unvested.overdue_qty %}
+    <p class="disclaimer">
+      ⚠️ {{ '%.4f'|format(unvested.overdue_qty) }} akcji ma minioną datę dostępności, a nie ma
+      ich w żadnym locie — wgraj najnowszy wyciąg przez <a href="{{ url_for('imports_get') }}">Importy</a>
+      i sprawdź na <a href="{{ url_for('grants_get') }}">Grantach</a>. Nie wliczone w „Razem" poniżej.
+    </p>
+    {% endif %}
+  </div>
+
+  <div class="subcard">
+    <div class="subcard-title">Razem</div>
+    <div class="grid stats">
+      {{ stat('Ilość razem', '%.4f'|format(totals.total_qty), 'akcji', cls='highlight') }}
+      {{ stat('Wartość szacunkowa razem',
+              '%.0f'|format(totals.total_value_eur) if totals.total_value_eur is not none else '—',
+              'EUR', cls='highlight',
+              sub=('≈ %s zł'|format('%.0f'|format(totals.total_value_pln))
+                   if totals.total_value_pln is not none else none)) }}
+    </div>
+  </div>
+
   <p class="muted">
     {% if fx_info.rate is not none %}
       EUR/PLN {{ '%.4f'|format(fx_info.rate) }} · {{ fx_info.source or '—' }} ·
       {{ fx_info.ts[:16] if fx_info.ts else '—' }} — kurs bieżący, nie tabela NBP
       używana w rozliczeniu podatkowym (patrz <a href="{{ url_for('dividends_get') }}">Dywidendy</a>
-      / <a href="{{ url_for('pit38_get') }}">PIT-38</a>)
+      / <a href="{{ url_for('pit38_get') }}">PIT-38</a>). Wycena zablokowanych akcji też po
+      tym kursie — to szacunek.
     {% else %}
       kurs EUR/PLN niedostępny
     {% endif %}

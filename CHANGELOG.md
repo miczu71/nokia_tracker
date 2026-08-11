@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.6.0] - 2026-08-11
+
+Krok 21 (`docs/PLAN_KROK_21_portfel_calkowity.md`) — całkowite zestawienie portfela na
+pulpicie. Dotąd karta „Portfel” pokazywała wyłącznie akcje uwolnione (sumę otwartych lotów),
+niewidoczne były ani zablokowane dopasowania ESPP/transze LTI, ani to, że część posiadanych
+akcji ma ograniczenie zbycia.
+
+### Dodano
+- **Karta „Portfel” na pulpicie w trzech blokach**: „W posiadaniu” (bez zmiany liczb — P&L
+  i całkowity zwrot nadal liczone z całej posiadanej pozycji — plus nowa linia wolne/z
+  ograniczeniem, gdy część świeżo kupionych akcji własnych czeka na własne dopasowanie ESPP:
+  sprzedaż przed jego uwolnieniem oznacza utratę dopłaty 50%), „Zablokowane — jeszcze
+  nienabyte” (ilość, wartość szacunkowa EUR/PLN, najbliższa data dostępności, ostrzeżenie
+  o transzach z minioną datą dostępności — nie wliczonych w „Razem”), „Razem” (posiadane +
+  nadchodzące).
+- `tax/grants.py::unvested_summary()` — jedno źródło prawdy dla „ile jest jeszcze
+  zablokowane”, dzieli transze `pending` na nadchodzące/zaległe wg daty dostępności.
+- `tax/grants.py::restricted_own_summary()` — które z JUŻ POSIADANYCH akcji własnych mają
+  ograniczenie zbycia. Reguła wyprowadzona z danych (lot `own` jest ograniczony dokładnie
+  wtedy, gdy istnieje transza `pending` z tą samą datą alokacji co data nabycia lotu), nie
+  sparsowana z sekcji wyciągu — sama się aktualizuje, gdy dopasowanie zvestuje.
+
+### Naprawiono
+- **Data „zaległości” transz ESPP liczona ~4 tygodnie za wcześnie.** Wyciąg Computershare ma
+  trzy daty w harmonogramie (Allocation/Vesting/Available from) — akcje realnie wpływają na
+  konto w dacie `Available from`, nie `Vesting Date`. Importer parsował `Available from` od
+  kroku 13, ale nigdzie go nie zapisywał (kolumna nie istniała) — `list_espp`/
+  `list_lti_grouped` liczyły `overdue` po samej dacie nabycia, więc każda sierpniowa transza
+  ESPP wyglądała na zaległą, zanim Computershare w ogóle zdążył ją zaksięgować. Migracja `v5`
+  (`vests.available_from`) + `backfill_available_from()` uzupełnia kolumnę też na transzach
+  dodanych przed tym krokiem, przy ponownym imporcie istniejącego wyciągu.
+
+### Zmiana zachowania (świadoma)
+- `sensor.nokia_tracker_next_vest_date` pokazuje teraz datę DOSTĘPNOŚCI (`available_from`),
+  nie datę nabycia (`vest_date`) — do wgrania świeżego wyciągu realnie zmieni wartość.
+  `sensor.nokia_tracker_unvested_qty` bez zmiany semantyki.
+
+### Techniczne
+- `sensors.py::grants_values()` przepisane na delegację do `unvested_summary()` — jedna
+  definicja „nienabytego” zamiast dwóch rozjeżdżających się implementacji.
+- Migracja bazy `v5` (`ALTER TABLE vests ADD COLUMN available_from`).
+- TDD; 602 testy total, wszystkie zielone.
+
 ## [0.5.3] - 2026-08-11
 
 Znalezione zaraz po wdrożeniu 0.5.2, przy weryfikacji na żywo po ponownym imporcie

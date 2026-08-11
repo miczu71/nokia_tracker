@@ -1183,6 +1183,100 @@ def test_dashboard_omits_pln_when_no_fx_rate(client):
     assert "kurs EUR/PLN niedostępny" in html
 
 
+# --- krok 21: całkowite zestawienie portfela (uwolnione + z ograniczeniem + zablokowane) ---
+# docs/PLAN_KROK_21_portfel_calkowity.md
+
+def _make_full_portfolio_dashboard_app(tmp_path, monkeypatch, filename="krok21_dashboard.db"):
+    from nokia_tracker import db as dbm, quotes as quotesm
+    from nokia_tracker.tax import grants as grantsm, lots as taxlots
+    from nokia_tracker.web import create_app
+
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, "stub"))
+
+    db_path = str(tmp_path / filename)
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    eurpln_id = quotesm.ensure_instrument(conn, "EURPLN=X", "EUR/PLN", "PLN", "fx")
+    quotesm.store_single_price(conn, eurpln_id, 4.0, source="yahoo",
+                               ts="2026-08-10T16:00:00+00:00")
+    primary_id = quotesm.ensure_instrument(conn, "NOKIA.HE", "Nokia Oyj", "EUR", "primary")
+    quotesm.store_single_price(conn, primary_id, 10.0, source="yahoo",
+                               ts="2026-08-10T16:00:00+00:00")
+
+    # Lot własny 100 szt. nabyty 2025-10-27 - restricted_own_summary dopasuje go do
+    # grantu A (ta sama Allocation Date) i uzna za ograniczony do 2099-01-01.
+    taxlots.add_lot(conn, "2025-10-27", "own", 100.0, 5.0, source="pdf_import")
+
+    grant_a = grantsm.add_grant(conn, "espp", "2025-10-27", 50.0, "espp_grant:a")
+    grantsm.add_vest(
+        conn, grant_a, "2099-01-01", 50.0, "espp_vest:a", available_from="2099-01-01")
+    grant_b = grantsm.add_grant(conn, "lti", "2020-01-01", None, "lti_grant:b")
+    grantsm.add_vest(
+        conn, grant_b, "2099-02-01", 20.0, "lti_vest:b", available_from="2099-02-01")
+    grant_c = grantsm.add_grant(conn, "espp", "2019-01-01", 5.0, "espp_grant:c")
+    grantsm.add_vest(
+        conn, grant_c, "2020-01-01", 5.0, "espp_vest:c", available_from="2020-01-01")
+
+    conn.close()
+    return create_app(db_path)
+
+
+def test_dashboard_shows_three_portfolio_blocks_with_correct_totals(tmp_path, monkeypatch):
+    app = _make_full_portfolio_dashboard_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "W posiadaniu" in html
+        assert "Zablokowane" in html
+        assert "Razem" in html
+        # zablokowane: upcoming_qty = 50 (grant A) + 20 (grant B) = 70
+        assert "70.0000" in html
+        assert "700" in html  # upcoming_value_eur = 70 * 10
+        assert "2800" in html  # upcoming_value_pln = 700 * 4
+        # razem: position_qty (100) + upcoming_qty (70) = 170
+        assert "170.0000" in html
+        assert "1700" in html  # 1000 (market_value) + 700 (upcoming)
+        assert "6800" in html  # 4000 + 2800
+
+
+def test_dashboard_shows_restriction_line_when_own_lot_restricted(tmp_path, monkeypatch):
+    app = _make_full_portfolio_dashboard_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "z ograniczeniem" in html
+        assert "100.0000" in html  # restricted_qty = cały lot własny
+        assert "2099-01-01" in html  # free_until
+
+
+def test_dashboard_hides_restriction_line_when_nothing_restricted(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "z ograniczeniem" not in html
+
+
+def test_dashboard_shows_overdue_warning_when_present(tmp_path, monkeypatch):
+    app = _make_full_portfolio_dashboard_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "5.0000" in html  # overdue_qty (grant C)
+        assert "wgraj najnowszy wyciąg" in html
+        assert "/grants" in html
+        assert "/imports" in html
+
+
+def test_dashboard_hides_overdue_warning_when_none_overdue(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "wgraj najnowszy wyciąg" not in html
+
+
+def test_dashboard_empty_portfolio_blocks_render_without_error(client):
+    # zero grantów, zero lotów - karty "Zablokowane"/"Razem" muszą renderować się z
+    # zerami, nie wywalać szablonu (już pokryte przez test_page_returns_200_with_no_store
+    # dla "/", ale sprawdzamy tu jawnie treść nowych bloków).
+    html = client.get("/").get_data(as_text=True)
+    assert "Zablokowane" in html
+    assert "Razem" in html
+
+
 # --- krok 18: podgląd na żywo (/api/preview/lot, /sale, /dividend) ---
 
 def test_preview_lot_returns_nbp_rate_and_cost_pln(client, _fake_nbp_rate):

@@ -22,7 +22,7 @@ def test_migrate_creates_all_tables(conn):
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 4  # v4: krok 20 - sales.reported_revenue_pln/reported_cost_pln
+    assert version == 5  # v5: krok 21 - vests.available_from
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):
@@ -78,6 +78,13 @@ def test_sales_has_reported_columns(conn):
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(sales)").fetchall()}
     assert "reported_revenue_pln" in cols
     assert "reported_cost_pln" in cols
+
+
+def test_vests_has_available_from_column(conn):
+    # Krok 21 (migracja v5): data realnego wpłynięcia akcji na konto ("Available from"
+    # z wyciągu Computershare) - odrębna od vest_date, patrz docs/PLAN_KROK_21_portfel_calkowity.md.
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(vests)").fetchall()}
+    assert "available_from" in cols
 
 
 def test_lots_natural_key_unique(conn):

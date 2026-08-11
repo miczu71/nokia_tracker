@@ -149,6 +149,29 @@ def create_app(db_path: str) -> Flask:
                 conn, cfg, values.get("price_eur"), values.get("eurpln_rate"),
                 dividends_net_total_eur=dividends["dividends_net_eur"])
 
+            # Krok 21 (docs/PLAN_KROK_21_portfel_calkowity.md): zablokowane (nienabyte
+            # dopasowania ESPP/transze LTI) i posiadane-ale-ograniczone (świeże zakupy
+            # własne czekające na własne dopasowanie) — dotąd niewidoczne na pulpicie,
+            # który pokazywał tylko "position" (same uwolnione akcje).
+            unvested = grantsm.unvested_summary(
+                conn, values.get("price_eur"), values.get("eurpln_rate"))
+            restricted = grantsm.restricted_own_summary(
+                conn, values.get("price_eur"), values.get("eurpln_rate"))
+            total_qty = position["position_qty"] + unvested["upcoming_qty"]
+            if position["market_value_eur"] is not None and unvested["upcoming_value_eur"] is not None:
+                total_value_eur = position["market_value_eur"] + unvested["upcoming_value_eur"]
+            else:
+                total_value_eur = None
+            if position["market_value_pln"] is not None and unvested["upcoming_value_pln"] is not None:
+                total_value_pln = position["market_value_pln"] + unvested["upcoming_value_pln"]
+            else:
+                total_value_pln = None
+            totals = {
+                "total_qty": total_qty,
+                "total_value_eur": total_value_eur,
+                "total_value_pln": total_value_pln,
+            }
+
             # Krok 18: metadane kursu EUR/PLN (skąd, kiedy) dla linii rozgraniczającej
             # kurs bieżący (Yahoo/ECB, prezentacyjny) od kursu NBP zamrożonego na
             # zdarzenie (podatkowy, patrz /dywidendy i /pit38). Sama wartość kursu
@@ -166,6 +189,7 @@ def create_app(db_path: str) -> Flask:
             return render_template(
                 "dashboard.html", active="dashboard", version=__version__,
                 values=values, position=position, dividends=dividends, fx_info=fx_info,
+                unvested=unvested, restricted=restricted, totals=totals,
                 chart_ranges=list(_CHART_RANGES), default_chart_range=_DEFAULT_CHART_RANGE,
                 chart_api_url=url_for("chart_api"),
                 alerts=[dict(r) for r in recent_alerts],

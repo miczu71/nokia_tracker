@@ -503,9 +503,15 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         vest_nk = f"espp_vest:{row['allocation_date']}:{row['vesting_date']}:{row['quantity']}"
         existing_vest = grantsm.find_vest_by_natural_key(conn, vest_nk)
         if existing_vest is None:
-            grantsm.add_vest(conn, grant_id, row["vesting_date"], row["quantity"], vest_nk)
+            grantsm.add_vest(
+                conn, grant_id, row["vesting_date"], row["quantity"], vest_nk,
+                available_from=row["available_from"])
             rows_inserted += 1
         elif abs(existing_vest["quantity"] - row["quantity"]) < _EPS:
+            # krok 21: transza już istnieje (dodana przed tym krokiem lub przez wcześniejszy
+            # import bez tej kolumny) — add_vest zwróciłby wcześnie i NIC nie zaktualizuje,
+            # więc available_from trzeba uzupełnić jawnie.
+            grantsm.backfill_available_from(conn, existing_vest["id"], row["available_from"])
             rows_unchanged += 1
         elif _record_conflict(conn, import_id, "vest", vest_nk, dict(existing_vest), row):
             rows_conflict += 1
@@ -541,9 +547,12 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         vest_nk = f"lti_vest:{row['participation_description']}:{row['vesting_date']}:{row['quantity']}"
         existing_vest = grantsm.find_vest_by_natural_key(conn, vest_nk)
         if existing_vest is None:
-            grantsm.add_vest(conn, grant_id, row["vesting_date"], row["quantity"], vest_nk)
+            grantsm.add_vest(
+                conn, grant_id, row["vesting_date"], row["quantity"], vest_nk,
+                available_from=row["available_from"])
             rows_inserted += 1
         elif abs(existing_vest["quantity"] - row["quantity"]) < _EPS:
+            grantsm.backfill_available_from(conn, existing_vest["id"], row["available_from"])
             rows_unchanged += 1
         elif _record_conflict(conn, import_id, "vest", vest_nk, dict(existing_vest), row):
             rows_conflict += 1

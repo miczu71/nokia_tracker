@@ -509,6 +509,45 @@ def test_reconcile_holdings_auto_resolves_stale_balance_conflict_once_reconciled
     assert stale["resolved"] == 1
 
 
+# ---- krok 21: available_from zapisywane i uzupełniane przy re-imporcie ----
+
+def test_import_statement_stores_available_from_on_espp_vest(conn, _fake_pdf):
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    row = conn.execute(
+        "SELECT v.available_from FROM vests v JOIN grants g ON g.id = v.grant_id "
+        "WHERE g.program = 'espp'").fetchone()
+    assert row["available_from"] == "2026-08-27"  # z _MATCHING_LINE
+
+
+def test_import_statement_stores_available_from_on_lti_vest(conn, _fake_pdf):
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    row = conn.execute(
+        "SELECT v.available_from FROM vests v JOIN grants g ON g.id = v.grant_id "
+        "WHERE g.program = 'lti'").fetchone()
+    assert row["available_from"] == "2028-07-05"  # z _RS_AWARD_LINE
+
+
+def test_reimporting_backfills_available_from_on_existing_vest(conn, monkeypatch):
+    # Symuluje realny incydent z audytu: transza dodana przed krokiem 21 (add_vest
+    # wywołane bez available_from, kolumna NULL), potem wgrywamy wyciąg ponownie -
+    # add_vest zwraca wcześnie na istniejącym natural_key i NIC nie aktualizuje,
+    # więc import_statement musi jawnie wywołać backfill_available_from.
+    from nokia_tracker.tax import grants as grantsm
+    grant_id = grantsm.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:2025-10-27:29.24")
+    grantsm.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:2025-10-27:2026-08-01:29.24")
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _MATCHING_LINE)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    row = conn.execute(
+        "SELECT available_from FROM vests WHERE natural_key = "
+        "'espp_vest:2025-10-27:2026-08-01:29.24'").fetchone()
+    assert row["available_from"] == "2026-08-27"
+
+
 def test_import_statement_balance_check_skipped_when_importing_an_older_backfill(
         conn, monkeypatch):
     # Najpierw wgrywamy wyciąg 2026 (nowszy as_of_date) - staje się "najnowszym znanym

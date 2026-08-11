@@ -10,7 +10,19 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.5.0** — złotówki tam, gdzie się o nich myśli, i podgląd na żywo przy
+**Status:** wydanie **0.6.0** — pulpit pokazuje teraz **całe** portfolio, nie tylko akcje
+uwolnione: nowy podział „W posiadaniu” (z linią wolne/z ograniczeniem, gdy część świeżo
+kupionych akcji ESPP czeka na własne dopasowanie — sprzedaż przed jego uwolnieniem oznacza
+utratę dopłaty 50%) / „Zablokowane” (nienabyte dopasowania ESPP i transze LTI, z szacunkową
+wartością i najbliższą datą dostępności, plus ostrzeżenie o transzach z minioną datą) /
+„Razem”. Naprawiono też przyczynę źródłową: importer parsował datę realnej dostępności akcji
+(`Available from` z wyciągu Computershare) od kroku 13, ale nigdzie jej nie zapisywał, więc
+harmonogram liczył zaległość wg daty NABYCIA — realnie ~4 tygodnie za wcześnie dla ESPP.
+Jedno źródło prawdy w `tax/grants.py` (`unvested_summary`, `restricted_own_summary`) zasila
+teraz zarówno pulpit, jak i istniejące sensory MQTT — `sensor.nokia_tracker_next_vest_date`
+pokazuje od teraz datę dostępności, nie datę nabycia.
+
+Wcześniej (0.5.0): złotówki tam, gdzie się o nich myśli, i podgląd na żywo przy
 wpisywaniu: **pulpit** pokazuje każdą kwotę EUR z drugą linią `≈ X zł` po kursie bieżącym
 (jawnie odróżnionym od kursu NBP używanego w rozliczeniu), formularze dodania **lotu**,
 **sprzedaży** i **dywidendy** liczą kurs NBP i podatek na żywo pod polami — zanim klikniesz
@@ -46,7 +58,7 @@ rozwijają się natywnie bez JS (`<details>`), z JS jako pływające menu.
 
 | Strona | Zawartość |
 |---|---|
-| **Pulpit** | Kurs (EUR, **od 0.5.0** z linią `≈ X zł` po kursie bieżącym), zmiana dzienna, sesja, trend, RSI, wykres cenowy z konfigurowalnym zakresem (1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany), karta portfela — ilość, koszt bazowy, wartość rynkowa, P&L, całkowity zwrot, każda kwota EUR z linią PLN i jawnym rozgraniczeniem od kursu NBP podatkowego, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
+| **Pulpit** | Kurs (EUR, **od 0.5.0** z linią `≈ X zł` po kursie bieżącym), zmiana dzienna, sesja, trend, RSI, wykres cenowy z konfigurowalnym zakresem (1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany), karta portfela **(od 0.6.0 w trzech blokach: „W posiadaniu” — ilość/koszt/wartość/P&L/zwrot jak dotąd, plus linia wolne/z ograniczeniem gdy część akcji czeka na własne dopasowanie ESPP; „Zablokowane” — nienabyte dopasowania ESPP i transze LTI z szacunkową wartością i najbliższą datą dostępności, ostrzeżenie o zaległych; „Razem” — suma posiadanych i nadchodzących)**, każda kwota EUR z linią PLN i jawnym rozgraniczeniem od kursu NBP podatkowego, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
 | **Portfel** | Stan posiadania — automatycznie z lotów, gdy istnieją (FIFO), z liniami PLN; formularz ręczny zwinięty do `<details>` jako fallback, gdy loty istnieją |
 | **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu i formularz rejestracji sprzedaży — oba *(od 0.5.0)* z podglądem na żywo pod polami (kurs NBP, koszt/przychód/podatek PLN, plan FIFO), zanim klikniesz przycisk; odrzuca daty przyszłe; tabela wszystkich lotów z kursem NBP zamrożonym per lot, link do rozliczenia sprzedaży |
 | **Sprzedaże** | Karta „Podsumowanie" z KPI za wybrany rok (przychód/koszt/dochód/podatek/na rękę); rejestr transakcji — jeden wiersz na sprzedaż z kluczowymi kwotami i przyciskiem „Cofnij" *(od 0.5.0 widocznym od razu, nie tylko po rozwinięciu)*, klik rozwija pełne rozbicie FIFO (który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży z linkiem do tabeli, kwoty EUR/PLN) |
@@ -216,7 +228,7 @@ prefiks niezależnie od nazwy encji).
 | Encja | Opis |
 |---|---|
 | `sensor.nokia_tracker_unvested_qty` | Suma transz jeszcze nie uwolnionych (status `pending`) |
-| `sensor.nokia_tracker_next_vest_date` | Najbliższa przyszła data uwolnienia; ilość w atrybucie `next_vest_qty` |
+| `sensor.nokia_tracker_next_vest_date` | **Od 0.6.0:** najbliższa przyszła data DOSTĘPNOŚCI (`Available from` z wyciągu, nie data nabycia `Vesting Date` — realnie ~4 tygodnie później dla ESPP); ilość w atrybucie `next_vest_qty` |
 
 ### PIT-38 i symulacja
 

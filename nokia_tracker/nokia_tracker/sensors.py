@@ -14,6 +14,7 @@ from . import forecasts as forecastsm
 from . import indicators as ind
 from . import market, quotes
 from . import tax as taxm
+from .tax import grants as taxgrants
 from .tax import lots as taxlots
 from .tax import pit38 as taxpit38
 from .tax import policy as taxpolicy
@@ -305,23 +306,21 @@ def lots_values(conn: sqlite3.Connection, cfg: dict) -> dict:
 
 
 def grants_values(conn: sqlite3.Connection) -> dict:
-    """Sensory widoczności grantów ESPP/LTI (krok 13.5): `unvested_qty` liczy WSZYSTKIE
-    transze o statusie 'pending' niezależnie od daty (scheduler auto-vestingu z kroku 14
-    jeszcze nie istnieje, więc przeszła data nie zmienia statusu); `next_vest_date` to
-    najbliższa transza `pending` z datą w przyszłości."""
-    pending = conn.execute(
-        "SELECT vest_date, quantity FROM vests WHERE status = 'pending'").fetchall()
-    unvested_qty = sum(r["quantity"] for r in pending)
+    """Sensory widoczności grantów ESPP/LTI (krok 13.5, delegacja do
+    `tax/grants.py::unvested_summary` od kroku 21 — docs/PLAN_KROK_21_portfel_calkowity.md
+    — jedno źródło prawdy zamiast dwóch rozjeżdżających się implementacji). `unvested_qty`
+    liczy WSZYSTKIE transze o statusie 'pending' niezależnie od daty (scheduler
+    auto-vestingu z kroku 14 jeszcze nie istnieje, więc przeszła data nie zmienia statusu).
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    future = sorted((r["vest_date"], r["quantity"]) for r in pending if r["vest_date"] > today)
-    next_vest_date = future[0][0] if future else None
-    next_vest_qty = future[0][1] if future else None
-
+    `next_vest_date`: od kroku 21 to najbliższa PRZYSZŁA data DOSTĘPNOŚCI
+    (`COALESCE(available_from, vest_date)`), nie data nabycia — realnie różnica ~4
+    tygodnie dla ESPP. Świadoma zmiana zachowania encji MQTT
+    `sensor.nokia_tracker_next_vest_date` (patrz CHANGELOG)."""
+    summary = taxgrants.unvested_summary(conn)
     return {
-        "unvested_qty": unvested_qty,
-        "next_vest_date": next_vest_date,
-        "next_vest_date_attrs": {"next_vest_qty": next_vest_qty},
+        "unvested_qty": summary["pending_qty"],
+        "next_vest_date": summary["next_vest_date"],
+        "next_vest_date_attrs": {"next_vest_qty": summary["next_vest_qty"]},
     }
 
 

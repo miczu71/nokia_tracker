@@ -1,6 +1,22 @@
 {% extends "base.html" %}
 {% from "_macros.html" import stat %}
 {% block title %}Pulpit — Nokia Tracker{% endblock %}
+
+{#- Krok 23: kwota PLN + linia EUR pod nią w kubełku Portfela — `None` znaczy
+    "brak kursu/ceny", więc świadomie NIE pokazujemy "zł"/"EUR" obok myślnika
+    (patrz test_dashboard_omits_pln_when_no_fx_rate). Lokalne makro, bo dotyczy
+    wyłącznie tego układu — reszta apki zostaje EUR-główną (_macros.html). #}
+{% macro pf_money(value_pln, value_eur) -%}
+{% if value_pln is not none -%}
+<div class="pf-bucket-money">{{ value_pln|money }} zł</div>
+{%- if value_eur is not none %}
+<div class="pf-bucket-eur">≈ {{ value_eur|money }} EUR</div>
+{%- endif %}
+{%- else -%}
+<div class="pf-bucket-money">—</div>
+{%- endif %}
+{%- endmacro %}
+
 {% block content %}
 
 {% set price_pln = (values.price_eur * fx_info.rate)
@@ -56,78 +72,82 @@
   {% set dividends_net_pln = (dividends.dividends_net_eur * fx_info.rate)
                              if fx_info.rate is not none else none %}
 
-  <div class="subcard">
-    <div class="subcard-title">W posiadaniu</div>
-    <div class="grid stats">
-      {{ stat('Ilość', position.position_qty) }}
-      {{ stat('Koszt bazowy',
-              '%.0f'|format(position.cost_basis_eur) if position.cost_basis_eur is not none else '—',
-              'EUR',
-              sub=('≈ %s zł'|format('%.0f'|format(position.cost_basis_pln))
-                   if position.cost_basis_pln is not none else none)) }}
-      {{ stat('Wartość rynkowa',
-              '%.0f'|format(position.market_value_eur) if position.market_value_eur is not none else '—',
-              'EUR',
-              sub=('≈ %s zł'|format('%.0f'|format(position.market_value_pln))
-                   if position.market_value_pln is not none else none)) }}
-      {{ stat('Niezrealizowany P&L',
-              '%+.0f'|format(position.unrealized_pnl_eur) if position.unrealized_pnl_eur is not none else '—',
-              'EUR',
-              value_cls=('up' if (position.unrealized_pnl_eur or 0) > 0 else 'down'),
-              sub=('≈ %s zł'|format('%+.0f'|format(position.unrealized_pnl_pln))
-                   if position.unrealized_pnl_pln is not none else none)) }}
-      {{ stat('Całkowity zwrot',
-              '%+.1f'|format(position.total_return_pct) if position.total_return_pct is not none else '—',
-              '%',
-              value_cls=('up' if (position.total_return_pct or 0) > 0 else 'down')) }}
+  {#- Krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): suma na górze + trzy kubełki
+      (wolne/z ograniczeniem/zablokowane), PLN jako waluta główna w tej karcie
+      (reszta apki zostaje przy EUR-głównym — patrz decyzja w planie). #}
+  <div class="pf-hero">
+    <div class="pf-hero-label">Wartość całkowita</div>
+    <div class="pf-hero-value">
+      {% if buckets.total.value_pln is not none %}
+        {{ buckets.total.value_pln|money }}<span class="stat-unit">zł</span>
+      {% else %}—{% endif %}
     </div>
+    <div class="pf-hero-sub">
+      {% if buckets.total.value_eur is not none %}≈ {{ buckets.total.value_eur|money }} EUR ·{% endif %}
+      {{ buckets.total.qty|qty }} akcji
+    </div>
+  </div>
+
+  <div class="pf-buckets">
+    <div class="pf-bucket free">
+      <div class="pf-bucket-title"><span class="dot"></span>Wolne</div>
+      <div class="pf-bucket-qty">{{ buckets.free.qty|qty }}<span class="stat-unit">akcji</span></div>
+      {{ pf_money(buckets.free.value_pln, buckets.free.value_eur) }}
+      <div class="pf-note">można sprzedać</div>
+    </div>
+
     {% if restricted.restricted_qty %}
-    <p class="muted">
-      wolne {{ '%.4f'|format(position.position_qty - restricted.restricted_qty) }} ·
-      z ograniczeniem {{ '%.4f'|format(restricted.restricted_qty) }} — do {{ restricted.free_until }}
-      (sprzedaż przed tą datą oznacza utratę dopasowania 50%) ·
-      <a href="{{ url_for('grants_get') }}">szczegóły</a>
-    </p>
+    <div class="pf-bucket restricted">
+      <div class="pf-bucket-title"><span class="dot"></span>Z ograniczeniem</div>
+      <div class="pf-bucket-qty">{{ buckets.restricted.qty|qty }}<span class="stat-unit">akcji</span></div>
+      {{ pf_money(buckets.restricted.value_pln, buckets.restricted.value_eur) }}
+      <div class="pf-note">do {{ buckets.restricted.free_until }} — sprzedaż wcześniej oznacza
+        utratę dopasowania 50% · <a href="{{ url_for('grants_get') }}">szczegóły</a></div>
+    </div>
     {% endif %}
-    <p class="muted">Dywidendy netto: {{ '%.0f'|format(dividends.dividends_net_eur) }} EUR
-      {%- if dividends_net_pln is not none %} · ≈ {{ '%.0f'|format(dividends_net_pln) }} zł{% endif %} ·
-      <a href="{{ url_for('dividends_get') }}">szczegóły</a></p>
+
+    <div class="pf-bucket locked">
+      <div class="pf-bucket-title"><span class="dot"></span>Zablokowane</div>
+      <div class="pf-bucket-qty">{{ buckets.locked.qty|qty }}<span class="stat-unit">akcji</span></div>
+      {{ pf_money(buckets.locked.value_pln, buckets.locked.value_eur) }}
+      <div class="pf-note">
+        {% if buckets.locked.next_date %}
+          najbliższe {{ buckets.locked.next_qty|qty }} od {{ buckets.locked.next_date }}
+        {% else %}jeszcze nienabyte{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if unvested.overdue_qty %}
+  <p class="disclaimer">
+    ⚠️ {{ '%.4f'|format(unvested.overdue_qty) }} akcji ma minioną datę dostępności, a nie ma
+    ich w żadnym locie — wgraj najnowszy wyciąg przez <a href="{{ url_for('imports_get') }}">Importy</a>
+    i sprawdź na <a href="{{ url_for('grants_get') }}">Grantach</a>. Nie wliczone w „Wartość całkowitą" powyżej.
+  </p>
+  {% endif %}
+
+  <div class="pf-perf grid stats">
+    {{ stat('Koszt bazowy', position.cost_basis_pln|money if position.cost_basis_pln is not none else '—',
+            ('zł' if position.cost_basis_pln is not none else none),
+            sub=(position.cost_basis_eur|money ~ ' EUR' if position.cost_basis_eur is not none else none)) }}
+    {{ stat('Niezrealizowany P&L',
+            position.unrealized_pnl_pln|money(signed=True) if position.unrealized_pnl_pln is not none else '—',
+            ('zł' if position.unrealized_pnl_pln is not none else none),
+            value_cls=('up' if (position.unrealized_pnl_pln or 0) > 0 else 'down'),
+            sub=(position.unrealized_pnl_eur|money(signed=True) ~ ' EUR'
+                 if position.unrealized_pnl_eur is not none else none)) }}
+    {{ stat('Całkowity zwrot', position.total_return_pct|pct if position.total_return_pct is not none else '—',
+            '%', value_cls=('up' if (position.total_return_pct or 0) > 0 else 'down')) }}
+    {{ stat('Dywidendy netto', dividends_net_pln|money if dividends_net_pln is not none else '—',
+            ('zł' if dividends_net_pln is not none else none),
+            sub=(dividends.dividends_net_eur|money ~ ' EUR')) }}
+  </div>
+  <p class="muted">
     <a class="btn small" href="{{ url_for('portfolio_get') }}">Edytuj stan posiadania</a>
-  </div>
-
-  <div class="subcard">
-    <div class="subcard-title">Zablokowane — jeszcze nienabyte</div>
-    <div class="grid stats">
-      {{ stat('Ilość', '%.4f'|format(unvested.upcoming_qty), 'akcji') }}
-      {{ stat('Wartość szacunkowa',
-              '%.0f'|format(unvested.upcoming_value_eur) if unvested.upcoming_value_eur is not none else '—',
-              'EUR',
-              sub=('≈ %s zł'|format('%.0f'|format(unvested.upcoming_value_pln))
-                   if unvested.upcoming_value_pln is not none else none)) }}
-      {{ stat('Najbliższa dostępność', unvested.next_vest_date or '—',
-              sub=('%.4f akcji'|format(unvested.next_vest_qty)
-                   if unvested.next_vest_qty is not none else none)) }}
-    </div>
-    {% if unvested.overdue_qty %}
-    <p class="disclaimer">
-      ⚠️ {{ '%.4f'|format(unvested.overdue_qty) }} akcji ma minioną datę dostępności, a nie ma
-      ich w żadnym locie — wgraj najnowszy wyciąg przez <a href="{{ url_for('imports_get') }}">Importy</a>
-      i sprawdź na <a href="{{ url_for('grants_get') }}">Grantach</a>. Nie wliczone w „Razem" poniżej.
-    </p>
-    {% endif %}
-  </div>
-
-  <div class="subcard">
-    <div class="subcard-title">Razem</div>
-    <div class="grid stats">
-      {{ stat('Ilość razem', '%.4f'|format(totals.total_qty), 'akcji', cls='highlight') }}
-      {{ stat('Wartość szacunkowa razem',
-              '%.0f'|format(totals.total_value_eur) if totals.total_value_eur is not none else '—',
-              'EUR', cls='highlight',
-              sub=('≈ %s zł'|format('%.0f'|format(totals.total_value_pln))
-                   if totals.total_value_pln is not none else none)) }}
-    </div>
-  </div>
+    <a href="{{ url_for('lots_get') }}">Loty</a> ·
+    <a href="{{ url_for('grants_get') }}">Granty</a> ·
+    <a href="{{ url_for('dividends_get') }}">Dywidendy</a>
+  </p>
 
   <p class="muted">
     {% if fx_info.rate is not none %}

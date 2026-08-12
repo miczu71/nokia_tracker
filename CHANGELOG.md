@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.0] - 2026-08-12
+
+Krok 23 (`docs/PLAN_KROK_23_portfel_kafelki.md`) — karta „Portfel” na pulpicie przebudowana
+wizualnie na kafelki. Dotąd karta miała trzy sekcje o różnym wyglądzie („W posiadaniu” jako
+siatka statystyk, „Zablokowane” osobno, „Razem” na samym dole — często poza ekranem), liczby
+bez separatora tysięcy i ilości z 4-5 miejscami po przecinku.
+
+### Zmieniono
+- **Karta „Portfel” jako suma na górze + trzy równorzędne kubełki**: „Wartość całkowita”
+  (hero na samej górze, zamiast na dole jako „Razem”) nad trzema kafelkami — „Wolne” (można
+  sprzedać), „Z ograniczeniem” (widoczny tylko gdy dotyczy, jak dotąd), „Zablokowane”
+  (nienabyte dopasowania ESPP/transze LTI) — każdy z tą samą strukturą (ilość, kwota PLN,
+  kwota EUR, linia kontekstowa), plus pasek wyniku (koszt bazowy, niezrealizowany P&L,
+  całkowity zwrot, dywidendy netto) pod spodem. Liczby te same co dotąd — zero zmian w
+  silniku podatkowym/rynkowym, wyłącznie prezentacja.
+- **PLN jako waluta główna w tej karcie** (EUR jako druga linia) — jedyne miejsce w apce
+  odpowiadające wprost na „ile to jest warte”; reszta stron zostaje przy EUR-głównym.
+- **Separator tysięcy i skrócone ilości**: `money()`/`qty()`/`pct()` (nowy `format.py`,
+  zarejestrowane jako filtry Jinja) — „143 618 zł” zamiast „143618”, „2 887,05 akcji” zamiast
+  „2887.05134”. Pełna precyzja (4 miejsca) zostaje tam, gdzie liczy się zgodność co do grosza
+  z wyciągiem: ostrzeżenie o zaległych transzach, strony Loty/Granty/PIT-38 — bez zmian.
+
+### Dodano
+- `portfolio.py::dashboard_buckets()` — składa `position_values()`/`restricted_own_summary()`/
+  `unvested_summary()` (już liczone w `web.py::dashboard`) w strukturę trzech kubełków + sumę,
+  zastępując ręczną arytmetykę, która wcześniej siedziała inline w widoku.
+- `format.py` — `money()`/`qty()`/`pct()`, formatowanie liczb po polsku (separator tysięcy
+  U+00A0, przecinek dziesiętny), `None` → „—”, nigdy pythonowy napis „None”.
+
 ## [0.6.0] - 2026-08-11
 
 Krok 21 (`docs/PLAN_KROK_21_portfel_calkowity.md`) — całkowite zestawienie portfela na

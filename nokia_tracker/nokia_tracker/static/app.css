@@ -255,6 +255,47 @@ body {
 /* Krok 17: separator zmiany daty w śladzie obliczeń per lot */
 .table tr.trace-new-sale td { border-top: 2px solid var(--baseline); }
 
+/* Krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): karta „Portfel" na pulpicie —
+   suma na górze (.pf-hero) + trzy kubełki wyciągu Computershare (.pf-buckets,
+   wolne/z ograniczeniem/zablokowane) + pasek wyniku (.pf-perf, reużywa
+   .grid.stats/stat() z _macros.html bez zmian). Wyłącznie istniejące tokeny
+   kolorów — light/dark działa bez nowych deklaracji. */
+.pf-hero { margin-bottom: 14px; }
+.pf-hero-label { font-size: 12px; color: var(--muted); text-transform: uppercase;
+  letter-spacing: .04em; }
+.pf-hero-value { font-size: 34px; font-weight: 700; line-height: 1.2; }
+.pf-hero-value .stat-unit { font-size: 16px; color: var(--muted); margin-left: 4px; }
+.pf-hero-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+.pf-buckets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px; margin-bottom: 14px; max-width: 1120px;
+}
+.pf-bucket {
+  background: var(--page); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 14px; border-left: 3px solid var(--baseline);
+}
+.pf-bucket.free { border-left-color: var(--good); }
+.pf-bucket.restricted { border-left-color: var(--series-3); }
+.pf-bucket.locked { border-left-color: var(--baseline); }
+.pf-bucket-title { font-weight: 600; font-size: 13px; margin-bottom: 6px;
+  display: flex; align-items: center; gap: 6px; }
+.pf-bucket-title .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.pf-bucket.free .pf-bucket-title { color: var(--good); }
+.pf-bucket.restricted .pf-bucket-title { color: var(--series-3); }
+.pf-bucket.locked .pf-bucket-title { color: var(--muted); }
+.pf-bucket-qty { font-size: 20px; font-weight: 700; line-height: 1.2; color: var(--ink); }
+.pf-bucket-qty .stat-unit { font-size: 12px; color: var(--muted); margin-left: 3px; }
+.pf-bucket-money { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.pf-bucket-eur { font-size: 12px; color: var(--muted); }
+.pf-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.pf-note a { color: var(--series-1); }
+
+.pf-perf { margin-bottom: 8px; }
+
+@media print { .pf-hero, .pf-buckets { break-inside: avoid; } }
+
 /* Wykres pulpitu — pasek zakresów */
 .chart-range-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
 .chart-range-bar button {

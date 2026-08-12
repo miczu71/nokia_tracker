@@ -16,6 +16,7 @@ import openpyxl
 from flask import Flask, Response, redirect, render_template, request, url_for
 
 from . import __version__, analysis, db as dbm, fx
+from . import format as fmt
 from . import portfolio as portfoliom
 from . import quotes, sensors
 from . import settings as settingsm
@@ -121,6 +122,14 @@ def create_app(db_path: str) -> Flask:
     app = Flask(__name__)
     app.wsgi_app = _IngressPrefixMiddleware(app.wsgi_app)
 
+    # Krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): formatowanie po polsku
+    # (separator tysięcy, przecinek dziesiętny) dla karty „Portfel" na pulpicie.
+    # Celowo NIE używane na stronach podatkowych (/lots, /pit38, ...) — te muszą
+    # zostać bajtowo zestawialne z wyciągiem/NBP w dotychczasowym formacie.
+    app.jinja_env.filters["money"] = fmt.money
+    app.jinja_env.filters["qty"] = fmt.qty
+    app.jinja_env.filters["pct"] = fmt.pct
+
     @app.after_request
     def _no_cache(resp: Response) -> Response:
         if resp.mimetype in ("text/html", "application/json"):
@@ -157,20 +166,10 @@ def create_app(db_path: str) -> Flask:
                 conn, values.get("price_eur"), values.get("eurpln_rate"))
             restricted = grantsm.restricted_own_summary(
                 conn, values.get("price_eur"), values.get("eurpln_rate"))
-            total_qty = position["position_qty"] + unvested["upcoming_qty"]
-            if position["market_value_eur"] is not None and unvested["upcoming_value_eur"] is not None:
-                total_value_eur = position["market_value_eur"] + unvested["upcoming_value_eur"]
-            else:
-                total_value_eur = None
-            if position["market_value_pln"] is not None and unvested["upcoming_value_pln"] is not None:
-                total_value_pln = position["market_value_pln"] + unvested["upcoming_value_pln"]
-            else:
-                total_value_pln = None
-            totals = {
-                "total_qty": total_qty,
-                "total_value_eur": total_value_eur,
-                "total_value_pln": total_value_pln,
-            }
+            # Krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): position/restricted/unvested
+            # złożone w trzy kubełki (wolne/z ograniczeniem/zablokowane) + sumę — zastępuje
+            # ręczną arytmetykę total_qty/total_value_* dawniej inline tutaj.
+            buckets = portfoliom.dashboard_buckets(position, restricted, unvested)
 
             # Krok 18: metadane kursu EUR/PLN (skąd, kiedy) dla linii rozgraniczającej
             # kurs bieżący (Yahoo/ECB, prezentacyjny) od kursu NBP zamrożonego na
@@ -189,7 +188,7 @@ def create_app(db_path: str) -> Flask:
             return render_template(
                 "dashboard.html", active="dashboard", version=__version__,
                 values=values, position=position, dividends=dividends, fx_info=fx_info,
-                unvested=unvested, restricted=restricted, totals=totals,
+                unvested=unvested, restricted=restricted, buckets=buckets,
                 chart_ranges=list(_CHART_RANGES), default_chart_range=_DEFAULT_CHART_RANGE,
                 chart_api_url=url_for("chart_api"),
                 alerts=[dict(r) for r in recent_alerts],

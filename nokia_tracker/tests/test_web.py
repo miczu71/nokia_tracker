@@ -109,7 +109,8 @@ def test_dashboard_reflects_saved_portfolio(client):
     client.post("/portfolio", data={"position_qty": "100", "avg_cost_eur": "8.0"})
     resp = client.get("/")
     html = resp.get_data(as_text=True)
-    assert "100.0" in html
+    # krok 23: kubełek „Wolne" pokazuje ilość z 2 miejscami (formatter qty(), nie surowy float)
+    assert "100,00" in html
 
 
 # --- portfel z lotów (domknięcie luki po pierwszym realnym imporcie PDF) ---
@@ -167,7 +168,8 @@ def test_dashboard_shows_lots_based_qty_not_manual_settings(tmp_path, monkeypatc
         resp = c.get("/")
         html = resp.get_data(as_text=True)
         assert "999" not in html
-        assert "12.5" in html
+        # krok 23: kubełek „Wolne" formatuje ilość z przecinkiem (qty()), nie surowy float
+        assert "12,50" in html
 
 
 # --- lots ---
@@ -1166,7 +1168,8 @@ def test_dashboard_shows_pln_alongside_eur(tmp_path):
         assert "zł" in html
         assert "≈" in html
         # market_value_eur = 100 * 4.0 = 400 EUR -> PLN = 400 * 4.3 = 1720
-        assert "1720" in html
+        # krok 23: hero „Wartość całkowita" formatuje z separatorem tysięcy (NBSP) — money()
+        assert "1\xa0720" in html
 
 
 def test_dashboard_labels_current_rate_not_nbp(tmp_path):
@@ -1223,34 +1226,37 @@ def _make_full_portfolio_dashboard_app(tmp_path, monkeypatch, filename="krok21_d
 
 
 def test_dashboard_shows_three_portfolio_blocks_with_correct_totals(tmp_path, monkeypatch):
+    # krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): trzy kubełki (Wolne/Z ograniczeniem/
+    # Zablokowane) + hero „Wartość całkowita" zastąpiły dawne "W posiadaniu"/"Razem", liczby
+    # przez money()/qty() (separator tysięcy NBSP, 2 miejsca dla ilości zamiast 4).
     app = _make_full_portfolio_dashboard_app(tmp_path, monkeypatch)
     with app.test_client() as c:
         html = c.get("/").get_data(as_text=True)
-        assert "W posiadaniu" in html
+        assert "Wolne" in html
         assert "Zablokowane" in html
-        assert "Razem" in html
+        assert "Wartość całkowita" in html
         # zablokowane: upcoming_qty = 50 (grant A) + 20 (grant B) = 70
-        assert "70.0000" in html
+        assert "70,00" in html
         assert "700" in html  # upcoming_value_eur = 70 * 10
-        assert "2800" in html  # upcoming_value_pln = 700 * 4
+        assert "2\xa0800" in html  # upcoming_value_pln = 700 * 4
         # razem: position_qty (100) + upcoming_qty (70) = 170
-        assert "170.0000" in html
-        assert "1700" in html  # 1000 (market_value) + 700 (upcoming)
-        assert "6800" in html  # 4000 + 2800
+        assert "170,00" in html
+        assert "1\xa0700" in html  # 1000 (market_value) + 700 (upcoming)
+        assert "6\xa0800" in html  # 4000 + 2800
 
 
 def test_dashboard_shows_restriction_line_when_own_lot_restricted(tmp_path, monkeypatch):
     app = _make_full_portfolio_dashboard_app(tmp_path, monkeypatch)
     with app.test_client() as c:
         html = c.get("/").get_data(as_text=True)
-        assert "z ograniczeniem" in html
-        assert "100.0000" in html  # restricted_qty = cały lot własny
+        assert "Z ograniczeniem" in html  # krok 23: tytuł kubełka (Title Case, jak reszta trójki)
+        assert "100,00" in html  # restricted_qty = cały lot własny
         assert "2099-01-01" in html  # free_until
 
 
 def test_dashboard_hides_restriction_line_when_nothing_restricted(client):
     html = client.get("/").get_data(as_text=True)
-    assert "z ograniczeniem" not in html
+    assert "Z ograniczeniem" not in html  # krok 23: kubełek renderuje się tylko gdy restricted_qty > 0
 
 
 def test_dashboard_shows_overdue_warning_when_present(tmp_path, monkeypatch):
@@ -1269,12 +1275,12 @@ def test_dashboard_hides_overdue_warning_when_none_overdue(client):
 
 
 def test_dashboard_empty_portfolio_blocks_render_without_error(client):
-    # zero grantów, zero lotów - karty "Zablokowane"/"Razem" muszą renderować się z
-    # zerami, nie wywalać szablonu (już pokryte przez test_page_returns_200_with_no_store
-    # dla "/", ale sprawdzamy tu jawnie treść nowych bloków).
+    # zero grantów, zero lotów - kubełek „Zablokowane"/hero „Wartość całkowita" (krok 23,
+    # dawniej "Razem") muszą renderować się z zerami, nie wywalać szablonu (już pokryte przez
+    # test_page_returns_200_with_no_store dla "/", ale sprawdzamy tu jawnie treść nowych bloków).
     html = client.get("/").get_data(as_text=True)
     assert "Zablokowane" in html
-    assert "Razem" in html
+    assert "Wartość całkowita" in html
 
 
 # --- krok 18: podgląd na żywo (/api/preview/lot, /sale, /dividend) ---

@@ -95,3 +95,50 @@ def position_values(position_qty: float, avg_cost_eur: float, price_eur: float |
         "cost_basis_pln": cost_basis_pln,
         "unrealized_pnl_pln": unrealized_pnl_pln,
     }
+
+
+def _sub(a: float | None, b: float | None) -> float | None:
+    return a - b if a is not None and b is not None else None
+
+
+def _add(a: float | None, b: float | None) -> float | None:
+    return a + b if a is not None and b is not None else None
+
+
+def dashboard_buckets(position: dict, restricted: dict, unvested: dict) -> dict:
+    """Krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): składa `position_values()` (lub
+    `lots_based_position_values()`), `tax/grants.py::restricted_own_summary()` i
+    `unvested_summary()` — WSZYSTKIE trzy już liczone w `web.py::dashboard` — w trzy
+    kubełki karty „Portfel" (wolne / z ograniczeniem / zablokowane) + sumę. Czysta
+    funkcja na już policzonych słownikach, zero zapytań do DB, zero nowej logiki
+    podatkowej/rynkowej.
+
+    `free` = `position` minus `restricted` (ta sama ilość akcji `own`, ten sam kurs —
+    odejmowanie jest spójne, patrz `restricted_own_summary()`). `locked` = wyłącznie
+    `unvested.upcoming_*` — `overdue` świadomie zostaje poza kubełkami (jak w kroku 21,
+    pokazywane osobno jako ostrzeżenie, bo status jest niepewny). `total` zastępuje
+    ręczne składanie, które wcześniej siedziało w `web.py::dashboard`."""
+    free = {
+        "qty": position["position_qty"] - restricted["restricted_qty"],
+        "value_eur": _sub(position["market_value_eur"], restricted["restricted_value_eur"]),
+        "value_pln": _sub(position["market_value_pln"], restricted["restricted_value_pln"]),
+    }
+    restricted_bucket = {
+        "qty": restricted["restricted_qty"],
+        "value_eur": restricted["restricted_value_eur"],
+        "value_pln": restricted["restricted_value_pln"],
+        "free_until": restricted["free_until"],
+    }
+    locked = {
+        "qty": unvested["upcoming_qty"],
+        "value_eur": unvested["upcoming_value_eur"],
+        "value_pln": unvested["upcoming_value_pln"],
+        "next_date": unvested["next_vest_date"],
+        "next_qty": unvested["next_vest_qty"],
+    }
+    total = {
+        "qty": position["position_qty"] + unvested["upcoming_qty"],
+        "value_eur": _add(position["market_value_eur"], unvested["upcoming_value_eur"]),
+        "value_pln": _add(position["market_value_pln"], unvested["upcoming_value_pln"]),
+    }
+    return {"free": free, "restricted": restricted_bucket, "locked": locked, "total": total}

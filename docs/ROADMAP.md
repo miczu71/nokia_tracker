@@ -36,7 +36,7 @@ i po jednym pełnym sezonie rozliczeniowym na nowym silniku.
 | Kalendarz i prognoza dywidend | DivvyDiary, Snowball Analytics | częściowo — jest rejestr wypłat, brak prognozy i kalendarza ex-div |
 | Kalendarz wyników + konsensus analityków | Koyfin, Simply Wall St, Seeking Alpha | **brak** (backlog — użytkownik wybrał czat zamiast tego) |
 | Wycena fundamentalna (DCF/fair value, mnożniki vs peers) | Simply Wall St, Koyfin | **brak** (backlog) |
-| Raporty podatkowe gotowe do deklaracji | Sharesight (AU/NZ/UK/CA) | **mocna strona** — PIT-38 + PIT/ZG + ślad do numeru tabeli NBP; brak strat z lat ubiegłych i XML |
+| Raporty podatkowe gotowe do deklaracji | Sharesight (AU/NZ/UK/CA) | **mocna strona** — PIT-38 + PIT/ZG + ślad do numeru tabeli NBP; brak strat z lat ubiegłych |
 | Planowanie sprzedaży pod podatek | Sharesight, Parqet | częściowo — jest „co jeśli sprzedam wszystko”, brak „ile sprzedać, żeby…” i porównania rok bieżący vs styczeń |
 | Obsługa planów pracowniczych (ESPP/RSU) — koszt utraty dopłaty, harmonogram | **nikt tego nie robi dobrze** (Sharesight/Getquin traktują to jak zwykły zakup) | częściowo — jest ostrzeżenie tekstowe o ograniczeniu zbycia; brak wyceny „ile tracę sprzedając dziś” |
 | Ryzyko koncentracji (akcje pracodawcy vs reszta majątku) | Getquin, Parqet (dywersyfikacja) | **brak** |
@@ -171,23 +171,7 @@ Jedyna część roadmapy, której **nie da się kupić** — i najbliższa realn
 
 ---
 
-### 0.12.0 (krok 28) — XML e-Deklaracje (PIT-38 + PIT/ZG)  · ~2–3 dni, osobne wydanie
-
-Wydzielone świadomie: schemat XSD Ministerstwa Finansów zmienia się co roku, więc ta funkcja ma
-inny cykl życia niż reszta i nie powinna blokować wydania podatkowego.
-
-- Generowanie XML zgodnego ze schemą dla wybranego roku + **walidacja lokalna względem XSD**
-  (schemat trzymany w repo, per rok — jawnie wersjonowany, z datą pobrania i źródłem).
-- **Nigdy nie wysyła** — plik do pobrania, użytkownik wgrywa go sam w e-Urzędzie. Żadnej integracji
-  z bramką, żadnego podpisu.
-- Widok „porównaj z tym, co wpisałeś ręcznie” — pole po polu, żeby XML był weryfikacją, nie
-  czarną skrzynką (ta sama filozofia co ślad FIFO do numeru tabeli NBP).
-- Jeśli schema dla danego roku nie jest jeszcze opublikowana → funkcja mówi to wprost i oferuje
-  eksport CSV/XLSX jak dotąd, zamiast generować coś na oko.
-
----
-
-### 0.13.0 (krok 29) — UX/mobile + wykresy  · ~3 dni
+### 0.12.0 (krok 28) — UX/mobile + wykresy  · ~3 dni
 
 Retrofit istniejących stron (nowe strony z fal 25–27 powstają od razu mobile-first — to warunek
 ukończenia każdej z nich, nie osobna praca).
@@ -212,7 +196,7 @@ nawigacji) — nowe statyki muszą trzymać ten sam wzorzec, zgodnie z regułą 
 
 ---
 
-### 1.0.0 (krok 30) — Asystent: czat nad własnymi danymi  · ~3–4 dni
+### 1.0.0 (krok 29) — Asystent: czat nad własnymi danymi  · ~3–4 dni
 
 Ostatnia fala, bo ma sens dopiero gdy jest o czym rozmawiać (wyniki, plan, straty).
 
@@ -261,11 +245,10 @@ odpowiedzią, jak wszędzie indziej.
 
 ```
 0.8.1 (kopia)  ──►  niezależna, robiona pierwsza (ochrona realnych danych)
-0.9.0 (wyniki) ──►  wymaga gęstej serii NBP;  daje dane dla wykresów w 0.13.0 i dla czatu
+0.9.0 (wyniki) ──►  wymaga gęstej serii NBP;  daje dane dla wykresów w 0.12.0 i dla czatu
 0.10.0 (plan)  ──►  wymaga tylko istniejących grants/vests + whatif
 0.11.0 (podatki) ─►  niezależna od 0.9/0.10;  optymalizator momentu sprzedaży spina się z 0.10.0
-0.12.0 (XML)   ──►  wymaga 0.11.0 (straty muszą być w raporcie, zanim trafią do XML)
-0.13.0 (UX)    ──►  wymaga 0.9.0 i 0.10.0 (bo rysuje ich dane)
+0.12.0 (UX)    ──►  wymaga 0.9.0 i 0.10.0 (bo rysuje ich dane)
 1.0.0 (czat)   ──►  wymaga wszystkich (odpowiada na pytania o wyniki, plan i podatki)
 ```
 
@@ -282,8 +265,7 @@ termin rozliczenia rocznego.
 | 0.9.0 | `analytics/{history,returns,attribution,benchmark}.py`, `templates/results.html` | `db.py` (migracja v6 `portfolio_history`), `providers/fx_nbp.py` (`backfill_range`), `sensors.py`, `publisher.py`, `web.py`, `static/app.js` |
 | 0.10.0 | `advisor.py`, `templates/plan.html` | `tax/grants.py` (rozszerzenie, nie przepisanie), `ha_client.py` (odczyt encji majątku), `config.yaml` (`net_worth_entity`, `concentration_warn_pct`), `web.py` |
 | 0.11.0 | `tax/losses.py`, `templates/wizard.html` | `db.py` (migracja v7), `tax/pit38.py`, `tax/policy.py`, `web.py` |
-| 0.12.0 | `tax/edeklaracje.py`, `schemas/pit38_<rok>.xsd` | `web.py`, `requirements.txt` (walidacja XSD — sprawdzić wheel na musl **przed** wyborem biblioteki) |
-| 0.13.0 | — | wszystkie `templates/*.html`, `static/app.css`, `static/app.js`, `templates/_macros.html` |
+| 0.12.0 | — | wszystkie `templates/*.html`, `static/app.css`, `static/app.js`, `templates/_macros.html` |
 | 1.0.0 | `ai/chat.py`, `templates/assistant.html` | `ai/prompts.py`, `db.py` (migracja v8 `chat_log`), `web.py` |
 
 Do ponownego użycia, nie pisania od nowa: `format.py` (`money`/`qty`/`pct`), `templates/_macros.html`

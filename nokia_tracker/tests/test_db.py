@@ -16,13 +16,15 @@ def test_migrate_creates_all_tables(conn):
         "nbp_rates", "imports", "import_conflicts",
         # infra
         "settings", "api_usage", "ai_usage", "http_cache", "alerts_log",
+        # analityka wyników (krok 25, 0.9.0)
+        "portfolio_history",
     }
     assert expected <= tables
 
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 6  # v6: krok 22 - news.notified_at
+    assert version == 7  # v7: krok 25 - portfolio_history
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):

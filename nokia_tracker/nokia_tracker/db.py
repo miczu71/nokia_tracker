@@ -247,6 +247,21 @@ _MIGRATIONS = [
     ALTER TABLE news ADD COLUMN notified_at TEXT;
     UPDATE news SET notified_at = datetime('now');
     """,
+    # v7 — krok 25: krzywa wartości portfela (docs/PLAN_KROK_25_wyniki.md).
+    # Materializowana i w pełni przeliczana od zera przy każdym rebuild()
+    # (DELETE+INSERT) — tańsze i bezpieczniejsze niż różnicowe update'y przy
+    # imporcie/korekcie starych lotów. Wiersz tylko w dniach z notowaniem
+    # (sesja w Helsinkach), nie każdy dzień kalendarzowy.
+    """
+    CREATE TABLE portfolio_history (
+        date TEXT PRIMARY KEY,
+        position_qty REAL NOT NULL,
+        price_eur REAL,
+        eurpln_rate REAL,
+        market_value_eur REAL,
+        market_value_pln REAL
+    );
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

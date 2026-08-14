@@ -43,3 +43,32 @@ def counterfactual(conn: sqlite3.Connection, own_cashflows: list[tuple[str, floa
     if latest_row is None:
         return None
     return units * latest_row["close"]
+
+
+def counterfactual_series(conn: sqlite3.Connection, own_cashflows: list[tuple[str, float]],
+                          benchmark_instrument_id: int, dates: list[str]
+                          ) -> list[tuple[str, float | None]]:
+    """Wartość kontrfaktyczna na KAŻDY dzień z `dates` (posortowane rosnąco)
+    — krzywa benchmarku do narysowania na tym samym wykresie co
+    `portfolio_history` na `/wyniki`. `None` dla dni przed pierwszą wpłatą
+    własną (nie ma jeszcze czego porównywać)."""
+    contributions = sorted(
+        ((d, -amt) for d, amt in own_cashflows if amt < 0), key=lambda x: x[0])
+
+    result: list[tuple[str, float | None]] = []
+    idx = 0
+    units = 0.0
+    for d in dates:
+        while idx < len(contributions) and contributions[idx][0] <= d:
+            c_date, c_amount = contributions[idx]
+            price = _price_on_or_before(conn, benchmark_instrument_id, c_date)
+            if price:
+                units += c_amount / price
+            idx += 1
+
+        if units == 0.0:
+            result.append((d, None))
+            continue
+        price_today = _price_on_or_before(conn, benchmark_instrument_id, d)
+        result.append((d, units * price_today if price_today else None))
+    return result

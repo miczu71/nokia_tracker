@@ -513,3 +513,69 @@ def test_whatif_values_sells_all_open_lots_at_current_price(conn, _fake_nbp_rate
     # symulacja nie zmienia bazy — loty wciąż otwarte po wywołaniu
     remaining = conn.execute("SELECT qty_remaining FROM lots").fetchone()["qty_remaining"]
     assert remaining == pytest.approx(10)
+
+
+# --- krok 25 (0.9.0): wyniki - XIRR/TWR/atrybucja/benchmark ---
+
+def test_results_values_none_without_price_or_rate(conn):
+    v = sensors.results_values(conn, price_eur=None, eurpln_rate=4.5,
+                               benchmark_instrument_id=1)
+    assert v == {
+        "xirr_own_pct": None, "twr_pct": None, "fx_effect_pln": None,
+        "benchmark_omxh25_counterfactual_pln": None,
+    }
+    v2 = sensors.results_values(conn, price_eur=6.0, eurpln_rate=None,
+                                benchmark_instrument_id=1)
+    assert v2["xirr_own_pct"] is None
+
+
+def test_results_values_computes_xirr_and_fx_effect(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+    taxlots.add_lot(conn, "2023-01-01", "own", 10, 5.0)
+
+    v = sensors.results_values(conn, price_eur=8.0, eurpln_rate=4.5,
+                               benchmark_instrument_id=None)
+
+    assert v["xirr_own_pct"] is not None
+    assert v["xirr_own_pct"] > 0  # zarobił (kurs 5 -> 8)
+    assert v["fx_effect_pln"] is not None
+    assert v["benchmark_omxh25_counterfactual_pln"] is None  # brak instrument_id
+
+
+def test_results_values_twr_none_without_portfolio_history(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+    taxlots.add_lot(conn, "2023-01-01", "own", 10, 5.0)
+
+    v = sensors.results_values(conn, price_eur=8.0, eurpln_rate=4.5,
+                               benchmark_instrument_id=None)
+
+    assert v["twr_pct"] is None  # portfolio_history jeszcze puste (job nocny go wypełnia)
+
+
+def test_results_values_twr_computed_from_portfolio_history(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+    taxlots.add_lot(conn, "2023-01-01", "own", 10, 5.0)
+    conn.execute(
+        "INSERT INTO portfolio_history (date, position_qty, market_value_eur) "
+        "VALUES ('2024-01-01', 10.0, 100.0), ('2024-01-02', 10.0, 110.0)")
+    conn.commit()
+
+    v = sensors.results_values(conn, price_eur=8.0, eurpln_rate=4.5,
+                               benchmark_instrument_id=None)
+
+    assert v["twr_pct"] == pytest.approx(10.0, abs=0.01)  # 100 -> 110, bez wpłat tego dnia
+
+
+def test_results_values_benchmark_counterfactual(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+    taxlots.add_lot(conn, "2023-01-01", "own", 10, 5.0)
+    bench_id = quotes.ensure_instrument(conn, "^OMXH25", "OMXH25", "EUR", "benchmark")
+    quotes.upsert_candles(conn, bench_id, "daily",
+                          [Candle(ts="2023-01-01T00:00:00+00:00", close=100.0),
+                           Candle(ts="2024-06-01T00:00:00+00:00", close=110.0)],
+                          source="yahoo")
+
+    v = sensors.results_values(conn, price_eur=8.0, eurpln_rate=4.5,
+                               benchmark_instrument_id=bench_id)
+
+    assert v["benchmark_omxh25_counterfactual_pln"] == pytest.approx(55.0, abs=0.01)

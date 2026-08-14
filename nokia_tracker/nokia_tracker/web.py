@@ -22,6 +22,9 @@ from . import format as fmt
 from . import portfolio as portfoliom
 from . import quotes, sensors
 from . import settings as settingsm
+from .analytics import attribution as analytics_attribution
+from .analytics import benchmark as analytics_benchmark
+from .analytics import returns as analytics_returns
 from .importers import computershare_pdf
 from .providers import fx_nbp
 from .tax import dividends as taxdiv
@@ -752,6 +755,77 @@ def create_app(db_path: str) -> Flask:
             return render_template(
                 "grants.html", active="grants", version=__version__,
                 espp=espp, lti=lti, valuation=valuation, vesting=vesting)
+        finally:
+            conn.close()
+
+    @app.get("/wyniki")
+    def wyniki_get():
+        """Krok 25 (docs/PLAN_KROK_25_wyniki.md): XIRR na wpłatach własnych,
+        TWR z materializowanej `portfolio_history` (przeliczanej nocnym jobem
+        — `rebuild_portfolio_history_job` w main.py), atrybucja zysku,
+        kontrfaktyczny benchmark OMXH25 — jako krzywa (`counterfactual_series`)
+        obok krzywej wartości portfela na tym samym wykresie."""
+        conn = _conn()
+        try:
+            ids = _ids(conn)
+            price_row = quotes.latest_quote(conn, ids["primary"], granularity="daily")
+            eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+            price_eur = price_row["close"] if price_row else None
+            eurpln_rate = eurpln_row["close"] if eurpln_row else None
+
+            history_rows = conn.execute(
+                "SELECT date, market_value_eur, market_value_pln FROM portfolio_history "
+                "ORDER BY date").fetchall()
+
+            xirr_pct = twr_pct = attribution = benchmark_today_pln = None
+            xirr_flows: list[tuple[str, float]] = []
+
+            # Krzywa wartości i tabela rok-po-roku wyłącznie z `portfolio_history`
+            # (przeliczana nocnym jobem) — NIEZALEŻNE od dzisiejszej ceny/kursu,
+            # więc renderują się nawet gdy dzisiejszy poll jeszcze nie zdążył.
+            chart_points = [
+                {"date": r["date"], "value_pln": r["market_value_pln"], "benchmark_pln": None}
+                for r in history_rows]
+            years: dict[str, dict] = {}
+            for r in history_rows:
+                y = r["date"][:4]
+                years.setdefault(y, {"start_pln": r["market_value_pln"]})
+                years[y]["end_pln"] = r["market_value_pln"]
+            yearly_returns = []
+            for y in sorted(years):
+                start, end = years[y]["start_pln"], years[y]["end_pln"]
+                pct = ((end - start) / start * 100) if start else None
+                yearly_returns.append(
+                    {"year": y, "start_pln": start, "end_pln": end, "pct": pct})
+
+            if price_eur and eurpln_rate:
+                today = date.today().isoformat()
+                current_qty = sum(r["qty_remaining"] for r in taxlots.open_lots(conn))
+                xirr_flows = analytics_returns.build_xirr_cashflows(
+                    conn, today, current_qty, price_eur)
+                xirr_result = analytics_returns.xirr(xirr_flows)
+                xirr_pct = xirr_result * 100 if xirr_result is not None else None
+
+                daily_values = [(r["date"], r["market_value_eur"]) for r in history_rows
+                                if r["market_value_eur"] is not None]
+                twr_flows = analytics_returns.build_twr_cashflows(conn)
+                twr_result = analytics_returns.twr(daily_values, twr_flows)
+                twr_pct = twr_result * 100 if twr_result is not None else None
+
+                attribution = analytics_attribution.decompose(conn, price_eur, eurpln_rate)
+                benchmark_today_pln = analytics_benchmark.counterfactual(
+                    conn, xirr_flows, ids["omxh25"])
+
+                bench_series = dict(analytics_benchmark.counterfactual_series(
+                    conn, xirr_flows, ids["omxh25"], [r["date"] for r in history_rows]))
+                for point in chart_points:
+                    point["benchmark_pln"] = bench_series.get(point["date"])
+
+            return render_template(
+                "results.html", active="wyniki", version=__version__,
+                xirr_pct=xirr_pct, twr_pct=twr_pct, attribution=attribution,
+                benchmark_today_pln=benchmark_today_pln, chart_points=chart_points,
+                yearly_returns=yearly_returns, has_history=bool(history_rows))
         finally:
             conn.close()
 

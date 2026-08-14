@@ -246,5 +246,58 @@ window.NT = (function () {
     });
   }
 
-  return { initPriceChart, initRowToggles, initFormPreview, initNavGroups };
+  function initValueChart(canvasId, points) {
+    // Krok 25: krzywa wartości portfela (PLN) vs kontrfaktyczny benchmark
+    // OMXH25 na tym samym wykresie — `points`: [{date, value_pln, benchmark_pln}].
+    const el = document.getElementById(canvasId);
+    if (!el || !window.Chart || !points || !points.length) return;
+
+    const labels = points.map((p) => formatLabel(p.date, "daily"));
+    new Chart(el.getContext("2d"), {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Portfel (PLN)",
+            data: points.map((p) => p.value_pln),
+            borderColor: cssVar("--series-1"),
+            backgroundColor: cssVar("--series-1") + "22",
+            fill: true,
+            pointRadius: 0,
+            tension: 0.15,
+            borderWidth: 2,
+          },
+          {
+            label: "OMXH25 (kontrfaktycznie, PLN)",
+            data: points.map((p) => p.benchmark_pln),
+            borderColor: cssVar("--series-2"),
+            backgroundColor: "transparent",
+            fill: false,
+            pointRadius: 0,
+            tension: 0.15,
+            borderWidth: 2,
+            borderDash: [4, 3],
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true, labels: { color: cssVar("--muted") } } },
+        scales: {
+          x: {
+            display: true,
+            ticks: { color: cssVar("--muted"), maxRotation: 0, autoSkip: true },
+            grid: { display: false },
+          },
+          y: { ticks: { color: cssVar("--muted") }, grid: { color: cssVar("--grid") } },
+        },
+      },
+    });
+  }
+
+  return {
+    initPriceChart, initRowToggles, initFormPreview, initNavGroups, initValueChart,
+  };
 })();

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -18,6 +18,7 @@ from waitress import serve
 from . import __version__, alerts, analysis, backup as backupm, db as dbm, forecasts, fx, ha_client
 from . import news, notifier, portfolio, quotes, sensors
 from . import settings as settingsm
+from .analytics import history as analytics_history
 from .importers import computershare_pdf
 from .tax import dividends as taxdiv
 from .tax import grants as grantsm
@@ -213,6 +214,8 @@ def main() -> None:
                 values.update(sensors.grants_values(c))
                 values.update(sensors.pit38_values(c, cfg))
                 values.update(sensors.whatif_values(c, cfg, values.get("price_eur")))
+                values.update(sensors.results_values(
+                    c, values.get("price_eur"), values.get("eurpln_rate"), omxh25_id))
 
                 mqtt_pub.publish(values)
 
@@ -381,6 +384,47 @@ def main() -> None:
             finally:
                 c.close()
 
+    def backfill_nbp_range_job() -> None:
+        """Krok 25 (docs/PLAN_KROK_25_wyniki.md): gęsta seria kursów NBP dla
+        `analytics/history.py` — pełny backfill 5 lat wstecz przy pierwszym
+        uruchomieniu (`nbp_rates` puste), potem codziennie tylko domyka lukę
+        od ostatniej znanej `effective_date` do dziś (kilka dni, nie cały
+        zakres — inaczej codzienny job powtarzałby te same ~5 zapytań w
+        nieskończoność, `fx_nbp.backfill_range()` sam nie wie, co już ma)."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                row = c.execute("SELECT MAX(effective_date) AS d FROM nbp_rates").fetchone()
+                years = settingsm.get_settings(c).get("history_backfill_years", 5)
+                since = row["d"] if row and row["d"] else (
+                    (datetime.now() - timedelta(days=365 * years)).date().isoformat())
+                today = datetime.now().date().isoformat()
+                inserted = fx_nbp.backfill_range(c, since, today)
+                if inserted:
+                    logger.info(
+                        "Backfill zakresu NBP: dodano %d publikacji (%s..%s)",
+                        inserted, since, today)
+            except Exception:
+                logger.exception("Backfill zakresu NBP nieudany")
+            finally:
+                c.close()
+
+    def rebuild_portfolio_history_job() -> None:
+        """Krok 25: przelicza `portfolio_history` od zera
+        (`analytics/history.py::rebuild()`) — materializowana krzywa wartości
+        portfela pod TWR (`sensors.results_values`) i wykres `/wyniki`.
+        Uruchamiane PO `backfill_nbp_range_job`, żeby kursy PLN na dzisiejszy
+        dzień były już dociągnięte przed przeliczeniem."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                n = analytics_history.rebuild(c, instrument_id)
+                logger.info("Krzywa wartości portfela przeliczona: %d dni", n)
+            except Exception:
+                logger.exception("Przeliczenie krzywej wartości portfela nieudane")
+            finally:
+                c.close()
+
     def check_vest_reminders() -> None:
         """Codziennie: reconciliation (loty -> transze, patrz reconcile_vesting) + przypomnienie
         o nadchodzącym vestingu (cfg['vest_reminder_days'] przed datą, krok 14). Reconciliation
@@ -494,6 +538,8 @@ def main() -> None:
     scheduler.add_job(prune_intraday_job, "cron", hour=3, minute=0)
     scheduler.add_job(auto_import_pdf_share, "interval", minutes=30)
     scheduler.add_job(nightly_backup_job, "cron", hour=4, minute=0)
+    scheduler.add_job(backfill_nbp_range_job, "cron", hour=5, minute=0)
+    scheduler.add_job(rebuild_portfolio_history_job, "cron", hour=5, minute=30)
     scheduler.start()
 
     app = create_app(db_path=db_path)

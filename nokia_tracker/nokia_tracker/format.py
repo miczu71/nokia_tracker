@@ -1,10 +1,11 @@
 """Krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): formatowanie liczb po polsku
 dla karty „Portfel" na pulpicie (separator tysięcy, przecinek dziesiętny).
 
-Rejestrowane jako filtry Jinja w `web.py::create_app` i użyte na razie WYŁĄCZNIE w
-`dashboard.html`'s karcie Portfel — reszta stron (podatkowe, /lots, /grants) celowo
-zostaje przy dotychczasowym `'%.Nf'|format(...)`, żeby nie zmieniać liczb, które
-muszą się dać bajtowo zestawić z wyciągiem/PIT-38.
+Rejestrowane jako filtry Jinja w `web.py::create_app`. Użyte w karcie Portfel na
+pulpicie i (od kroku 25) na `/wyniki` — obie strony pokazują liczby zagregowane,
+nie wymagające bajtowej zgodności z wyciągiem. Strony podatkowe (`/lots`, `/grants`,
+`/pit38`) celowo zostają przy dotychczasowym `'%.Nf'|format(...)`, żeby nie zmieniać
+liczb, które muszą się dać zestawić co do grosza z wyciągiem/PIT-38.
 
 Separator tysięcy to znak spacji nierozdzielającej U+00A0 (NIE encja `&nbsp;` —
 Jinja z autoescape zamieniłaby `&` na `&amp;` i zepsuła encję w renderowanym HTML).

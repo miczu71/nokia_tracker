@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat %}
+{% block title %}Wyniki — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Wyniki</h1>
+</div>
+
+<p class="disclaimer">
+  ⚠️ Kalkulator pomocniczy, nie doradztwo inwestycyjne. XIRR liczy się na gotówce,
+  którą realnie wydałeś na akcje własne — akcje dopasowania ESPP i transze LTI
+  wchodzą tylko do wartości końcowej jako darmowy przypływ, dlatego wynik bywa
+  bardzo wysoki i to jest poprawne. TWR neutralizuje moment wpłat i liczy się na
+  wartości rynkowej dodanej/odjętej niezależnie od źródła (darmowe akcje też) —
+  to jedyna z dwóch miar uczciwie porównywalna z indeksem.
+</p>
+
+{% if not has_history %}
+<div class="card">
+  <p class="muted">
+    Brak jeszcze danych do krzywej wartości portfela — pojawi się po pierwszym
+    nocnym przeliczeniu (job <code>rebuild_portfolio_history_job</code>, ok. 5:30),
+    o ile masz już przynajmniej jeden lot.
+  </p>
+</div>
+{% else %}
+
+<div class="card">
+  <div class="card-title">Zwrot</div>
+  <div class="grid stats">
+    {{ stat('XIRR (własne wpłaty)', xirr_pct|pct, '%') }}
+    {{ stat('TWR', twr_pct|pct, '%') }}
+    {{ stat('Zysk całkowity', attribution.total_pln|money if attribution else none, 'zł') }}
+    {{ stat('Kontrfaktyczny OMXH25 dziś', benchmark_today_pln|money, 'zł') }}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">Krzywa wartości portfela vs OMXH25</div>
+  <div class="chart-wrap">
+    <canvas id="value-chart" height="90"></canvas>
+  </div>
+  <p class="muted">
+    OMXH25: te same wpłaty własne (co do dnia i kwoty), gdyby poszły w indeks
+    zamiast Nokii, po cenie zamknięcia z dnia każdej wpłaty.
+  </p>
+</div>
+
+{% if attribution %}
+<div class="card">
+  <div class="card-title">Atrybucja zysku</div>
+  <div class="grid stats">
+    {{ stat('Zmiana kursu akcji', attribution.price_change_pln|money, 'zł') }}
+    {{ stat('Dopłata ESPP', attribution.espp_match_pln|money, 'zł') }}
+    {{ stat('Akcje LTI', attribution.lti_pln|money, 'zł') }}
+    {{ stat('Dywidendy (gotówka + DRIP)', attribution.dividends_pln|money, 'zł') }}
+    {{ stat('Efekt walutowy EUR/PLN', attribution.fx_effect_pln|money, 'zł') }}
+  </div>
+  <p class="muted">
+    Suma pięciu składników = zysk całkowity otwartej pozycji, co do grosza —
+    efekt walutowy liczony jako reszta, nie osobną formułą.
+  </p>
+</div>
+{% endif %}
+
+{% if yearly_returns %}
+<div class="card">
+  <div class="card-title">Zwrot rok po roku</div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Rok</th><th class="num">Wartość na początek</th>
+            <th class="num">Wartość na koniec</th><th class="num">Zmiana</th></tr>
+      </thead>
+      <tbody>
+        {% for row in yearly_returns %}
+        <tr>
+          <td>{{ row.year }}</td>
+          <td class="num">{{ row.start_pln|money }} zł</td>
+          <td class="num">{{ row.end_pln|money }} zł</td>
+          <td class="num">{{ row.pct|pct }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">
+    Zmiana wartości między pierwszym a ostatnim notowanym dniem roku — nie jest to
+    TWR/XIRR roczny (nie neutralizuje wpłat w trakcie roku), tylko orientacyjny
+    obraz krzywej powyżej.
+  </p>
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+NT.initValueChart('value-chart', {{ chart_points|tojson }});
+</script>
+{% endblock %}

@@ -53,3 +53,35 @@ def test_counterfactual_none_without_own_contributions(conn):
     bench_id = _seed_quotes(conn, "^OMXH25", {"2024-01-01": 10.0})
     result = benchmark.counterfactual(conn, [("2024-01-01", 100.0)], bench_id)
     assert result is None
+
+
+# ---- counterfactual_series(): krzywa dla wykresu /wyniki ----
+
+def test_counterfactual_series_none_before_first_contribution(conn):
+    bench_id = _seed_quotes(conn, "^OMXH25", {
+        "2024-01-01": 10.0, "2024-01-02": 10.0, "2024-01-03": 11.0,
+    })
+    cashflows = [("2024-01-02", -100.0)]
+
+    series = benchmark.counterfactual_series(
+        conn, cashflows, bench_id, ["2024-01-01", "2024-01-02", "2024-01-03"])
+
+    assert series == [
+        ("2024-01-01", None),
+        ("2024-01-02", 100.0),   # 10 jednostek * 10.0
+        ("2024-01-03", 110.0),   # 10 jednostek * 11.0
+    ]
+
+
+def test_counterfactual_series_accumulates_multiple_contributions(conn):
+    bench_id = _seed_quotes(conn, "^OMXH25", {
+        "2024-01-01": 10.0, "2024-02-01": 20.0, "2024-03-01": 25.0,
+    })
+    cashflows = [("2024-01-01", -100.0), ("2024-02-01", -200.0)]
+
+    series = benchmark.counterfactual_series(
+        conn, cashflows, bench_id, ["2024-01-01", "2024-02-01", "2024-03-01"])
+
+    assert series[0] == ("2024-01-01", 100.0)  # 10 jednostek * 10.0
+    assert series[1] == ("2024-02-01", 400.0)  # (10+10) jednostek * 20.0
+    assert series[2] == ("2024-03-01", 500.0)  # 20 jednostek * 25.0

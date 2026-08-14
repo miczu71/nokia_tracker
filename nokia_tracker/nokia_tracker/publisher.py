@@ -166,6 +166,16 @@ _ENTITIES: list[_Entity] = [
            "monetary", "total", "mdi:cash-refund"),
     _Entity("sensor", "whatif_sell_all_tax_pln", "Whatif Sell All Tax PLN", "PLN",
            "monetary", "total", "mdi:calculator-variant-outline"),
+    # --- wyniki: XIRR/TWR/atrybucja/benchmark (krok 25, 0.9.0) ---
+    _Entity("sensor", "xirr_own_pct", "XIRR Own Pct", "%", None, "measurement",
+           "mdi:chart-line-variant"),
+    _Entity("sensor", "twr_pct", "TWR Pct", "%", None, "measurement",
+           "mdi:chart-bell-curve-cumulative"),
+    _Entity("sensor", "fx_effect_pln", "FX Effect PLN", "PLN", "monetary",
+           "total", "mdi:currency-eur"),
+    _Entity("sensor", "benchmark_omxh25_counterfactual_pln",
+           "Benchmark OMXH25 Counterfactual PLN", "PLN", "monetary", "total",
+           "mdi:swap-horizontal"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

@@ -14,6 +14,9 @@ from . import forecasts as forecastsm
 from . import indicators as ind
 from . import market, quotes
 from . import tax as taxm
+from .analytics import attribution as analytics_attribution
+from .analytics import benchmark as analytics_benchmark
+from .analytics import returns as analytics_returns
 from .tax import grants as taxgrants
 from .tax import lots as taxlots
 from .tax import pit38 as taxpit38
@@ -367,3 +370,46 @@ def whatif_values(conn: sqlite3.Connection, cfg: dict, price_eur: float | None) 
 
     active_policy = result["active_policy"]
     return {"whatif_sell_all_tax_pln": result["policies"][active_policy]["tax_pln"]}
+
+
+def results_values(conn: sqlite3.Connection, price_eur: float | None,
+                   eurpln_rate: float | None,
+                   benchmark_instrument_id: int | None) -> dict:
+    """Sensory grupy 'Wyniki' (krok 25, 0.9.0): XIRR na wpłatach własnych,
+    TWR (z materializowanej `portfolio_history`, przeliczanej nocnym jobem —
+    `analytics/history.py::rebuild()`, `None` dopóki job nie zdążył jej
+    napełnić), efekt walutowy (rezyduum atrybucji `analytics/attribution.py`),
+    kontrfaktyczny benchmark OMXH25. `None` wszędzie bez ceny/kursu bieżącego
+    — ten sam wzorzec co `whatif_values`: sensor nie zgaduje."""
+    if not price_eur or not eurpln_rate:
+        return {
+            "xirr_own_pct": None, "twr_pct": None, "fx_effect_pln": None,
+            "benchmark_omxh25_counterfactual_pln": None,
+        }
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    current_qty = sum(r["qty_remaining"] for r in taxlots.open_lots(conn))
+
+    xirr_flows = analytics_returns.build_xirr_cashflows(conn, today, current_qty, price_eur)
+    xirr_result = analytics_returns.xirr(xirr_flows)
+
+    history_rows = conn.execute(
+        "SELECT date, market_value_eur FROM portfolio_history ORDER BY date").fetchall()
+    daily_values = [(r["date"], r["market_value_eur"]) for r in history_rows
+                    if r["market_value_eur"] is not None]
+    twr_flows = analytics_returns.build_twr_cashflows(conn)
+    twr_result = analytics_returns.twr(daily_values, twr_flows)
+
+    attribution = analytics_attribution.decompose(conn, price_eur, eurpln_rate)
+
+    benchmark_value = (
+        analytics_benchmark.counterfactual(conn, xirr_flows, benchmark_instrument_id)
+        if benchmark_instrument_id is not None else None)
+
+    return {
+        "xirr_own_pct": round(xirr_result * 100, 2) if xirr_result is not None else None,
+        "twr_pct": round(twr_result * 100, 2) if twr_result is not None else None,
+        "fx_effect_pln": round(attribution["fx_effect_pln"], 2),
+        "benchmark_omxh25_counterfactual_pln": (
+            round(benchmark_value, 2) if benchmark_value is not None else None),
+    }

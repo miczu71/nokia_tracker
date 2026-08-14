@@ -195,3 +195,22 @@ def test_discovery_payload_pit38_and_whatif_entities_present_with_object_id():
         assert payloads[key]["unique_id"] == f"nokia_tracker_{slug}"
         assert payloads[key]["device_class"] == "monetary"
         assert payloads[key]["unit_of_measurement"] == "PLN"
+
+
+# --- krok 25 (0.9.0): wyniki - XIRR/TWR/atrybucja/benchmark ---
+
+def test_discovery_payload_results_entities_present():
+    payloads = discovery_payloads("0.9.0")
+    pct_slugs = ("xirr_own_pct", "twr_pct")
+    pln_slugs = ("fx_effect_pln", "benchmark_omxh25_counterfactual_pln")
+    for slug in pct_slugs + pln_slugs:
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        assert key in payloads
+        assert payloads[key]["object_id"] == f"nokia_tracker_{slug}"
+    for slug in pct_slugs:
+        assert payloads[f"homeassistant/sensor/nokia_tracker/{slug}/config"][
+            "unit_of_measurement"] == "%"
+    for slug in pln_slugs:
+        p = payloads[f"homeassistant/sensor/nokia_tracker/{slug}/config"]
+        assert p["unit_of_measurement"] == "PLN"
+        assert p["device_class"] == "monetary"

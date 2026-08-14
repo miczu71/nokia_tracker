@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.9.0] - 2026-08-14
+
+Krok 25 (`docs/PLAN_KROK_25_wyniki.md`), druga fala z `docs/ROADMAP.md` — wyniki: XIRR, TWR,
+atrybucja zysku, kontrfaktyczny benchmark. Dotąd jedyną miarą zwrotu był punktowy
+`unrealized_pnl_pct`/`total_return_pct` — zero miary zwrotu w czasie i zero rozbicia na to,
+co go faktycznie napędza.
+
+### Dodano
+- **Strona „Wyniki"** (grupa „Portfel") — XIRR na wpłatach własnych (gotówka realnie
+  wydana na akcje `own`; dopasowanie ESPP/LTI wchodzi tylko do wartości końcowej jako
+  darmowy przypływ) obok TWR (neutralizuje moment wpłat, jedyna miara uczciwie
+  porównywalna z indeksem), atrybucja zysku na pięć składników (zmiana kursu akcji /
+  dopłata ESPP / akcje LTI / dywidendy gotówka+DRIP / efekt walutowy EUR-PLN —
+  sumujące się co do grosza z zyskiem całkowitym, efekt walutowy liczony jako reszta
+  z definicji), krzywa wartości portfela (PLN) na wykresie razem z kontrfaktycznym
+  OMXH25 („gdyby te same wpłaty poszły w indeks"), tabela zwrotu rok po roku.
+- 4 nowe sensory MQTT: `xirr_own_pct`, `twr_pct`, `fx_effect_pln`,
+  `benchmark_omxh25_counterfactual_pln`.
+- `analytics/` (nowy pakiet) — `history.py::rebuild()` (dzienna rekonstrukcja wartości
+  portfela BEZ sieci, z lotów/alokacji sprzedaży/`quotes`/gęstych `nbp_rates`,
+  materializowana w nowej tabeli `portfolio_history`), `returns.py::xirr()`/`twr()`
+  (Newton + bisekcja awaryjna, czysty Python — bez numpy, `xirr()` zweryfikowany na
+  referencyjnym przykładzie z dokumentacji Excela, 37.3%), `attribution.py::decompose()`,
+  `benchmark.py::counterfactual()`/`counterfactual_series()`.
+- `fx_nbp.backfill_range()` — gęsta seria kursów NBP (prerequisite krzywej wartości),
+  kluczowana `effective_date` zamiast leniwego cache per zdarzenie podatkowe.
+- Migracja bazy `v7` (`portfolio_history`).
+- Dwa nowe joby schedulera: `backfill_nbp_range_job` (5:00, inkrementalny — pełny
+  backfill 5 lat tylko przy pierwszym uruchomieniu) i `rebuild_portfolio_history_job`
+  (5:30, po NBP).
+
+### Naprawiono (znalezione w trakcie TDD, przed wdrożeniem)
+- Krzywa wartości i tabela rok-po-roku na `/wyniki` były błędnie zagnieżdżone pod
+  warunkiem „mam dzisiejszą cenę" w pierwszej wersji trasy, mimo że liczą się wyłącznie
+  z `portfolio_history` (materializowanej nocnym jobem, niezależnej od bieżącego pollu
+  cenowego) — strona pokazywałaby pusty wykres/tabelę przez cały dzień do najbliższego
+  odświeżenia ceny, mimo że dane historyczne już były dostępne. Złapane testem przed
+  wdrożeniem, nie na produkcji.
+
+### Techniczne
+- TDD przez cały krok — każdy moduł testowany na realnych obliczeniach, nie mockach.
+  Kryterium akceptacji atrybucji: suma 5 składników == zysk całkowity z dokładnością do
+  grosza, sprawdzane na scenariuszu mieszanym (own+matched+lti+DRIP+dywidenda gotówkowa,
+  cena i FX oba w ruchu).
+- `format.py`'s `money`/`qty`/`pct` (dotąd tylko karta „Portfel" na pulpicie) rozszerzone
+  na `/wyniki` — druga strona pokazująca liczby zagregowane, nie wymagająca bajtowej
+  zgodności z wyciągiem.
+- 54 nowe testy (645 → 699), zero zmian w istniejących encjach/silniku podatkowym.
+
 ## [0.8.1] - 2026-08-14
 
 Krok 24 (`docs/PLAN_KROK_24_backup.md`), pierwsza fala z nowej `docs/ROADMAP.md` — kopia

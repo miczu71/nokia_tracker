@@ -10,14 +10,25 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.8.1** — pierwsza fala z [`docs/ROADMAP.md`](docs/ROADMAP.md): kopia
-zapasowa i przywracanie danych. Nowa strona **Kopia zapasowa** (w grupie „Dane”) eksportuje
-pełny zrzut bazy (loty, sprzedaże, granty, transze, dywidendy + manifest wersji) jako ZIP do
-pobrania, i pozwala przywrócić z takiego pliku — zawsze z **podglądem różnicy przed zapisem**
-(ile wierszy przybędzie/zniknie per tabela), nigdy nie nadpisując w ciemno. Nocny automat
-(4:00) zapisuje kopię na `/share/nokia_tracker/backup/` z rotacją ostatnich 14 dni — chroni
-przed powtórką znanego scenariusza (przeinstalowanie add-onu czyści `/data`). Zero zmian w
-istniejących encjach/silniku — nowy moduł, nowa strona.
+**Status:** wydanie **0.9.0** — druga fala z [`docs/ROADMAP.md`](docs/ROADMAP.md): wyniki
+(XIRR, TWR, atrybucja zysku, benchmark). Nowa strona **Wyniki** (w grupie „Portfel”) pokazuje
+**XIRR na wpłatach własnych** (stopa zwrotu z realnej gotówki wydanej na akcje — dopasowanie
+ESPP i transze LTI liczą się tylko do wartości końcowej, jako darmowy przypływ, dlatego wynik
+bywa bardzo wysoki i to jest poprawne) obok **TWR** (neutralizuje moment wpłat, jedyna miara
+uczciwie porównywalna z indeksem), **atrybucję zysku** na pięć składników — zmiana kursu akcji,
+dopłata ESPP, akcje LTI, dywidendy (gotówka + DRIP), efekt walutowy EUR/PLN — sumujących się co
+do grosza z zyskiem całkowitym, **krzywą wartości portfela** (PLN, od pierwszego lotu) na
+wykresie razem z **kontrfaktycznym OMXH25** (te same wpłaty, gdyby poszły w indeks), i tabelę
+zwrotu rok po roku. 4 nowe sensory MQTT. Krzywa wartości liczona nocnym jobem (bez sieci, z już
+zebranych danych), gęsta seria kursów NBP dociągana przyrostowo osobnym jobem.
+
+Wcześniej (0.8.1): pierwsza fala z roadmapy — kopia zapasowa i przywracanie danych. Strona
+**Kopia zapasowa** (w grupie „Dane”) eksportuje pełny zrzut bazy (loty, sprzedaże, granty,
+transze, dywidendy + manifest wersji) jako ZIP do pobrania, i pozwala przywrócić z takiego
+pliku — zawsze z **podglądem różnicy przed zapisem** (ile wierszy przybędzie/zniknie per
+tabela), nigdy nie nadpisując w ciemno. Nocny automat (4:00) zapisuje kopię na
+`/share/nokia_tracker/backup/` z rotacją ostatnich 14 dni — chroni przed powtórką znanego
+scenariusza (przeinstalowanie add-onu czyści `/data`).
 
 Wcześniej (0.8.0): karta „Portfel” na pulpicie przebudowana na kafelki, dla czytelności. Suma
 na samej górze („Wartość całkowita”, dawniej „Razem” na dole, często poza ekranem) nad trzema
@@ -82,6 +93,7 @@ rozwijają się natywnie bez JS (`<details>`), z JS jako pływające menu.
 | **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu i formularz rejestracji sprzedaży — oba *(od 0.5.0)* z podglądem na żywo pod polami (kurs NBP, koszt/przychód/podatek PLN, plan FIFO), zanim klikniesz przycisk; odrzuca daty przyszłe; tabela wszystkich lotów z kursem NBP zamrożonym per lot, link do rozliczenia sprzedaży |
 | **Sprzedaże** | Karta „Podsumowanie" z KPI za wybrany rok (przychód/koszt/dochód/podatek/na rękę); rejestr transakcji — jeden wiersz na sprzedaż z kluczowymi kwotami i przyciskiem „Cofnij" *(od 0.5.0 widocznym od razu, nie tylko po rozwinięciu)*, klik rozwija pełne rozbicie FIFO (który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży z linkiem do tabeli, kwoty EUR/PLN) |
 | **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare, pasek kafelków *(od 0.5.0)* niezvestowane/następny vesting, status transz (oczekuje/nabyte/zaległe), **wartość dziś** (bieżąca cena/kurs) i **wartość zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży, EUR i PLN) per transza |
+| **Wyniki** *(od 0.9.0)* | XIRR na wpłatach własnych i TWR obok siebie, atrybucja zysku na 5 składników (kurs akcji / dopłata ESPP / LTI / dywidendy / efekt EUR-PLN, sumujące się co do grosza), krzywa wartości portfela (PLN) na wykresie razem z kontrfaktycznym OMXH25, tabela zwrotu rok po roku |
 | **Dywidendy** | Formularz dodania wypłaty *(od 0.5.0 z podglądem na żywo — kurs NBP, podatek, dopłata w PL — pod polami)*, jedno źródło prawdy z kursem NBP zamrożonym na Record Date, kafelki podsumowania **w PLN** z EUR jako podlinią *(od 0.5.0 — dawniej licznik EUR na kursach bieżących nie zgadzał się z tabelą poniżej)*, historia z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji |
 | **Importy** | Upload wyciągu Computershare (PDF), kolejka konfliktów (rozbieżności vs poprzedni import, w tym potwierdzenie realnej sprzedaży Withhold-to-Cover), historia importów |
 | **PIT-38** | Karta „Do wpisania w deklarację" (poz. C + sekcja G + kafelek RAZEM DO ZAPŁATY) jako pierwszy ekran; niżej: 3 kafelki polityk kosztu (podstawa prawna w zwiniętym rozbiciu), sekcja G scalona z PIT/ZG (schowana, gdy brak dywidend w roku), symulacja „co jeśli sprzedam teraz" *(od 0.5.0 z wynikiem na żywo bez przeładowania strony)*, ślad obliczeń per lot pogrupowany po dacie sprzedaży, eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku |
@@ -259,6 +271,15 @@ prefiks niezależnie od nazwy encji).
 | `sensor.nokia_tracker_pit38_dividend_due_pln` | Dopłata w PL od dywidend (sekcja G), na kursie NBP zamrożonym per wypłata |
 | `sensor.nokia_tracker_pit38_reclaimable_pln` | Kwota do odzyskania z fińskiego Vero (sekcja G), w PLN |
 | `sensor.nokia_tracker_whatif_sell_all_tax_pln` | Podatek, gdyby dziś sprzedać całą otwartą pozycję po cenie bieżącej — `unknown` bez otwartych lotów/ceny |
+
+### Wyniki *(od 0.9.0)*
+
+| Encja | Opis |
+|---|---|
+| `sensor.nokia_tracker_xirr_own_pct` | Roczna stopa zwrotu (XIRR) na gotówce realnie wydanej na akcje własne — dopasowanie ESPP/LTI liczy się tylko do wartości końcowej |
+| `sensor.nokia_tracker_twr_pct` | Time-weighted return — neutralizuje moment wpłat, jedyna miara porównywalna z indeksem wprost |
+| `sensor.nokia_tracker_fx_effect_pln` | Część zysku wynikająca WYŁĄCZNIE ze zmiany kursu EUR/PLN od dnia nabycia każdego lotu do dziś |
+| `sensor.nokia_tracker_benchmark_omxh25_counterfactual_pln` | Wartość dziś, gdyby te same wpłaty własne (co do dnia i kwoty) poszły w OMXH25 zamiast Nokii |
 
 ## Serwisy
 

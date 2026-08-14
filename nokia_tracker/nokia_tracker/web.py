@@ -10,12 +10,14 @@ import io
 import json
 import logging
 import os
+import secrets
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 import openpyxl
 from flask import Flask, Response, redirect, render_template, request, url_for
 
-from . import __version__, analysis, db as dbm, fx
+from . import __version__, analysis, backup as backupm, db as dbm, fx
 from . import format as fmt
 from . import portfolio as portfoliom
 from . import quotes, sensors
@@ -838,6 +840,101 @@ def create_app(db_path: str) -> Flask:
                 return redirect(url_for("imports_get", error=str(e)))
         finally:
             conn.close()
+
+    def _restore_dir() -> Path:
+        d = Path(db_path).parent / "tmp_restore"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def _cleanup_stale_restore_files(restore_dir: Path, keep_token: str | None) -> None:
+        """Pliki podglądu przywracania zawierają pełną kopię bazy (dane
+        podatkowe) — nie zostają na dysku bezterminowo, jeśli użytkownik
+        wgra plik i nigdy nie potwierdzi ani nie odrzuci podglądu."""
+        cutoff = datetime.now().timestamp() - 3600
+        for f in restore_dir.glob("*.zip"):
+            if keep_token and f.stem == keep_token:
+                continue
+            if f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+
+    def _backup_dir() -> Path:
+        return Path(os.environ.get("BACKUP_SHARE", "/share/nokia_tracker")) / "backup"
+
+    @app.get("/dane")
+    def data_get():
+        conn = _conn()
+        try:
+            token = request.args.get("token")
+            restore_dir = _restore_dir()
+            _cleanup_stale_restore_files(restore_dir, token)
+
+            preview = None
+            preview_error = None
+            if token:
+                zip_path = restore_dir / f"{token}.zip"
+                if zip_path.exists():
+                    try:
+                        preview = backupm.restore_preview(db_path, zip_path.read_bytes())
+                    except backupm.IncompatibleBackupError as e:
+                        preview_error = str(e)
+                else:
+                    preview_error = "Podgląd wygasł — wgraj plik ponownie."
+
+            conflicts_count = conn.execute(
+                "SELECT COUNT(*) FROM import_conflicts WHERE resolved = 0").fetchone()[0]
+
+            backup_dir = _backup_dir()
+            last_snapshot = None
+            if backup_dir.is_dir():
+                snapshots = sorted(backup_dir.glob("nokia_*.zip"))
+                if snapshots:
+                    stat = snapshots[-1].stat()
+                    last_snapshot = {
+                        "name": snapshots[-1].name,
+                        "size_kb": round(stat.st_size / 1024, 1),
+                        "mtime": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+                    }
+
+            return render_template(
+                "data.html", active="data", version=__version__,
+                token=token, preview=preview, preview_error=preview_error,
+                conflicts_count=conflicts_count, last_snapshot=last_snapshot,
+                restored=request.args.get("restored") == "1",
+                error=request.args.get("error"))
+        finally:
+            conn.close()
+
+    @app.get("/dane/eksport.zip")
+    def data_export_zip():
+        data = backupm.export_zip(db_path)
+        filename = f"nokia_tracker_{date.today().isoformat()}.zip"
+        return Response(
+            data, mimetype="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+    @app.post("/dane/import/preview")
+    def data_import_preview():
+        uploaded = request.files.get("backup_file")
+        if not uploaded or not uploaded.filename:
+            return redirect(url_for("data_get"))
+        token = secrets.token_urlsafe(16)
+        (_restore_dir() / f"{token}.zip").write_bytes(uploaded.read())
+        return redirect(url_for("data_get", token=token))
+
+    @app.post("/dane/import/confirm")
+    def data_import_confirm():
+        token = request.form.get("token", "")
+        zip_path = _restore_dir() / f"{token}.zip"
+        if not token or not zip_path.exists():
+            return redirect(url_for("data_get", error="Podgląd wygasł — wgraj plik ponownie."))
+        try:
+            with dbm.WRITE_LOCK:
+                backupm.restore_apply(db_path, zip_path.read_bytes())
+        except backupm.IncompatibleBackupError as e:
+            return redirect(url_for("data_get", error=str(e)))
+        finally:
+            zip_path.unlink(missing_ok=True)
+        return redirect(url_for("data_get", restored="1"))
 
     @app.get("/news")
     def news_page():

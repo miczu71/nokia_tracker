@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Kopia zapasowa — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Kopia zapasowa</h1>
+  {% if restored %}<span class="badge saved">Dane przywrócone</span>{% endif %}
+</div>
+
+{% if error %}<p class="disclaimer error">⚠️ {{ error }}</p>{% endif %}
+
+<p class="disclaimer">
+  ⚠️ Przywracanie zastępuje CAŁĄ bazę zawartością wgranego pliku — to nie jest import
+  przyrostowy jak na stronie „Importy". Nigdy nie nadpisuje w ciemno: najpierw zobaczysz
+  różnicę poniżej, dopiero potwierdzenie zapisuje.
+</p>
+
+<div class="card">
+  <div class="card-title">Eksport</div>
+  <p class="muted">
+    Pełny zrzut bazy (loty, sprzedaże, granty, transze, dywidendy) + manifest wersji —
+    do trzymania poza tym dodatkiem, na wypadek przeinstalowania.
+  </p>
+  <a class="btn primary" href="{{ url_for('data_export_zip') }}">Pobierz kopię (ZIP)</a>
+  {% if last_snapshot %}
+  <p class="muted">
+    Ostatnia kopia automatyczna: {{ last_snapshot.name }} ({{ last_snapshot.size_kb }} KB,
+    {{ last_snapshot.mtime }})
+  </p>
+  {% else %}
+  <p class="muted">Brak jeszcze automatycznej kopii nocnej — pierwsza powstanie dziś o 4:00.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Przywracanie</div>
+  {% if preview_error %}
+  <p class="disclaimer error">⚠️ {{ preview_error }}</p>
+  {% elif preview %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Tabela</th><th class="num">Przybędzie</th><th class="num">Zniknie</th><th class="num">Bez zmian</th></tr>
+      </thead>
+      <tbody>
+        {% for table, d in preview.diff.items() %}
+        <tr>
+          <td>{{ table }}</td>
+          <td class="num">{{ d.added }}</td>
+          <td class="num">{{ d.removed }}</td>
+          <td class="num">{{ d.unchanged }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="disclaimer">
+    Kopia z {{ preview.manifest.exported_at }} (wersja dodatku {{ preview.manifest.app_version }}).
+    Potwierdzenie zastąpi bieżące dane powyższą zawartością — nieodwracalnie.
+  </p>
+  <form method="post" action="{{ url_for('data_import_confirm') }}">
+    <input type="hidden" name="token" value="{{ token }}">
+    <button class="btn primary" type="submit">Potwierdź przywrócenie</button>
+  </form>
+  {% else %}
+  <form class="form" method="post" action="{{ url_for('data_import_preview') }}" enctype="multipart/form-data">
+    <div class="row2">
+      <label>Plik ZIP (z tego samego add-onu)
+        <input type="file" name="backup_file" accept=".zip" required>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Pokaż różnicę</button>
+    </div>
+  </form>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Stan systemu</div>
+  <p class="muted">
+    Nierozstrzygnięte konflikty importu: {{ conflicts_count }}
+    {% if conflicts_count %}— <a href="{{ url_for('imports_get') }}">zobacz na Importach</a>{% endif %}
+  </p>
+</div>
+
+{% endblock %}

@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.8.1] - 2026-08-14
+
+Krok 24 (`docs/PLAN_KROK_24_backup.md`), pierwsza fala z nowej `docs/ROADMAP.md` — kopia
+zapasowa i przywracanie danych. Dodatek nie miał dotąd żadnego sposobu na eksport własnych
+danych ani ochronę przed znanym scenariuszem: cykl przeinstalowania add-onu (używany np. przy
+odtwarzaniu ze starszego kodu, patrz `reference_supervisor_git_addon_rebuild`) czyści `/data`.
+
+### Dodano
+- **Strona „Kopia zapasowa"** (grupa „Dane") — eksport pełnego zrzutu bazy jako ZIP
+  (`nokia.db` przez spójny `Connection.backup()`, `manifest.json` z wersją/schematem/licznikami
+  wierszy, czytelne CSV sześciu tabel: loty/sprzedaże/alokacje/granty/transze/dywidendy).
+- **Przywracanie z podglądem różnicy przed zapisem** — wgranie ZIP-a pokazuje ile wierszy
+  przybędzie/zniknie/zostanie bez zmian per tabela, dopiero jawne potwierdzenie zapisuje.
+  Ten sam kontrakt „nigdy nie nadpisuj w ciemno" co importer Computershare. Kopia z nowszego
+  schematu niż obsługiwany przez zainstalowane wydanie jest odrzucana z czytelnym komunikatem
+  (starszy schemat jest dozwolony — dociąga go `migrate()` po przywróceniu).
+- **Nocny auto-snapshot** (4:00) do `/share/nokia_tracker/backup/nokia_YYYY-MM-DD.zip`,
+  rotacja ostatnich 14 dni.
+- `backup.py` — `export_zip()`/`restore_preview()`/`restore_apply()`, testowalne bez
+  Flaska/schedulera na prawdziwych plikach SQLite. `db.SCHEMA_VERSION` (nowa stała, `PRAGMA
+  user_version` docelowe po pełnym `migrate()`) jako jedno źródło prawdy zamiast duplikowania
+  liczby migracji w kolejnych modułach.
+
+### Techniczne
+- TDD przez cały krok — 13 nowych testów (6 `backup.py` + 7 tras `/dane`), 645 total
+  (632 → 645), wszystkie napisane i obserwowane jako czerwone przed implementacją.
+- Zero zmian w istniejących encjach MQTT czy silniku podatkowym/portfelowym.
+
 ## [0.8.0] - 2026-08-12
 
 Krok 23 (`docs/PLAN_KROK_23_portfel_kafelki.md`) — karta „Portfel” na pulpicie przebudowana

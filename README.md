@@ -10,16 +10,24 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.8.0** — karta „Portfel” na pulpicie przebudowana na kafelki, dla
-czytelności. Suma teraz na samej górze („Wartość całkowita”, dawniej „Razem” na dole, często
-poza ekranem) nad trzema równorzędnymi kubełkami — **Wolne** (można sprzedać), **Z
-ograniczeniem** (widoczny tylko gdy dotyczy), **Zablokowane** (nienabyte dopasowania ESPP/
-transze LTI) — każdy z tą samą strukturą (ilość, kwota **PLN** jako główna, EUR jako druga
-linia — jedyne miejsce w apce z PLN na pierwszym planie). Liczby dostały separator tysięcy i
-ilości skrócone do 2 miejsc po przecinku (`143 618 zł` zamiast `143618`, `2 887,05 akcji`
-zamiast `2887.05134`) — pełna precyzja zostaje tam, gdzie liczy się zgodność co do grosza z
-wyciągiem (ostrzeżenie o zaległych transzach, Loty/Granty/PIT-38). Zero zmian w liczbach czy
-silniku podatkowym — wyłącznie prezentacja.
+**Status:** wydanie **0.8.1** — pierwsza fala z [`docs/ROADMAP.md`](docs/ROADMAP.md): kopia
+zapasowa i przywracanie danych. Nowa strona **Kopia zapasowa** (w grupie „Dane”) eksportuje
+pełny zrzut bazy (loty, sprzedaże, granty, transze, dywidendy + manifest wersji) jako ZIP do
+pobrania, i pozwala przywrócić z takiego pliku — zawsze z **podglądem różnicy przed zapisem**
+(ile wierszy przybędzie/zniknie per tabela), nigdy nie nadpisując w ciemno. Nocny automat
+(4:00) zapisuje kopię na `/share/nokia_tracker/backup/` z rotacją ostatnich 14 dni — chroni
+przed powtórką znanego scenariusza (przeinstalowanie add-onu czyści `/data`). Zero zmian w
+istniejących encjach/silniku — nowy moduł, nowa strona.
+
+Wcześniej (0.8.0): karta „Portfel” na pulpicie przebudowana na kafelki, dla czytelności. Suma
+na samej górze („Wartość całkowita”, dawniej „Razem” na dole, często poza ekranem) nad trzema
+równorzędnymi kubełkami — **Wolne** (można sprzedać), **Z ograniczeniem** (widoczny tylko gdy
+dotyczy), **Zablokowane** (nienabyte dopasowania ESPP/transze LTI) — każdy z tą samą strukturą
+(ilość, kwota **PLN** jako główna, EUR jako druga linia — jedyne miejsce w apce z PLN na
+pierwszym planie). Liczby dostały separator tysięcy i ilości skrócone do 2 miejsc po przecinku
+(`143 618 zł` zamiast `143618`, `2 887,05 akcji` zamiast `2887.05134`) — pełna precyzja zostaje
+tam, gdzie liczy się zgodność co do grosza z wyciągiem (ostrzeżenie o zaległych transzach,
+Loty/Granty/PIT-38). Zero zmian w liczbach czy silniku podatkowym — wyłącznie prezentacja.
 
 Wcześniej (0.6.0): pulpit pokazuje **całe** portfolio, nie tylko akcje uwolnione: podział
 „W posiadaniu” (z linią wolne/z ograniczeniem, gdy część świeżo kupionych akcji ESPP czeka na
@@ -79,6 +87,7 @@ rozwijają się natywnie bez JS (`<details>`), z JS jako pływające menu.
 | **PIT-38** | Karta „Do wpisania w deklarację" (poz. C + sekcja G + kafelek RAZEM DO ZAPŁATY) jako pierwszy ekran; niżej: 3 kafelki polityk kosztu (podstawa prawna w zwiniętym rozbiciu), sekcja G scalona z PIT/ZG (schowana, gdy brak dywidend w roku), symulacja „co jeśli sprzedam teraz" *(od 0.5.0 z wynikiem na żywo bez przeładowania strony)*, ślad obliczeń per lot pogrupowany po dacie sprzedaży, eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku |
 | **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza), kolumna źródła *(od 0.5.0)* |
 | **Prognozy** | Kafelek trafności historycznej (MAPE) *(od 0.5.0)*, historia prognoz 1w/1m/12m vs zrealizowana cena (EUR) |
+| **Kopia zapasowa** *(od 0.8.1)* | Eksport pełnego zrzutu bazy (ZIP: `nokia.db` + manifest + CSV lotów/sprzedaży/grantów/transz/dywidend), przywracanie z podglądem różnicy per tabela przed zapisem (nigdy nie nadpisuje w ciemno), informacja o ostatniej kopii nocnej i liczbie nierozstrzygniętych konfliktów importu |
 | **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia, **stawki podatkowe** *(od 0.5.0 — podatek u źródła Finlandia, stawka traktatowa, Belka, domyślny rok podatkowy; dawniej tylko do odczytu)* |
 
 ## Odporność na niestabilne źródła

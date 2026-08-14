@@ -249,6 +249,10 @@ _MIGRATIONS = [
     """,
 ]
 
+# Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,
+# backup.py) — jedno miejsce, żeby nic nie duplikowało tej liczby ręcznie.
+SCHEMA_VERSION = len(_MIGRATIONS)
+
 
 def get_conn(db_path: str | None = None) -> sqlite3.Connection:
     """WAL + busy_timeout — bez tego równoległe joby APScheduler (publish_sensors,

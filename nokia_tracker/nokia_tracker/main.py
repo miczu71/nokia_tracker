@@ -15,7 +15,7 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
-from . import __version__, alerts, analysis, db as dbm, forecasts, fx, ha_client
+from . import __version__, alerts, analysis, backup as backupm, db as dbm, forecasts, fx, ha_client
 from . import news, notifier, portfolio, quotes, sensors
 from . import settings as settingsm
 from .importers import computershare_pdf
@@ -323,6 +323,26 @@ def main() -> None:
             finally:
                 c.close()
 
+    def nightly_backup_job() -> None:
+        """Krok 24 (docs/PLAN_KROK_24_backup.md): kopia zapasowa na `/share`,
+        żeby dane podatkowe przeżyły cykl przeinstalowania add-onu (znane
+        wyczyszczenie /data, patrz reference_supervisor_git_addon_rebuild w
+        pamięci projektu). `export_zip()` czyta bazę przez `Connection.backup()`
+        — bezpieczne równolegle z resztą schedulera dzięki WAL, bez WRITE_LOCK."""
+        snapshot_dir = Path(backup_share) / "backup"
+        try:
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            name = f"nokia_{datetime.now():%Y-%m-%d}.zip"
+            (snapshot_dir / name).write_bytes(backupm.export_zip(db_path))
+            logger.info("Nocna kopia zapasowa zapisana: %s", name)
+
+            keep = 14
+            snapshots = sorted(snapshot_dir.glob("nokia_*.zip"))
+            for stale in snapshots[:-keep]:
+                stale.unlink(missing_ok=True)
+        except Exception:
+            logger.exception("Nocna kopia zapasowa nieudana")
+
     def backfill_nbp_rates() -> None:
         """Codziennie: uzupełnia kursy NBP lotom zapisanym, gdy NBP było
         chwilowo niedostępne (tax/lots.py::add_lot nie blokuje zapisu na
@@ -473,6 +493,7 @@ def main() -> None:
     scheduler.add_job(check_vest_reminders, "cron", hour=6, minute=30)
     scheduler.add_job(prune_intraday_job, "cron", hour=3, minute=0)
     scheduler.add_job(auto_import_pdf_share, "interval", minutes=30)
+    scheduler.add_job(nightly_backup_job, "cron", hour=4, minute=0)
     scheduler.start()
 
     app = create_app(db_path=db_path)

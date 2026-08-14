@@ -184,3 +184,52 @@ def test_backfill_table_numbers_skips_rows_already_filled(conn, monkeypatch):
 
     monkeypatch.setattr("nokia_tracker.providers.fx_nbp.requests.get", fake_get)
     assert fx_nbp.backfill_table_numbers(conn) == 0
+
+
+# ---- krok 25: backfill_range() — seria gęsta dla analytics/history.py ----
+
+def test_backfill_range_inserts_all_rates_keyed_by_effective_date(
+        conn, monkeypatch, nbp_range_fixture):
+    monkeypatch.setattr(
+        "nokia_tracker.providers.fx_nbp.requests.get",
+        lambda url, params=None, timeout=None: _FakeResponse(200, nbp_range_fixture))
+    inserted = fx_nbp.backfill_range(conn, "2023-01-01", "2023-01-10")
+    assert inserted == 6
+    rows = conn.execute("SELECT date, rate, effective_date, table_no FROM nbp_rates "
+                        "ORDER BY date").fetchall()
+    assert len(rows) == 6
+    last = rows[-1]
+    assert last["date"] == "2023-01-10"
+    assert last["effective_date"] == "2023-01-10"
+    assert last["rate"] == pytest.approx(4.6981)
+    assert last["table_no"] == "006/A/NBP/2023"
+
+
+def test_backfill_range_is_idempotent(conn, monkeypatch, nbp_range_fixture):
+    monkeypatch.setattr(
+        "nokia_tracker.providers.fx_nbp.requests.get",
+        lambda url, params=None, timeout=None: _FakeResponse(200, nbp_range_fixture))
+    first = fx_nbp.backfill_range(conn, "2023-01-01", "2023-01-10")
+    second = fx_nbp.backfill_range(conn, "2023-01-01", "2023-01-10")
+    assert first == 6
+    assert second == 0  # wszystko już w bazie, INSERT OR IGNORE
+
+
+def test_backfill_range_chunks_windows_over_367_days(conn, monkeypatch):
+    calls = []
+
+    def fake_get(url, params=None, timeout=None):
+        calls.append(url)
+        return _FakeResponse(200, {"rates": []})
+
+    monkeypatch.setattr("nokia_tracker.providers.fx_nbp.requests.get", fake_get)
+    fx_nbp.backfill_range(conn, "2020-01-01", "2024-01-01")  # ~1461 dni
+    assert len(calls) >= 4  # 1461 / 367 -> co najmniej 4 okna
+
+
+def test_backfill_range_skips_404_window_without_raising(conn, monkeypatch):
+    def fake_get(url, params=None, timeout=None):
+        return _FakeResponse(404, {})
+
+    monkeypatch.setattr("nokia_tracker.providers.fx_nbp.requests.get", fake_get)
+    assert fx_nbp.backfill_range(conn, "2023-01-01", "2023-01-10") == 0

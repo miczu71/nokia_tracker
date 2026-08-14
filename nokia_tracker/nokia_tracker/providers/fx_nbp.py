@@ -158,3 +158,45 @@ def backfill_table_numbers(conn: sqlite3.Connection) -> int:
         filled += 1
     conn.commit()
     return filled
+
+
+_MAX_WINDOW_DAYS = 367  # limit okna endpointu zakresowego NBP
+
+
+def backfill_range(conn: sqlite3.Connection, start_date: str, end_date: str) -> int:
+    """Gęsta seria kursów NBP dla `analytics/history.py` (krok 25) — w
+    odróżnieniu od `rate_on_or_before()`/`rate_for_event()` (leniwy cache
+    per zapytany dzień zdarzenia podatkowego, stąd rzadki) zapisuje KAŻDĄ
+    publikację w oknie, kluczowaną własną `effective_date` (rate ==
+    effective_date == date), więc krzywa wartości portfela może czytać
+    'ostatni kurs <= D' czystym odczytem SQL, bez sieci per dzień.
+
+    Endpoint zakresowy NBP ma limit ~367 dni na żądanie — okno dłuższe
+    dzieli się na kolejne żądania. `INSERT OR IGNORE` — bezpieczne do
+    wielokrotnego wywołania (nocny job domykający + jednorazowy backfill
+    5 lat). Zwraca liczbę NOWO wstawionych wierszy (nie liczbę publikacji
+    w oknie — powtórne wywołanie na tym samym oknie zwraca 0)."""
+    start = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    inserted = 0
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + timedelta(days=_MAX_WINDOW_DAYS), end)
+        url = f"{_BASE}/{chunk_start.isoformat()}/{chunk_end.isoformat()}/"
+
+        def _do_request(_url=url):
+            return requests.get(_url, params={"format": "json"}, timeout=15)
+
+        resp = ratelimit.backoff_retry(
+            _do_request, provider="nbp", retryable_statuses=(429, 502, 503))
+        if resp is not None and resp.status_code == 200:
+            for r in resp.json().get("rates", []):
+                effective_date = r["effectiveDate"]
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO nbp_rates (date, rate, effective_date, table_no) "
+                    "VALUES (?, ?, ?, ?)",
+                    (effective_date, float(r["mid"]), effective_date, r.get("no")))
+                inserted += cur.rowcount
+            conn.commit()
+        chunk_start = chunk_end + timedelta(days=1)
+    return inserted

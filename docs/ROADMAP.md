@@ -92,7 +92,7 @@ opublikowana tabela”) działa po zagęszczeniu bez zmian.
 - `history.py::rebuild()` — dzienna rekonstrukcja stanu portfela od pierwszego lotu do dziś:
   ilość = loty nabyte do dnia D minus `sale_allocations` do dnia D; wycena = ostatnie znane
   `quotes.close` ≤ D; PLN po kursie NBP z D. Materializowane w nowej tabeli `portfolio_history`
-  (migracja v6), przeliczane po każdej zmianie danych i nocnym jobem. ~1300 wierszy na 5 lat.
+  (migracja v7), przeliczane po każdej zmianie danych i nocnym jobem. ~1300 wierszy na 5 lat.
 - `returns.py::xirr()` — Newton + bisekcja awaryjna, czysty Python (bez numpy — `BLUEPRINT` §1
   świadomie wyklucza pandas/numpy z powodu musl/armv7). Dwa warianty, oba pokazywane obok siebie:
   **XIRR na własnych wpłatach** (przepływy = tylko gotówka realnie wydana na loty `own`; akcje
@@ -262,11 +262,11 @@ termin rozliczenia rocznego.
 | Fala | Nowe | Modyfikowane |
 |---|---|---|
 | 0.8.1 | `backup.py` | `web.py`, `main.py`, `templates/settings.html` |
-| 0.9.0 | `analytics/{history,returns,attribution,benchmark}.py`, `templates/results.html` | `db.py` (migracja v6 `portfolio_history`), `providers/fx_nbp.py` (`backfill_range`), `sensors.py`, `publisher.py`, `web.py`, `static/app.js` |
+| 0.9.0 | `analytics/{history,returns,attribution,benchmark}.py`, `templates/results.html` | `db.py` (migracja v7 `portfolio_history`), `providers/fx_nbp.py` (`backfill_range`), `sensors.py`, `publisher.py`, `web.py`, `static/app.js` |
 | 0.10.0 | `advisor.py`, `templates/plan.html` | `tax/grants.py` (rozszerzenie, nie przepisanie), `ha_client.py` (odczyt encji majątku), `config.yaml` (`net_worth_entity`, `concentration_warn_pct`), `web.py` |
-| 0.11.0 | `tax/losses.py`, `templates/wizard.html` | `db.py` (migracja v7), `tax/pit38.py`, `tax/policy.py`, `web.py` |
+| 0.11.0 | `tax/losses.py`, `templates/wizard.html` | `db.py` (migracja v8), `tax/pit38.py`, `tax/policy.py`, `web.py` |
 | 0.12.0 | — | wszystkie `templates/*.html`, `static/app.css`, `static/app.js`, `templates/_macros.html` |
-| 1.0.0 | `ai/chat.py`, `templates/assistant.html` | `ai/prompts.py`, `db.py` (migracja v8 `chat_log`), `web.py` |
+| 1.0.0 | `ai/chat.py`, `templates/assistant.html` | `ai/prompts.py`, `db.py` (migracja v9 `chat_log`), `web.py` |
 
 Do ponownego użycia, nie pisania od nowa: `format.py` (`money`/`qty`/`pct`), `templates/_macros.html`
 (`stat()`, `tax_disclaimer()`), `tax/whatif.py::_plan_fifo`, `tax/grants.py::unvested_summary` /

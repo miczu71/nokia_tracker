@@ -157,6 +157,40 @@
   {% endif %}
 </div>
 
+<div class="card no-print">
+  <div class="card-title">Kiedy sprzedać — dziś czy 2 stycznia</div>
+  <form class="inline-form" id="timing-form" method="get" action="{{ url_for('plan_get') }}">
+    <label>Ilość akcji
+      <input type="number" step="0.0001" name="timing_qty" value="{{ timing_qty or '' }}" required>
+    </label>
+    <label>Cena (EUR/akcję)
+      <input type="number" step="0.0001" name="timing_price"
+             value="{{ timing_price or price_eur or '' }}" required>
+    </label>
+    <button class="btn primary" type="submit">Porównaj</button>
+  </form>
+  <div class="preview-box" id="timing-preview" hidden></div>
+
+  {% if timing_result and timing_result.today and timing_result.jan2_next_year %}
+  <div class="grid stats">
+    {{ stat('Podatek dziś (po stracie)', timing_result.today.tax_with_max_loss_pln|money, 'zł') }}
+    {{ stat('Podatek 2 stycznia (po stracie)', timing_result.jan2_next_year.tax_with_max_loss_pln|money, 'zł') }}
+    {{ stat('Przepadek dziś', timing_result.today.forfeit_value_pln|money, 'zł') }}
+    {{ stat('Przepadek 2 stycznia', timing_result.jan2_next_year.forfeit_value_pln|money, 'zł') }}
+    {{ stat('Różnica netto', timing_result.delta_total_pln|money(signed=true), 'zł', cls='highlight') }}
+  </div>
+  <p class="muted">{{ timing_result.recommendation_pl }}</p>
+  {% elif timing_result %}
+  <p class="disclaimer error">⚠️ Brak pokrycia lotami dla jednego ze scenariuszy.</p>
+  {% endif %}
+  <p class="muted">
+    Cena i kurs EUR/PLN założone płasko na obu datach — to szacunek kierunku decyzji,
+    nie prognoza rynku. Podatek „po stracie" zakłada maksymalne wykorzystanie dostępnej
+    straty z lat ubiegłych w danym scenariuszu (nic nie zapisuje się do bazy, dopóki nie
+    potwierdzisz odliczenia w <a href="{{ url_for('pit38_wizard_get') }}">kreatorze rozliczenia</a>).
+  </p>
+</div>
+
 {% set conc = overview.concentration %}
 <div class="card">
   <div class="card-title">Ryzyko koncentracji</div>
@@ -192,6 +226,12 @@ NT.initFormPreview({
   requiredFields: ["espp_monthly", "espp_months", "espp_price"],
   fields: [["espp_monthly", "espp_monthly"], ["espp_months", "espp_months"],
            ["espp_price", "espp_price"]],
+});
+NT.initFormPreview({
+  formId: "timing-form", boxId: "timing-preview",
+  url: {{ url_for('preview_sale_timing')|tojson }},
+  requiredFields: ["timing_qty", "timing_price"],
+  fields: [["timing_qty", "timing_qty"], ["timing_price", "timing_price"]],
 });
 </script>
 {% endblock %}

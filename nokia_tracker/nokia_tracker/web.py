@@ -874,12 +874,21 @@ def create_app(db_path: str) -> Flask:
                     ("bieżąca", price_eur), ("−20%", price_eur * 0.8),
                     ("+20%", price_eur * 1.2)]
 
+            timing_result = None
+            timing_qty_raw = request.args.get("timing_qty")
+            timing_price_raw = request.args.get("timing_price")
+            if timing_qty_raw and timing_price_raw:
+                timing_result = advisorm.optimize_sale_timing(
+                    conn, cfg, float(timing_qty_raw), float(timing_price_raw),
+                    eurpln_rate=eurpln_rate)
+
             return render_template(
                 "plan.html", active="plan", version=__version__,
                 overview=plan_overview, cfg=cfg, price_eur=price_eur,
                 espp_result=espp_result, espp_error=espp_error,
                 espp_monthly=monthly_raw, espp_months=months_raw, espp_price=price_raw,
                 espp_scenarios=espp_scenarios,
+                timing_result=timing_result, timing_qty=timing_qty_raw, timing_price=timing_price_raw,
                 has_restricted=bool(plan_overview["forfeit"]["items"]),
                 has_timeline=bool(plan_overview["timeline"]["tranches"]))
         finally:
@@ -918,6 +927,41 @@ def create_app(db_path: str) -> Flask:
                 lines.append({"label": "Podatek", "value": result["tax_pln"], "unit": "PLN"})
                 lines.append({"label": "Na rękę", "value": result["net_proceeds_pln"],
                               "unit": "PLN", "emphasis": True})
+            return {"ok": True, "lines": lines}
+        finally:
+            conn.close()
+
+    @app.get("/api/preview/sale-timing")
+    def preview_sale_timing():
+        conn = _conn()
+        try:
+            try:
+                quantity = float(request.args.get("timing_qty") or 0)
+                price_eur = float(request.args.get("timing_price") or 0)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+            if quantity <= 0 or price_eur <= 0:
+                return {"ok": False, "error": "Ilość i cena muszą być dodatnie."}
+
+            cfg = settingsm.get_settings(conn)
+            ids = _ids(conn)
+            eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+            eurpln_rate = eurpln_row["close"] if eurpln_row else None
+
+            result = advisorm.optimize_sale_timing(
+                conn, cfg, quantity, price_eur, eurpln_rate=eurpln_rate)
+
+            if result["today"] is None or result["jan2_next_year"] is None:
+                return {"ok": False, "error": "Brak pokrycia lotami dla jednego ze scenariuszy."}
+
+            lines = [
+                {"label": "Podatek dziś (po stracie)",
+                 "value": result["today"]["tax_with_max_loss_pln"], "unit": "PLN"},
+                {"label": "Podatek 2 stycznia (po stracie)",
+                 "value": result["jan2_next_year"]["tax_with_max_loss_pln"], "unit": "PLN"},
+                {"label": "Różnica netto (podatek + przepadek)",
+                 "value": result["delta_total_pln"], "unit": "PLN", "emphasis": True},
+            ]
             return {"ok": True, "lines": lines}
         finally:
             conn.close()

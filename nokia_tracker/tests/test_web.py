@@ -1920,6 +1920,93 @@ def test_preview_espp_writes_nothing(client):
     assert before == after
 
 
+# --- /api/preview/sale-timing i karta "Kiedy sprzedać" na /plan (krok 27) ---
+
+def _make_timing_app(tmp_path, monkeypatch, filename="krok27_timing.db", price_eur=8.0,
+                     eurpln_rate=4.0):
+    from nokia_tracker import db as dbm, quotes as quotesm, fx
+    from nokia_tracker.models import Candle
+    from nokia_tracker.tax import lots as taxlots
+
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, "stub"))
+    monkeypatch.setattr(
+        "nokia_tracker.tax.whatif.fx_nbp.rate_for_event", lambda conn, d: (4.0, "stub"))
+
+    db_path = str(tmp_path / filename)
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+
+    primary_id = quotesm.ensure_instrument(conn, "NOKIA.HE", "Nokia Oyj", "EUR", "primary")
+    eurpln_id = quotesm.ensure_instrument(conn, fx.EURPLN_SYMBOL, "EUR/PLN", "PLN", "fx")
+    quotesm.upsert_candles(conn, primary_id, "daily",
+                           [Candle(ts="2026-06-01T00:00:00+00:00", close=price_eur)],
+                           source="yahoo")
+    quotesm.upsert_candles(conn, eurpln_id, "daily",
+                           [Candle(ts="2026-06-01T00:00:00+00:00", close=eurpln_rate)],
+                           source="yahoo")
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 100.0, 3.0, source="manual")
+
+    conn.commit()
+    conn.close()
+    return db_path, create_app(db_path)
+
+
+def test_preview_sale_timing_returns_lines_http_200(tmp_path, monkeypatch):
+    db_path, app = _make_timing_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        resp = c.get("/api/preview/sale-timing?timing_qty=10&timing_price=8")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["ok"] is True
+        assert any(line["label"] == "Różnica netto (podatek + przepadek)"
+                   for line in data["lines"])
+
+
+def test_preview_sale_timing_bad_input_returns_ok_false_http_200(client):
+    resp = client.get("/api/preview/sale-timing?timing_qty=-5&timing_price=8")
+    assert resp.status_code == 200
+    assert resp.get_json()["ok"] is False
+
+    resp2 = client.get("/api/preview/sale-timing?timing_qty=abc&timing_price=8")
+    assert resp2.status_code == 200
+    assert resp2.get_json()["ok"] is False
+
+
+def test_preview_sale_timing_insufficient_lots_returns_ok_false_with_error(client):
+    resp = client.get("/api/preview/sale-timing?timing_qty=10&timing_price=8")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert data["error"]
+
+
+def test_preview_sale_timing_writes_nothing(tmp_path, monkeypatch):
+    from nokia_tracker import db as dbm
+
+    db_path, app = _make_timing_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        conn = dbm.get_conn(db_path)
+        before = conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+        conn.close()
+
+        c.get("/api/preview/sale-timing?timing_qty=10&timing_price=8")
+
+        conn = dbm.get_conn(db_path)
+        after = conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+        conn.close()
+        assert before == after == 0
+
+
+def test_plan_page_timing_renders_result_in_html(tmp_path, monkeypatch):
+    db_path, app = _make_timing_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/plan?timing_qty=10&timing_price=8").get_data(as_text=True)
+        assert "Kiedy sprzedać" in html
+        assert "Różnica netto" in html
+
+
 def test_settings_post_saves_other_net_worth_and_threshold(client):
     resp = client.post("/settings", data={
         "ai_primary": "local", "ai_fallback": "gemini",

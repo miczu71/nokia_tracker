@@ -12,7 +12,7 @@ from datetime import datetime
 import pytest
 
 from nokia_tracker import advisor
-from nokia_tracker.tax import grants, lots as taxlots, whatif
+from nokia_tracker.tax import grants, losses, lots as taxlots, whatif
 
 
 @pytest.fixture(autouse=True)
@@ -307,3 +307,64 @@ def test_overview_survives_simulate_sale_failure(conn, monkeypatch):
 
     assert o["sale_today"] is None
     assert o["forfeit"]["forfeit_qty"] == pytest.approx(29.24)
+
+
+# --- optimize_sale_timing ---
+
+def test_optimize_sale_timing_returns_both_scenarios_with_full_coverage(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
+
+    r = advisor.optimize_sale_timing(
+        conn, _base_cfg(), 10.0, 8.0, eurpln_rate=4.0, today="2026-07-28")
+
+    assert r["today"] is not None
+    assert r["jan2_next_year"] is not None
+    assert r["today"]["sale_date"] == "2026-07-28"
+    assert r["jan2_next_year"]["sale_date"] == "2027-01-02"
+    assert r["recommendation_pl"] is not None
+
+
+def test_optimize_sale_timing_insufficient_lots_returns_none_without_raising(conn):
+    # Baza pusta — żadnych otwartych lotów, sprzedaż 10 szt. nie ma pokrycia.
+    r = advisor.optimize_sale_timing(
+        conn, _base_cfg(), 10.0, 8.0, eurpln_rate=4.0, today="2026-07-28")
+
+    assert r["today"] is None
+    assert r["jan2_next_year"] is None
+    assert r["delta_tax_pln"] is None
+    assert r["delta_forfeit_pln"] is None
+    assert r["delta_total_pln"] is None
+    assert r["recommendation_pl"] is None
+
+
+def test_optimize_sale_timing_deltas_match_scenario_arithmetic(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
+
+    r = advisor.optimize_sale_timing(
+        conn, _base_cfg(), 10.0, 8.0, eurpln_rate=4.0, today="2026-07-28")
+
+    expected_delta_tax = round(
+        r["jan2_next_year"]["tax_with_max_loss_pln"] - r["today"]["tax_with_max_loss_pln"], 2)
+    expected_delta_forfeit = round(
+        r["jan2_next_year"]["forfeit_value_pln"] - r["today"]["forfeit_value_pln"], 2)
+    assert r["delta_tax_pln"] == pytest.approx(expected_delta_tax)
+    assert r["delta_forfeit_pln"] == pytest.approx(expected_delta_forfeit)
+    assert r["delta_total_pln"] == pytest.approx(
+        round(expected_delta_tax + expected_delta_forfeit, 2))
+
+
+def test_optimize_sale_timing_uses_available_loss_to_reduce_tax(conn):
+    cfg = _base_cfg()
+    # Strata w 2024: kupno 10 szt. po 10 EUR, sprzedaż po 5 EUR -> strata 200 PLN
+    # (kurs 4.0 z fixture), jak w test_tax_losses.py::_loss_year.
+    taxlots.add_lot(conn, "2024-01-10", "own", 10.0, 10.0, source="manual")
+    taxlots.record_sale(conn, "2024-06-01", 10.0, 5.0)
+    losses.rebuild(conn, cfg)
+
+    # Lot niepowiązany ze stratą, do sprzedaży "dziś" z zyskiem.
+    taxlots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
+
+    r = advisor.optimize_sale_timing(conn, cfg, 20.0, 8.0, eurpln_rate=4.0, today="2026-07-28")
+
+    assert r["today"]["usable_loss_pln"] > 0
+    assert r["today"]["tax_with_max_loss_pln"] < r["today"]["tax_without_loss_pln"]

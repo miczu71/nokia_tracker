@@ -15,7 +15,9 @@ from datetime import datetime
 
 from . import portfolio as portfoliom
 from .tax import grants as grantsm
+from .tax import losses as taxlosses
 from .tax import lots as taxlots
+from .tax import policy as taxpolicy
 from .tax import whatif as taxwhatif
 
 
@@ -282,4 +284,97 @@ def overview(conn: sqlite3.Connection, cfg: dict, price_eur: float | None = None
         "timeline": timeline,
         "concentration": conc,
         "sale_today": sale_today,
+    }
+
+
+def optimize_sale_timing(conn: sqlite3.Connection, cfg: dict, quantity: float,
+                         price_eur: float, eurpln_rate: float | None = None,
+                         today: str | None = None) -> dict:
+    """Porównuje 'sprzedaż dziś' vs 'sprzedaż 2 stycznia następnego roku
+    podatkowego' dla tej samej ilości/ceny — spina podatek (w tym netowanie
+    dostępną stratą z lat ubiegłych, tax/losses.py) z przepadkiem dopasowania
+    ESPP (forfeit_for_quantity, krok 26). Cena i kurs NBP założone PŁASKO na
+    obu datach (ten sam kompromis co espp_plan() — to szacunek KIERUNKU
+    decyzji, nie prognoza rynku ani ceny na przyszłą datę).
+
+    Netowanie stratą tutaj jest INFORMACYJNE/eksploracyjne (funkcja niczego
+    nie zapisuje do bazy, jak simulate_sale) — pokazuje 'ile zapłaciłbyś,
+    gdybyś maksymalnie wykorzystał dostępną stratę w tym scenariuszu'. To
+    inna zasada niż w annual_report()/total_due_pln (który liczy WYŁĄCZNIE
+    jawnie zarejestrowane odliczenia) - tam auto-użycie maksimum byłoby
+    cichą decyzją silnika za użytkownika w OFICJALNYM raporcie; tutaj to
+    tylko narzędzie do porównania dwóch dat, nic nie jest jeszcze
+    zadeklarowane ani zapisane."""
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+    next_year = int(today[:4]) + 1
+    jan2 = f"{next_year}-01-02"
+    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
+
+    def _scenario(sale_date: str) -> dict | None:
+        try:
+            sale = taxwhatif.simulate_sale(conn, cfg, quantity, price_eur, sale_date=sale_date)
+        except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError):
+            return None
+        year = int(sale_date[:4])
+        active_policy = sale["active_policy"]
+
+        base_income_pln = taxpolicy.compute_all_policies(
+            conn, cfg, year=year)[active_policy]["income_pln"]
+        sale_income_pln = sale["policies"][active_policy]["income_pln"]
+        combined_income_pln = base_income_pln + sale_income_pln
+        tax_without_loss_pln = round(max(0.0, combined_income_pln) * tax_rate, 2)
+
+        loss_avail = taxlosses.available_for_year(conn, cfg, year, policy=active_policy)
+        usable_loss_pln = min(loss_avail["total_remaining_pln"], max(0.0, combined_income_pln))
+        income_after_loss_pln = max(0.0, combined_income_pln - usable_loss_pln)
+        tax_with_max_loss_pln = round(income_after_loss_pln * tax_rate, 2)
+
+        forfeit = forfeit_for_quantity(conn, quantity, price_eur, eurpln_rate, today=sale_date)
+
+        return {
+            "sale_date": sale_date,
+            "year": year,
+            "revenue_pln": sale["revenue_pln"],
+            "combined_income_pln": round(combined_income_pln, 2),
+            "tax_without_loss_pln": tax_without_loss_pln,
+            "usable_loss_pln": round(usable_loss_pln, 2),
+            "tax_with_max_loss_pln": tax_with_max_loss_pln,
+            "forfeit_qty": forfeit["forfeit_qty"],
+            "forfeit_value_pln": forfeit["forfeit_value_pln"],
+        }
+
+    today_scenario = _scenario(today)
+    jan2_scenario = _scenario(jan2)
+
+    delta_tax_pln = None
+    delta_forfeit_pln = None
+    delta_total_pln = None
+    recommendation_pl = None
+    if today_scenario is not None and jan2_scenario is not None:
+        delta_tax_pln = round(
+            jan2_scenario["tax_with_max_loss_pln"] - today_scenario["tax_with_max_loss_pln"], 2)
+        delta_forfeit_pln = round(
+            (jan2_scenario["forfeit_value_pln"] or 0.0)
+            - (today_scenario["forfeit_value_pln"] or 0.0), 2)
+        delta_total_pln = round(delta_tax_pln + delta_forfeit_pln, 2)
+        if delta_total_pln > 0.005:
+            recommendation_pl = (
+                f"Sprzedaż dziś kosztuje Cię {abs(delta_total_pln):.2f} zł mniej niż "
+                f"czekanie do 2 stycznia {next_year} (podatek + przepadek dopasowania razem).")
+        elif delta_total_pln < -0.005:
+            recommendation_pl = (
+                f"Czekanie do 2 stycznia {next_year} kosztuje Cię "
+                f"{abs(delta_total_pln):.2f} zł mniej niż sprzedaż dziś "
+                f"(podatek + przepadek dopasowania razem).")
+        else:
+            recommendation_pl = "Obie daty wychodzą na to samo w granicach grosza."
+
+    return {
+        "today": today_scenario,
+        "jan2_next_year": jan2_scenario,
+        "delta_tax_pln": delta_tax_pln,
+        "delta_forfeit_pln": delta_forfeit_pln,
+        "delta_total_pln": delta_total_pln,
+        "recommendation_pl": recommendation_pl,
     }

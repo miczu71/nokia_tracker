@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.11.0] - 2026-08-16
+
+Krok 27 (`docs/PLAN_KROK_27_straty_kreator.md`), czwarta fala z `docs/ROADMAP.md` — Podatki:
+straty z lat ubiegłych i kreator rozliczenia rocznego. Dwie realne luki: silnik podatkowy znał
+dochód ujemny (`income_pln < 0`), ale strata po prostu znikała (`tax_pln = max(0, ...)` zerował
+podatek bez zapisania faktu, że strata w ogóle wystąpiła) — art. 9 ust. 3-3a ustawy o PIT pozwala
+odliczyć ją w kolejnych 5 latach; i rozliczenie roczne nie miało żadnego śladu „co już sprawdziłem"
+poza pamięcią użytkownika.
+
+### Dodano
+- **Straty z lat ubiegłych** (`tax/losses.py`) — silnik liczy straty per rok per polityka kosztu
+  (trzy niezależne salda — `own_only`/`own_plus_drip`/`all_at_acquisition` dają trzy różne historie
+  strat), pilnuje 5-letniego okna odliczeń i limitu z art. 9 ust. 3-3a (całość jednorazowo dla strat
+  do 5 mln zł, 50%/rok gdy odliczenie już rozłożone na raty). Nigdy nie nadpisuje bezwarunkowo
+  wiersza straty, który ma już zarejestrowane odliczenia — korekta danych zmniejszająca stratę
+  poniżej już wykorzystanej kwoty zgłasza konflikt do ręcznej decyzji, nie ciszej nadpisuje.
+- **`/pit38/kreator`** — checklista rozliczenia rocznego, samosprawdzająca się z bazy (import
+  wyciągu, rozstrzygnięte konflikty, saldo zgodne z wyciągiem — blokują zamknięcie roku; sekcja G
+  bez szacunków, decyzja o odliczeniu straty — informacyjne), formularz zapisu odliczenia straty per
+  pozycja, zamknięcie/odblokowanie roku (migawka kwoty do zapłaty, nie zamrożenie samych danych —
+  dopisanie brakującej transakcji po zamknięciu wciąż możliwe, tylko widocznie oznaczone jako
+  rozjazd ze snapshotem).
+- **Karta „Straty z lat ubiegłych"** na `/pit38` — dostępna strata, odliczone w tym roku, podatek po
+  odliczeniu, link do kreatora. `total_due_pln` liczy się teraz WYŁĄCZNIE z jawnie zarejestrowanych
+  odliczeń (kreator), nigdy z automatycznego maksimum — strata dostępna to nie strata użyta.
+- **Optymalizator momentu sprzedaży** na `/plan` — „sprzedaż dziś vs 2 stycznia następnego roku":
+  różnica podatku (z uwzględnieniem dostępnej straty), różnica przepadku dopasowania ESPP,
+  rekomendacja kierunku decyzji liczona deterministycznie (nie przez AI).
+- 2 nowe sensory MQTT: `loss_available_pln`, `loss_used_this_year_pln`.
+- Migracja bazy v8: `tax_loss_carryforward`, `tax_loss_deductions`, `tax_year_closed`.
+
+### Bez zmian
+- Podstawa prawna (art. 9 ust. 3-3a ustawy o PIT) opisana w kodzie jako stan wiedzy z planowania,
+  nie cytat z Dziennika Ustaw — do potwierdzenia na aktualnym tekście ustawy przed pierwszym realnym
+  użyciem (żaden z lat 2023-2026 w danych produkcyjnych nie jest dziś stratny w żadnej z trzech
+  polityk, więc funkcja nie miała jeszcze okazji zadziałać na realnych pieniądzach).
+
+820 testów (od 793 na starcie fali).
+
 ## [0.10.0] - 2026-08-15
 
 Krok 26 (`docs/PLAN_KROK_26_doradca.md`), trzecia fala z `docs/ROADMAP.md` — Doradca planu

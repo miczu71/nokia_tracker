@@ -80,3 +80,35 @@
                           'dividend_drip': 'dywidenda'} %}
 {% set POLICY_LABELS = {'own_only': 'Tylko własne', 'own_plus_drip': 'Własne + dywidenda',
                         'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
+
+{#
+  cur_block(pln, eur, pln_unit='zł', eur_unit='EUR', cls='')
+
+  Krok 28.1 (docs/PLAN_KROK_28_ux_mobile.md): globalny przełącznik waluty w nagłówku.
+  Renderuje DWA warianty tej samej kwoty (PLN-główna / EUR-główna) — oba trafiają do
+  DOM zawsze, `app.css` pokazuje jeden na podstawie `<html data-currency="pln|eur">`
+  (ustawianego przez `NT.initCurrencyToggle()`, `nt.currency` w localStorage). Bez JS
+  atrybut nigdy się nie pojawia → domyślnie widoczny wariant PLN-główna (zgodnie z
+  dotychczasowym zachowaniem karty „Portfel" z kroku 23 — nie odwracamy istniejącego
+  domyślnego UI, tylko dokładamy możliwość przełączenia).
+
+  `pln`/`eur` to już SFORMATOWANE stringi albo `None` (wtedy cały blok pokazuje „—",
+  bez jednostki — ta sama semantyka co dawne `pf_money()`, patrz
+  test_dashboard_omits_pln_when_no_fx_rate).
+#}
+{% macro cur_block(pln, eur, pln_unit='zł', eur_unit='EUR', cls='') -%}
+<div class="cur-wrap{% if cls %} {{ cls }}{% endif %}">
+  <div class="cur-block cur-primary-pln">
+    {%- if pln is not none %}
+    <div class="cur-amount">{{ pln }}<span class="stat-unit">{{ pln_unit }}</span></div>
+    {%- if eur is not none %}<div class="cur-sub">≈ {{ eur }} {{ eur_unit }}</div>{%- endif %}
+    {%- else %}<div class="cur-amount">—</div>{%- endif %}
+  </div>
+  <div class="cur-block cur-primary-eur">
+    {%- if eur is not none %}
+    <div class="cur-amount">{{ eur }}<span class="stat-unit">{{ eur_unit }}</span></div>
+    {%- if pln is not none %}<div class="cur-sub">≈ {{ pln }} {{ pln_unit }}</div>{%- endif %}
+    {%- else %}<div class="cur-amount">—</div>{%- endif %}
+  </div>
+</div>
+{%- endmacro %}

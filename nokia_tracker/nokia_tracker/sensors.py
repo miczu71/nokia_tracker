@@ -417,16 +417,25 @@ def results_values(conn: sqlite3.Connection, price_eur: float | None,
 
     attribution = analytics_attribution.decompose(conn, price_eur, eurpln_rate)
 
-    benchmark_value = (
+    # Krok 28.1 — poprawka błędu (docs/PLAN_KROK_28_ux_mobile.md §1): `xirr_flows`
+    # to gotówka w EUR (`build_xirr_cashflows` używa `price_eur`), a OMXH25 jest
+    # rejestrowany z `currency="EUR"` (main.py, `ensure_instrument`) — `counterfactual()`
+    # zawsze liczył w EUR. Sensor nazywał się `..._pln` i publikował tę liczbę bez
+    # żadnej konwersji — wartość w EUR pokazywana jako PLN (zawyżenie/zaniżenie o
+    # rząd kursu EUR/PLN, ~4x). Naprawione: mnożenie przez `eurpln_rate`, tak jak
+    # przy `fx_effect_pln` powyżej.
+    benchmark_value_eur = (
         analytics_benchmark.counterfactual(conn, xirr_flows, benchmark_instrument_id)
         if benchmark_instrument_id is not None else None)
+    benchmark_value_pln = (
+        benchmark_value_eur * eurpln_rate if benchmark_value_eur is not None else None)
 
     return {
         "xirr_own_pct": round(xirr_result * 100, 2) if xirr_result is not None else None,
         "twr_pct": round(twr_result * 100, 2) if twr_result is not None else None,
         "fx_effect_pln": round(attribution["fx_effect_pln"], 2),
         "benchmark_omxh25_counterfactual_pln": (
-            round(benchmark_value, 2) if benchmark_value is not None else None),
+            round(benchmark_value_pln, 2) if benchmark_value_pln is not None else None),
     }
 
 

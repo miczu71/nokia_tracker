@@ -781,27 +781,42 @@ def create_app(db_path: str) -> Flask:
             history_rows = conn.execute(
                 "SELECT date, market_value_eur, market_value_pln FROM portfolio_history "
                 "ORDER BY date").fetchall()
+            # Krok 28.1: kurs PLN/EUR danego dnia wyprowadzony z JUŻ POBRANEGO wiersza
+            # `portfolio_history` (ten sam `rate`, którego użył `history.py::rebuild()`
+            # do policzenia `market_value_pln`) — zero dodatkowych zapytań do NBP,
+            # zero rozjazdu metodologii między krzywą portfela a krzywą benchmarku.
+            rate_by_date = {
+                r["date"]: r["market_value_pln"] / r["market_value_eur"]
+                for r in history_rows
+                if r["market_value_eur"] not in (None, 0) and r["market_value_pln"] is not None}
 
-            xirr_pct = twr_pct = attribution = benchmark_today_pln = None
+            xirr_pct = twr_pct = attribution = None
+            benchmark_today_eur = benchmark_today_pln = None
             xirr_flows: list[tuple[str, float]] = []
 
             # Krzywa wartości i tabela rok-po-roku wyłącznie z `portfolio_history`
             # (przeliczana nocnym jobem) — NIEZALEŻNE od dzisiejszej ceny/kursu,
             # więc renderują się nawet gdy dzisiejszy poll jeszcze nie zdążył.
             chart_points = [
-                {"date": r["date"], "value_pln": r["market_value_pln"], "benchmark_pln": None}
+                {"date": r["date"], "value_pln": r["market_value_pln"],
+                 "value_eur": r["market_value_eur"],
+                 "benchmark_pln": None, "benchmark_eur": None}
                 for r in history_rows]
             years: dict[str, dict] = {}
             for r in history_rows:
                 y = r["date"][:4]
-                years.setdefault(y, {"start_pln": r["market_value_pln"]})
+                years.setdefault(y, {"start_pln": r["market_value_pln"],
+                                     "start_eur": r["market_value_eur"]})
                 years[y]["end_pln"] = r["market_value_pln"]
+                years[y]["end_eur"] = r["market_value_eur"]
             yearly_returns = []
             for y in sorted(years):
                 start, end = years[y]["start_pln"], years[y]["end_pln"]
                 pct = ((end - start) / start * 100) if start else None
-                yearly_returns.append(
-                    {"year": y, "start_pln": start, "end_pln": end, "pct": pct})
+                yearly_returns.append({
+                    "year": y, "start_pln": start, "end_pln": end,
+                    "start_eur": years[y]["start_eur"], "end_eur": years[y]["end_eur"],
+                    "pct": pct})
 
             if price_eur and eurpln_rate:
                 today = date.today().isoformat()
@@ -818,18 +833,33 @@ def create_app(db_path: str) -> Flask:
                 twr_pct = twr_result * 100 if twr_result is not None else None
 
                 attribution = analytics_attribution.decompose(conn, price_eur, eurpln_rate)
-                benchmark_today_pln = analytics_benchmark.counterfactual(
-                    conn, xirr_flows, ids["omxh25"])
 
-                bench_series = dict(analytics_benchmark.counterfactual_series(
+                # Krok 28.1 — poprawka błędu: `xirr_flows` to gotówka w EUR
+                # (`build_xirr_cashflows` używa `price_eur`/`net_received_eur`), a
+                # OMXH25 jest zarejestrowany z `currency="EUR"` (main.py, ensure_instrument)
+                # — `counterfactual()` zawsze liczył w EUR. Wcześniej wynik trafiał
+                # do zmiennej `benchmark_today_pln` i renderował się z jednostką „zł"
+                # bez żadnej konwersji: liczba w EUR pokazywana jako PLN (różnica
+                # rzędu kursu EUR/PLN, ~4x zawyżenie/zaniżenie). Poprawka: liczyć
+                # jawnie EUR, dokładać PLN przez ten sam kurs co reszta strony.
+                benchmark_today_eur = analytics_benchmark.counterfactual(
+                    conn, xirr_flows, ids["omxh25"])
+                benchmark_today_pln = (
+                    benchmark_today_eur * eurpln_rate if benchmark_today_eur is not None else None)
+
+                bench_series_eur = dict(analytics_benchmark.counterfactual_series(
                     conn, xirr_flows, ids["omxh25"], [r["date"] for r in history_rows]))
                 for point in chart_points:
-                    point["benchmark_pln"] = bench_series.get(point["date"])
+                    b_eur = bench_series_eur.get(point["date"])
+                    point["benchmark_eur"] = b_eur
+                    rate = rate_by_date.get(point["date"])
+                    point["benchmark_pln"] = b_eur * rate if b_eur is not None and rate is not None else None
 
             return render_template(
                 "results.html", active="wyniki", version=__version__,
                 xirr_pct=xirr_pct, twr_pct=twr_pct, attribution=attribution,
-                benchmark_today_pln=benchmark_today_pln, chart_points=chart_points,
+                benchmark_today_pln=benchmark_today_pln, benchmark_today_eur=benchmark_today_eur,
+                chart_points=chart_points,
                 yearly_returns=yearly_returns, has_history=bool(history_rows))
         finally:
             conn.close()

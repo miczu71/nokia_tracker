@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat %}
+{% from "_macros.html" import stat, cur_block %}
 {% block title %}Wyniki — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -32,7 +32,11 @@
     {{ stat('XIRR (własne wpłaty)', xirr_pct|pct, '%') }}
     {{ stat('TWR', twr_pct|pct, '%') }}
     {{ stat('Zysk całkowity', attribution.total_pln|money if attribution else none, 'zł') }}
-    {{ stat('Kontrfaktyczny OMXH25 dziś', benchmark_today_pln|money, 'zł') }}
+    <div class="stat">
+      <span class="stat-label">Kontrfaktyczny OMXH25 dziś</span>
+      {{ cur_block(benchmark_today_pln|money if benchmark_today_pln is not none else none,
+                   benchmark_today_eur|money if benchmark_today_eur is not none else none) }}
+    </div>
   </div>
 </div>
 
@@ -77,8 +81,10 @@
         {% for row in yearly_returns %}
         <tr>
           <td>{{ row.year }}</td>
-          <td class="num">{{ row.start_pln|money }} zł</td>
-          <td class="num">{{ row.end_pln|money }} zł</td>
+          <td class="num">{{ cur_block(row.start_pln|money if row.start_pln is not none else none,
+                                        row.start_eur|money if row.start_eur is not none else none) }}</td>
+          <td class="num">{{ cur_block(row.end_pln|money if row.end_pln is not none else none,
+                                        row.end_eur|money if row.end_eur is not none else none) }}</td>
           <td class="num">{{ row.pct|pct }}%</td>
         </tr>
         {% endfor %}

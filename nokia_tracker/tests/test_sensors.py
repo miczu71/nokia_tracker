@@ -607,7 +607,12 @@ def test_results_values_benchmark_counterfactual(conn, _fake_nbp_rate_for_pit38)
     v = sensors.results_values(conn, price_eur=8.0, eurpln_rate=4.5,
                                benchmark_instrument_id=bench_id)
 
-    assert v["benchmark_omxh25_counterfactual_pln"] == pytest.approx(55.0, abs=0.01)
+    # Krok 28.1: naprawiony błąd (docs/PLAN_KROK_28_ux_mobile.md §1) — 10 * 5.0 EUR /
+    # 100.0 (kurs OMXH25 w dniu wpłaty) = 0.5 jednostki; 0.5 * 110.0 (ostatnie
+    # notowanie) = 55.0 EUR; sensor publikuje PLN, więc *4.5 (eurpln_rate).
+    # Wcześniej test asertował gołe 55.0 pod kluczem "..._pln" — to była
+    # wartość EUR mylnie nazwana PLN, nie konwersja.
+    assert v["benchmark_omxh25_counterfactual_pln"] == pytest.approx(247.5, abs=0.01)
 
 
 # --- krok 26 (docs/PLAN_KROK_26_doradca.md): advisor_values ---

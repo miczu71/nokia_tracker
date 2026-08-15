@@ -263,9 +263,10 @@ body {
 .pf-hero { margin-bottom: 14px; }
 .pf-hero-label { font-size: 12px; color: var(--muted); text-transform: uppercase;
   letter-spacing: .04em; }
-.pf-hero-value { font-size: 34px; font-weight: 700; line-height: 1.2; }
-.pf-hero-value .stat-unit { font-size: 16px; color: var(--muted); margin-left: 4px; }
 .pf-hero-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+.pf-hero-cur .cur-amount { font-size: 34px; font-weight: 700; line-height: 1.2; }
+.pf-hero-cur .cur-amount .stat-unit { font-size: 16px; color: var(--muted); margin-left: 4px; }
+.pf-hero-cur .cur-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
 
 .pf-buckets {
   display: grid;
@@ -287,14 +288,32 @@ body {
 .pf-bucket.locked .pf-bucket-title { color: var(--muted); }
 .pf-bucket-qty { font-size: 20px; font-weight: 700; line-height: 1.2; color: var(--ink); }
 .pf-bucket-qty .stat-unit { font-size: 12px; color: var(--muted); margin-left: 3px; }
-.pf-bucket-money { font-size: 15px; font-weight: 600; margin-top: 2px; }
-.pf-bucket-eur { font-size: 12px; color: var(--muted); }
+.cur-wrap .cur-amount { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.cur-wrap .cur-amount .stat-unit { font-size: 12px; color: var(--muted); margin-left: 3px; }
+.cur-wrap .cur-sub { font-size: 12px; color: var(--muted); }
 .pf-note { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .pf-note a { color: var(--series-1); }
 
 .pf-perf { margin-bottom: 8px; }
 
 @media print { .pf-hero, .pf-buckets { break-inside: avoid; } }
+
+/* Krok 28.1 (docs/PLAN_KROK_28_ux_mobile.md): globalny przełącznik waluty.
+   `cur_block()` w _macros.html renderuje ZAWSZE oba warianty (PLN-główna /
+   EUR-główna) do DOM — tu tylko przełączamy który jest widoczny, na podstawie
+   `<html data-currency="pln|eur">` ustawianego przez NT.initCurrencyToggle().
+   Bez atrybutu (JS wyłączony / pierwszy paint przed inline-skryptem w base.html)
+   domyślnie widoczny PLN — zgodne z dotychczasowym zachowaniem karty „Portfel". */
+.cur-block { display: none; }
+html:not([data-currency="eur"]) .cur-primary-pln { display: block; }
+html[data-currency="eur"] .cur-primary-eur { display: block; }
+
+.currency-toggle {
+  border: 1px solid var(--border); background: var(--page); color: var(--ink);
+  border-radius: 6px; font-size: 11px; font-weight: 600; padding: 4px 8px;
+  cursor: pointer; letter-spacing: .02em;
+}
+.currency-toggle:hover { border-color: var(--series-1); color: var(--series-1); }
 
 /* Wykres pulpitu — pasek zakresów */
 .chart-range-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }

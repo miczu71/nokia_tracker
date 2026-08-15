@@ -246,21 +246,39 @@ window.NT = (function () {
     });
   }
 
+  function currentCurrency() {
+    return document.documentElement.dataset.currency === "eur" ? "eur" : "pln";
+  }
+
   function initValueChart(canvasId, points) {
-    // Krok 25: krzywa wartości portfela (PLN) vs kontrfaktyczny benchmark
-    // OMXH25 na tym samym wykresie — `points`: [{date, value_pln, benchmark_pln}].
+    // Krok 25: krzywa wartości portfela vs kontrfaktyczny benchmark OMXH25 na
+    // tym samym wykresie — `points`: [{date, value_pln, value_eur, benchmark_pln,
+    // benchmark_eur}]. Krok 28.1: obie waluty już policzone server-side
+    // (Tier A, docs/PLAN_KROK_28_ux_mobile.md §0) — wykres słucha globalnego
+    // przełącznika (`nt:currency-change`) i przerysowuje dane bez przeładowania.
     const el = document.getElementById(canvasId);
     if (!el || !window.Chart || !points || !points.length) return;
 
     const labels = points.map((p) => formatLabel(p.date, "daily"));
-    new Chart(el.getContext("2d"), {
+
+    function seriesFor(cur) {
+      return {
+        value: points.map((p) => p[cur === "eur" ? "value_eur" : "value_pln"]),
+        benchmark: points.map((p) => p[cur === "eur" ? "benchmark_eur" : "benchmark_pln"]),
+        unit: cur === "eur" ? "EUR" : "PLN",
+      };
+    }
+
+    let cur = currentCurrency();
+    let s = seriesFor(cur);
+    const chart = new Chart(el.getContext("2d"), {
       type: "line",
       data: {
         labels,
         datasets: [
           {
-            label: "Portfel (PLN)",
-            data: points.map((p) => p.value_pln),
+            label: "Portfel (" + s.unit + ")",
+            data: s.value,
             borderColor: cssVar("--series-1"),
             backgroundColor: cssVar("--series-1") + "22",
             fill: true,
@@ -269,8 +287,8 @@ window.NT = (function () {
             borderWidth: 2,
           },
           {
-            label: "OMXH25 (kontrfaktycznie, PLN)",
-            data: points.map((p) => p.benchmark_pln),
+            label: "OMXH25 (kontrfaktycznie, " + s.unit + ")",
+            data: s.benchmark,
             borderColor: cssVar("--series-2"),
             backgroundColor: "transparent",
             fill: false,
@@ -295,9 +313,44 @@ window.NT = (function () {
         },
       },
     });
+
+    document.addEventListener("nt:currency-change", (ev) => {
+      const next = ev.detail && ev.detail.currency;
+      if (!next || next === cur) return;
+      cur = next;
+      s = seriesFor(cur);
+      chart.data.datasets[0].data = s.value;
+      chart.data.datasets[0].label = "Portfel (" + s.unit + ")";
+      chart.data.datasets[1].data = s.benchmark;
+      chart.data.datasets[1].label = "OMXH25 (kontrfaktycznie, " + s.unit + ")";
+      chart.update();
+    });
+  }
+
+  // Krok 28.1 (docs/PLAN_KROK_28_ux_mobile.md): globalny przełącznik waluty.
+  // Ustawia `<html data-currency>`, zapamiętuje w localStorage (wzorzec
+  // `nt.chart.range` powyżej) i rozgłasza `nt:currency-change`, żeby wykresy
+  // (initValueChart) mogły przerysować dane bez przeładowania strony. Sam
+  // toggle tekstu w DOM (cur_block() w _macros.html) działa czystym CSS —
+  // patrz `html[data-currency]` w app.css — event jest potrzebny tylko tam,
+  // gdzie CSS nie wystarcza (canvas).
+  function initCurrencyToggle(buttonId) {
+    const btn = document.getElementById(buttonId);
+    if (!btn) return;
+    const storageKey = "nt.currency";
+
+    btn.addEventListener("click", () => {
+      const next = currentCurrency() === "eur" ? "pln" : "eur";
+      document.documentElement.dataset.currency = next;
+      if (window.localStorage) {
+        try { localStorage.setItem(storageKey, next); } catch (e) {}
+      }
+      document.dispatchEvent(new CustomEvent("nt:currency-change", { detail: { currency: next } }));
+    });
   }
 
   return {
     initPriceChart, initRowToggles, initFormPreview, initNavGroups, initValueChart,
+    initCurrencyToggle,
   };
 })();

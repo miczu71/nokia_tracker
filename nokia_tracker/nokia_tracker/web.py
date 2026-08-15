@@ -674,10 +674,6 @@ def create_app(db_path: str) -> Flask:
                 detail = taxtrace.enrich_allocations(conn, allocations, sale_ctx, cfg, reported)
                 sales.append({"sale": dict(s), "detail": detail})
 
-            years = [r["y"] for r in conn.execute(
-                "SELECT DISTINCT strftime('%Y', sale_date) AS y FROM sales "
-                "ORDER BY y DESC").fetchall() if r["y"]]
-
             # Krok 17: pasek KPI nad rejestrem — suma wg AKTYWNEJ polityki kosztu,
             # ta sama, którą pokazuje szczegół każdej sprzedaży.
             active_policy = cfg.get("cost_basis_policy", "own_only")
@@ -695,7 +691,7 @@ def create_app(db_path: str) -> Flask:
 
             return render_template(
                 "sales.html", active="sales", version=__version__, cfg=cfg,
-                sales=sales, year=year, years=years, totals=totals,
+                sales=sales, year=year, totals=totals,
                 deleted=request.args.get("deleted") == "1")
         finally:
             conn.close()
@@ -1314,6 +1310,26 @@ def create_app(db_path: str) -> Flask:
         years.add(datetime.now().year)
         return sorted(years, reverse=True)
 
+    @app.context_processor
+    def _inject_nav_tax_year():
+        """Krok 28.3 (docs/PLAN_KROK_28_ux_mobile.md §3): jeden selektor roku w
+        nagłówku (base.html) zamiast trzech osobnych kopii (`pit38.html`,
+        `sales.html`, `wizard.html`). Submituje `?year=` na BIEŻĄCĄ stronę
+        (`request.path`) — trasy, które już czytają `request.args.get("year")`
+        (pit38/sales/wizard), dostają go bez zmiany własnej logiki; trasy, które
+        nie znają tego parametru, po prostu go ignorują (Flask nie waliduje
+        nieznanych query stringów) — zero ryzyka regresji na stronach, które
+        dziś selektora nie mają. Pusty wybór ("wszystkie") wysyła `year=` — dla
+        `request.args.get("year", type=int)` to `None`, czyli dokładnie ten sam
+        fallback co brak parametru w ogóle (sales: wszystkie lata; pit38/wizard:
+        `cfg['tax_year']` albo rok bieżący)."""
+        conn = _conn()
+        try:
+            return {"nav_tax_years": _years_with_data(conn),
+                    "nav_selected_year": request.args.get("year", type=int)}
+        finally:
+            conn.close()
+
     @app.get("/pit38")
     def pit38_get():
         conn = _conn()
@@ -1335,7 +1351,7 @@ def create_app(db_path: str) -> Flask:
 
             return render_template(
                 "pit38.html", active="pit38", version=__version__,
-                year=year, years=_years_with_data(conn), report=report, cfg=cfg,
+                year=year, report=report, cfg=cfg,
                 whatif_result=whatif_result, whatif_error=whatif_error,
                 whatif_qty=qty_raw, whatif_price=price_raw,
                 current_price=current_price,
@@ -1465,7 +1481,7 @@ def create_app(db_path: str) -> Flask:
             can_close = all(s["done"] for s in steps if s["key"] in ("import", "conflicts", "balance"))
             return render_template(
                 "wizard.html", active="pit38", version=__version__,
-                year=year, years=_years_with_data(conn), steps=steps, report=report,
+                year=year, steps=steps, report=report,
                 closed=closed, can_close=can_close, cfg=cfg,
                 deduct_error=request.args.get("deduct_error"),
                 close_error=request.args.get("close_error") == "1")

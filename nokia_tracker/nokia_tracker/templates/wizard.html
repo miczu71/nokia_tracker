@@ -7,15 +7,7 @@
 
 <div class="page-head">
   <h1>Kreator rozliczenia — {{ year }}</h1>
-  <form class="year-form no-print" method="get" action="{{ url_for('pit38_wizard_get') }}">
-    <label>Rok
-      <select name="year" onchange="this.form.submit()">
-        {% for y in years %}
-        <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
+  {#- Krok 28.3: selektor roku przeniesiony do nagłówku (base.html). #}
 </div>
 
 {{ tax_disclaimer() }}

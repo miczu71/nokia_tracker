@@ -62,6 +62,18 @@
     {% endfor %}
     <a href="{{ url_for('settings_get') }}" {% if active == 'settings' %}class="active"{% endif %}>Ustawienia</a>
   </div>
+  {#- Krok 28.3: jeden selektor roku zamiast trzech kopii (pit38/sales/wizard) —
+      patrz `_inject_nav_tax_year()` w web.py. Submituje na BIEŻĄCĄ stronę, więc
+      działa bez zmian na trasach, które już czytają ?year=, i jest nieszkodliwym
+      no-opem na trasach, które go nie znają. #}
+  <form class="nav-year no-print" method="get" action="{{ request.path }}">
+    <select name="year" onchange="this.form.submit()" aria-label="Rok podatkowy">
+      <option value="">wszystkie lata</option>
+      {% for y in nav_tax_years %}
+      <option value="{{ y }}" {% if y == nav_selected_year %}selected{% endif %}>{{ y }}</option>
+      {% endfor %}
+    </select>
+  </form>
   <button type="button" id="currency-toggle" class="currency-toggle no-print"
           aria-label="Przełącz walutę PLN/EUR">PLN/EUR</button>
   <span class="nav-version">v{{ version }}</span>

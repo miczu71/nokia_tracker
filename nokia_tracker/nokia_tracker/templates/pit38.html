@@ -9,15 +9,8 @@
 
 <div class="page-head">
   <h1>PIT-38 — {{ year }}</h1>
-  <form class="year-form no-print" method="get" action="{{ url_for('pit38_get') }}">
-    <label>Rok
-      <select name="year" onchange="this.form.submit()">
-        {% for y in years %}
-        <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
+  {#- Krok 28.3: selektor roku przeniesiony do nagłówku (base.html) — patrz
+      _inject_nav_tax_year() w web.py. #}
   <div class="form-actions no-print">
     <a class="btn" href="{{ url_for('pit38_get', year=year, print=1) }}" target="_blank">Widok do druku</a>
     <a class="btn" href="{{ url_for('pit38_export_csv', year=year) }}">Eksport CSV</a>

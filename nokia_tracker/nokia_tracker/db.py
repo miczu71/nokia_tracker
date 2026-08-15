@@ -262,6 +262,32 @@ _MIGRATIONS = [
         market_value_pln REAL
     );
     """,
+    # v8 — krok 27: straty z lat ubiegłych (art. 9 ust. 3-3a ustawy o PIT) i
+    # zamknięcie roku podatkowego (docs/PLAN_KROK_27_straty_kreator.md).
+    """
+    CREATE TABLE tax_loss_carryforward (
+        id INTEGER PRIMARY KEY,
+        origin_year INTEGER NOT NULL,
+        cost_basis_policy TEXT NOT NULL
+            CHECK(cost_basis_policy IN ('own_only','own_plus_drip','all_at_acquisition')),
+        loss_pln REAL NOT NULL,
+        UNIQUE(origin_year, cost_basis_policy)
+    );
+
+    CREATE TABLE tax_loss_deductions (
+        id INTEGER PRIMARY KEY,
+        loss_id INTEGER NOT NULL REFERENCES tax_loss_carryforward(id) ON DELETE RESTRICT,
+        used_in_year INTEGER NOT NULL,
+        amount_pln REAL NOT NULL,
+        UNIQUE(loss_id, used_in_year)
+    );
+
+    CREATE TABLE tax_year_closed (
+        year INTEGER PRIMARY KEY,
+        closed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        total_due_pln_snapshot REAL NOT NULL
+    );
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

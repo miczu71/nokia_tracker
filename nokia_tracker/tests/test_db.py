@@ -18,13 +18,15 @@ def test_migrate_creates_all_tables(conn):
         "settings", "api_usage", "ai_usage", "http_cache", "alerts_log",
         # analityka wyników (krok 25, 0.9.0)
         "portfolio_history",
+        # straty z lat ubiegłych + zamknięcie roku (krok 27, 0.11.0)
+        "tax_loss_carryforward", "tax_loss_deductions", "tax_year_closed",
     }
     assert expected <= tables
 
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 7  # v7: krok 25 - portfolio_history
+    assert version == 8  # v8: krok 27 - straty z lat ubiegłych
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):

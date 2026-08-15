@@ -144,6 +144,40 @@ body {
 .table tr:hover td { background: var(--page); }
 .table td.wrap { white-space: normal; }
 
+/* Krok 28.2 (docs/PLAN_KROK_28_ux_mobile.md §2): tabele -> karty poniżej 430px.
+   `<table>` zostaje w DOM (sort/filtr z kroku 28.6 działają bez zmian) — tylko
+   CSS przełącza prezentację. `data-label` na `<td>` (dodane w lots/sales/grants/
+   dividends/news/dashboard/results) daje etykietę przez `::before`; komórki BEZ
+   `data-label` (np. chevron `.row-toggle`, przycisk akcji) po prostu nie dostają
+   etykiety — wartość nadal widoczna, wyrównana do prawej. Wiersze `[colspan]`
+   (`.row-detail` na /sales, `_alloc_detail.html`/formularz na /granty) wracają do
+   zwykłego układu blokowego — to gęsta zagnieżdżona treść, nie para etykieta/
+   wartość. */
+@media (max-width: 430px) {
+  .table-wrap table.table thead { display: none; }
+  .table-wrap table.table, .table-wrap table.table tbody, .table-wrap table.table tr {
+    display: block; width: 100%;
+  }
+  .table-wrap table.table tr {
+    border: 1px solid var(--grid); border-radius: 8px;
+    padding: 6px 10px; margin-bottom: 8px;
+  }
+  .table-wrap table.table tr:hover td { background: transparent; }
+  .table-wrap table.table td {
+    display: flex; justify-content: space-between; align-items: baseline;
+    gap: 12px; padding: 5px 0; border-bottom: none; text-align: right;
+    white-space: normal;
+  }
+  .table-wrap table.table td[data-label]::before {
+    content: attr(data-label); color: var(--muted); font-size: 12px;
+    text-align: left; flex: 0 0 auto;
+  }
+  .table-wrap table.table tr td[colspan] {
+    display: block; text-align: left; padding: 8px 0 0;
+  }
+  .table-wrap table.table tr.row-detail { border: none; padding: 0; margin: 0 0 8px; }
+}
+
 .form label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--ink-2); }
 .form input, .form select {
   display: block; width: 100%; margin-top: 4px;

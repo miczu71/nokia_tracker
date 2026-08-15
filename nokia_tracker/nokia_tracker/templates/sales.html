@@ -49,15 +49,15 @@
         <tr class="row-toggle" data-target="sale-{{ item.sale.id }}" tabindex="0" role="button"
             aria-expanded="false" aria-controls="sale-{{ item.sale.id }}">
           <td><span class="chevron">▸</span></td>
-          <td class="nowrap">{{ item.sale.sale_date }}
+          <td class="nowrap" data-label="Data">{{ item.sale.sale_date }}
             {% if item.detail.is_reported_override %}<span class="badge" title="Kwoty poniżej to wartość zgłoszona, nie wyliczenie silnika">zgłoszono</span>{% endif %}
           </td>
-          <td class="num">{{ '%.4f'|format(item.sale.quantity) }}</td>
-          <td class="num">{{ '%.2f'|format(item.detail.revenue_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(active_data.cost_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(active_data.income_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(active_data.tax_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(item.detail.net_pln) }}</td>
+          <td class="num" data-label="Ilość">{{ '%.4f'|format(item.sale.quantity) }}</td>
+          <td class="num" data-label="Przychód PLN">{{ '%.2f'|format(item.detail.revenue_pln) }}</td>
+          <td class="num" data-label="Koszt PLN">{{ '%.2f'|format(active_data.cost_pln) }}</td>
+          <td class="num" data-label="Dochód PLN">{{ '%.2f'|format(active_data.income_pln) }}</td>
+          <td class="num" data-label="Podatek PLN">{{ '%.2f'|format(active_data.tax_pln) }}</td>
+          <td class="num" data-label="Na rękę PLN">{{ '%.2f'|format(item.detail.net_pln) }}</td>
           <td class="no-print">
             <form method="post" action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
                   onclick="event.stopPropagation();"

@@ -15,22 +15,22 @@
     <tbody>
       {% for n in items %}
       <tr>
-        <td class="nowrap">{{ n.published_at[:10] if n.published_at else '—' }}</td>
-        <td>
+        <td class="nowrap" data-label="Data">{{ n.published_at[:10] if n.published_at else '—' }}</td>
+        <td data-label="Sentyment">
           {% if n.sentiment is not none %}
             <span class="sentiment {{ 'pos' if n.sentiment > 0.2 else ('neg' if n.sentiment < -0.2 else '') }}">
               {{ '%+.2f'|format(n.sentiment) }}
             </span>
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
-        <td>
+        <td data-label="Wpływ">
           {% if n.impact is not none %}
             <span class="impact-dots">{{ '●' * n.impact }}</span>
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
-        <td class="muted">{{ n.source_kind or '—' }}</td>
-        <td class="wrap"><a href="{{ n.url_canonical }}" target="_blank" rel="noopener">{{ n.title }}</a></td>
-        <td class="wrap muted">{{ n.thesis_pl or '' }}</td>
+        <td class="muted" data-label="Źródło">{{ n.source_kind or '—' }}</td>
+        <td class="wrap" data-label="Tytuł"><a href="{{ n.url_canonical }}" target="_blank" rel="noopener">{{ n.title }}</a></td>
+        <td class="wrap muted" data-label="Teza">{{ n.thesis_pl or '' }}</td>
       </tr>
       {% endfor %}
     </tbody>

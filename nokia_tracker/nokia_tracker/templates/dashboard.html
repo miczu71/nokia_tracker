@@ -220,7 +220,7 @@
       <thead><tr><th>Kiedy</th><th>Typ</th><th>Tytuł</th></tr></thead>
       <tbody>
         {% for a in alerts %}
-        <tr><td>{{ a.fired_at[:16] }}</td><td>{{ a.kind }}</td><td class="wrap">{{ a.title }}</td></tr>
+        <tr><td data-label="Kiedy">{{ a.fired_at[:16] }}</td><td data-label="Typ">{{ a.kind }}</td><td class="wrap" data-label="Tytuł">{{ a.title }}</td></tr>
         {% endfor %}
       </tbody>
     </table>

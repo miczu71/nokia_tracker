@@ -38,15 +38,15 @@
       <tbody>
         {% for name, data in policies.items() %}
         <tr {% if name == cfg.cost_basis_policy %}class="active-policy"{% endif %}>
-          <td>{{ policy_labels.get(name, name) }}
+          <td data-label="Polityka">{{ policy_labels.get(name, name) }}
             {% if name == cfg.cost_basis_policy %}<span class="badge saved">aktywna</span>{% endif %}
           </td>
-          <td class="num">{{ '%.2f'|format(data.revenue_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
-          <td class="num">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
-          <td class="muted">{{ data.legal_basis_pl }}</td>
+          <td class="num" data-label="Przychód PLN">{{ '%.2f'|format(data.revenue_pln) }}</td>
+          <td class="num" data-label="Koszt PLN">{{ '%.2f'|format(data.cost_pln) }}</td>
+          <td class="num" data-label="Dochód PLN">{{ '%.2f'|format(data.income_pln) }}</td>
+          <td class="num" data-label="Podatek PLN">{{ '%.2f'|format(data.tax_pln) }}</td>
+          <td class="num" data-label="Różnica vs aktywna">{{ '%.2f'|format(data.delta_vs_active_pln) }}</td>
+          <td class="muted" data-label="Podstawa prawna">{{ data.legal_basis_pl }}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -139,22 +139,22 @@
       <tbody>
         {% for l in lots %}
         <tr>
-          <td class="nowrap">{{ l.acquired_date }}</td>
-          <td>{{ lot_type_labels.get(l.lot_type, l.lot_type) }}</td>
-          <td class="num">{{ '%.4f'|format(l.quantity) }}</td>
-          <td class="num">{{ '%.4f'|format(l.qty_remaining) }}</td>
-          <td class="num">{{ '%.4f'|format(l.price_eur) }}</td>
-          <td class="num">
+          <td class="nowrap" data-label="Data nabycia">{{ l.acquired_date }}</td>
+          <td data-label="Typ">{{ lot_type_labels.get(l.lot_type, l.lot_type) }}</td>
+          <td class="num" data-label="Ilość">{{ '%.4f'|format(l.quantity) }}</td>
+          <td class="num" data-label="Pozostało">{{ '%.4f'|format(l.qty_remaining) }}</td>
+          <td class="num" data-label="Cena EUR">{{ '%.4f'|format(l.price_eur) }}</td>
+          <td class="num" data-label="Kurs NBP">
             {% if l.nbp_rate is not none %}
               {{ '%.4f'|format(l.nbp_rate) }} ({{ l.nbp_rate_date }})
             {% else %}
               <span class="badge">kurs do uzupełnienia</span>
             {% endif %}
           </td>
-          <td class="num">
+          <td class="num" data-label="Koszt PLN">
             {{ '%.2f'|format(l.cost_pln) if l.cost_pln is not none else '—' }}
           </td>
-          <td class="muted">{{ l.source }}</td>
+          <td class="muted" data-label="Źródło">{{ l.source }}</td>
         </tr>
         {% endfor %}
       </tbody>

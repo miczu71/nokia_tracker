@@ -21,6 +21,7 @@ from __future__ import annotations
 import sqlite3
 
 from . import dividends as taxdiv
+from . import losses as taxlosses
 from . import policy as taxpolicy
 
 _EMPTY_SECTION_G = {
@@ -93,8 +94,29 @@ def annual_report(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
     # Krok 17: "ile finalnie wpisać w deklarację" wg AKTYWNEJ polityki kosztu —
     # poz. C (kapitały) + sekcja G (dopłata z dywidend zagranicznych) razem.
     active_policy = cfg.get("cost_basis_policy", "own_only")
-    total_due_pln = round(
-        policies[active_policy]["tax_pln"] + section_g["pl_tax_due_pln"], 2)
+
+    # Krok 27 (2/6): pomniejszenie podatku poz. C o straty z lat ubiegłych —
+    # ale WYŁĄCZNIE o to, co user już jawnie zadeklarował przez
+    # `tax/losses.py::record_deduction()` (`total_used_this_year_pln`), NIE
+    # o maksymalne możliwe odliczenie (`total_remaining_pln`/`max_deduction_pln`
+    # per item). Strata dostępna != strata użyta — to świadoma decyzja
+    # podatnika (bywa korzystniej zostawić stratę na rok z wyższym dochodem),
+    # silnik nie ma cichaczem zakładać maksimum za użytkownika.
+    loss_info = taxlosses.available_for_year(conn, cfg, year, policy=active_policy)
+    used_this_year_pln = loss_info["total_used_this_year_pln"]
+    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
+    income_after_loss_pln = max(
+        0.0, policies[active_policy]["income_pln"] - used_this_year_pln)
+    tax_after_loss_pln = round(income_after_loss_pln * tax_rate, 2)
+
+    total_due_pln = round(tax_after_loss_pln + section_g["pl_tax_due_pln"], 2)
+
+    loss_carryforward = {
+        **loss_info,
+        "income_after_loss_pln": round(income_after_loss_pln, 2),
+        "tax_after_loss_pln": tax_after_loss_pln,
+        "tax_before_loss_pln": policies[active_policy]["tax_pln"],
+    }
 
     return {
         "year": year,
@@ -106,5 +128,6 @@ def annual_report(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
             "foreign_tax_paid_pln": section_g["withholding_paid_pln"],
         },
         "sale_trace": _sale_trace(conn, year),
+        "loss_carryforward": loss_carryforward,
         "total_due_pln": total_due_pln,
     }

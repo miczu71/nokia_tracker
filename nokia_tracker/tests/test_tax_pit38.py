@@ -8,7 +8,7 @@ from __future__ import annotations
 import pytest
 
 from nokia_tracker.tax import dividends as taxdiv
-from nokia_tracker.tax import lots, pit38
+from nokia_tracker.tax import lots, losses, pit38
 
 
 @pytest.fixture(autouse=True)
@@ -165,3 +165,83 @@ def test_annual_report_empty_year_has_zeroed_sections_not_errors(conn):
     assert report["section_g"]["gross_pln"] == 0.0
     assert report["sale_trace"] == []
     assert report["policies"]["own_only"]["revenue_pln"] == 0.0
+
+
+def _make_2020_loss(conn, cfg):
+    # kupno 10 szt @10 EUR, sprzedaż 10 szt @5 EUR -> strata
+    # (10*10 - 10*5) * kurs stub 4.0 = 200 PLN pod polityką own_only.
+    lots.add_lot(conn, "2020-01-10", "own", 10, 10.0)
+    lots.record_sale(conn, "2020-06-01", 10, 5.0)
+    losses.rebuild(conn, cfg)
+
+
+def _make_2024_profit(conn):
+    # kupno 10 szt @5 EUR, sprzedaż 10 szt @8 EUR -> dochód
+    # (10*8 - 10*5) * 4.0 = 120 PLN, podatek 19% = 22.80 PLN.
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    lots.record_sale(conn, "2024-06-01", 10, 8.0)
+
+
+def test_annual_report_total_due_uses_recorded_deduction_not_available(conn):
+    cfg = _base_cfg()
+    _make_2020_loss(conn, cfg)
+    _make_2024_profit(conn)
+
+    report = pit38.annual_report(conn, cfg, year=2024)
+
+    # Strata z 2020 jest dostępna do odliczenia w 2024, ale user nie podjął
+    # jeszcze żadnej decyzji (record_deduction nie wywołane) -> total_due_pln
+    # NIE spada, tak jakby straty w ogóle nie było.
+    assert report["loss_carryforward"]["total_remaining_pln"] == pytest.approx(200.0)
+    assert report["loss_carryforward"]["total_used_this_year_pln"] == 0.0
+    assert report["total_due_pln"] == pytest.approx(22.80)
+    assert report["loss_carryforward"]["income_after_loss_pln"] == pytest.approx(120.0)
+    assert report["loss_carryforward"]["tax_after_loss_pln"] == pytest.approx(22.80)
+    assert report["loss_carryforward"]["tax_before_loss_pln"] == pytest.approx(22.80)
+
+
+def test_annual_report_total_due_drops_by_recorded_deduction_amount(conn):
+    cfg = _base_cfg()
+    _make_2020_loss(conn, cfg)
+    _make_2024_profit(conn)
+
+    without = pit38.annual_report(conn, cfg, year=2024)
+    loss_id = without["loss_carryforward"]["items"][0]["loss_id"]
+
+    losses.record_deduction(conn, cfg, loss_id, used_in_year=2024, amount_pln=100.0)
+    report = pit38.annual_report(conn, cfg, year=2024)
+
+    assert report["loss_carryforward"]["total_used_this_year_pln"] == pytest.approx(100.0)
+    expected_drop = round(100.0 * 0.19, 2)
+    assert report["total_due_pln"] == pytest.approx(
+        round(without["total_due_pln"] - expected_drop, 2))
+    assert report["loss_carryforward"]["income_after_loss_pln"] == pytest.approx(20.0)
+
+
+def test_annual_report_loss_carryforward_empty_when_no_loss_available(conn):
+    cfg = _base_cfg()
+    _make_2024_profit(conn)
+
+    report = pit38.annual_report(conn, cfg, year=2024)
+
+    assert report["loss_carryforward"]["items"] == []
+    assert report["loss_carryforward"]["total_remaining_pln"] == 0.0
+
+
+def test_annual_report_income_after_loss_never_negative(conn):
+    cfg = _base_cfg()
+    _make_2020_loss(conn, cfg)
+    _make_2024_profit(conn)
+
+    without = pit38.annual_report(conn, cfg, year=2024)
+    loss_id = without["loss_carryforward"]["items"][0]["loss_id"]
+
+    # Odliczenie równe całemu dochodowi roku (dozwolone przez record_deduction,
+    # bo strata 200 > dochód 120) -> dochód po stracie musi wylądować na
+    # zerze, nie na ujemnej wartości.
+    losses.record_deduction(conn, cfg, loss_id, used_in_year=2024, amount_pln=120.0)
+    report = pit38.annual_report(conn, cfg, year=2024)
+
+    assert report["loss_carryforward"]["income_after_loss_pln"] == 0.0
+    assert report["loss_carryforward"]["tax_after_loss_pln"] == 0.0
+    assert report["total_due_pln"] == 0.0

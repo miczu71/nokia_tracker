@@ -32,15 +32,24 @@ są poza `/config`, poza zasięgiem tokena Supervisora tej sesji — patrz `CLAU
 notes"). Sensor `sensor.nokia_tracker_pit38_income_pln` za 2026 pokazuje `0.0` (brak sprzedaży w
 tym roku, cfg `tax_year=0` więc sensor liczy rok bieżący).
 
-**Pierwszy krok implementacji, przed napisaniem `tax/losses.py`:** przez `/pit38?year=YYYY` (kolejno
-dla każdego roku z `_years_with_data()`, widocznego w selektorze roku na żywym `/pit38`) odczytać
-`report.policies[*].income_pln` i zanotować, które lata/polityki są faktycznie stratne. To ten sam
-wzorzec co „Warunek wstępny" w 0.9.0 (gęsta seria NBP) — dane wejściowe sprawdzone empirycznie, nie
-założone. Jeśli okaże się, że **żaden rok nie jest stratny** (Nokia rosła cały czas posiadania —
-zgodne z „absurdalnie wysoki XIRR" z sekcji 0.9.0 roadmapy), silnik i tak trzeba zbudować poprawnie
-(dane produkcyjne mogą się zmienić po korekcie importu), ale plan testów w §8 musi nieść ciężar
-weryfikacji na fikstury syntetyczne, nie na danych produkcyjnych — i weryfikacja end-to-end w §9
-musi to jawnie odnotować zamiast pozorować dopasowanie do liczb, których nie ma.
+**Sprawdzone empirycznie przez `ha_manage_addon` proxy (`GET /pit38?year=YYYY` przez Ingress,
+bez sesji przeglądarki — droga z `reference_supervisor_store_reload_ws`, nie WS/LLAT, ta jest
+trwale zablokowana) na żywym `5f59858c_nokia_tracker`, 2026-08-15:**
+
+| Rok | Dochód (wszystkie 3 polityki) |
+|---|---|
+| 2023 | 0.00 PLN (brak sprzedaży) |
+| 2024 | 0.00 PLN (brak sprzedaży) |
+| 2025 | **10 131,06 PLN** (zysk — trzy polityki równe: 17 631,72 przychód − 7 500,66 koszt) |
+| 2026 | 0.00 PLN (brak sprzedaży dotąd w tym roku) |
+
+**Żaden rok nie jest stratny w żadnej z trzech polityk.** Zgodne z przewidywaniem — Nokia rosła
+przez cały okres posiadania („absurdalnie wysoki XIRR" z sekcji 0.9.0 roadmapy). Skutek dla tej
+fali: `tax/losses.py` trzeba zbudować poprawnie (dane produkcyjne mogą się zmienić po korekcie
+importu albo po prostu w przyszłości pojawi się stratny rok), ale **plan testów w §9 niesie cały
+ciężar weryfikacji na fikstury syntetyczne** — nie ma dziś ani jednego realnego wiersza
+`tax_loss_carryforward` do porównania. §12.3 (Weryfikacja) to odnotowuje wprost zamiast pozorować
+dopasowanie do liczb, których nie ma.
 
 ## 1. Migracja bazy — v8
 
@@ -575,16 +584,16 @@ Optymalizator nie modeluje dryfu ceny/FX między „dziś" a „2 stycznia" (ten
 
 ## 12. Weryfikacja
 
-1. **Wykonać §0 przed napisaniem jednej linii `tax/losses.py`** — bez znajomości realnych lat
-   stratnych (o ile istnieją) nie da się napisać sensownego testu integracyjnego na dane
-   produkcyjne; fikstury syntetyczne w §9 nie zależą od tego wyniku, ale krok 3 poniżej tak.
+1. **§0 wykonane w trakcie planowania** — żaden z lat 2023–2026 nie jest stratny w żadnej z trzech
+   polityk (tabela w §0). `rebuild()` na produkcyjnej bazie po wdrożeniu powinien więc dać **zero
+   wierszy** w `tax_loss_carryforward` — to samo w sobie jest sprawdzalnym stwierdzeniem (krok 6
+   poniżej: po update'cie sprawdzić `sensor.nokia_tracker_loss_available_pln == 0` i pustą listę
+   `items` na `/pit38`, NIE „strona się nie wywala").
 2. **Cała sekcja `tax/` jak beton** — `test_tax_*.py` zielone przed i po zmianie `annual_report()`
    (wzorzec kroku 15/26).
-3. **Sprawdzenie na realnych danych, jeśli §0 znalazło choć jeden stratny rok/politykę** — policzyć
-   ręcznie oczekiwaną `loss_pln` z danych z wyciągu i porównać z tym, co pokaże `rebuild()`. Jeśli
-   §0 **nie** znalazło żadnego stratnego roku (prawdopodobne przy stale rosnącej cenie Nokii),
-   ten punkt jawnie odnotowuje „brak danych produkcyjnych do porównania" zamiast pozorować
-   weryfikację, którą zastępują testy syntetyczne z §9.
+3. **Brak danych produkcyjnych do porównania liczbowego** (§0) — cały ciężar weryfikacji
+   poprawności `loss_pln`/`max_deduction_pln`/okna 5 lat niesie plan testów syntetycznych z §9,
+   nie porównanie z realnym wyciągiem. To jawna, udokumentowana luka, nie przeoczenie.
 4. **Playwright na realnym URL-u ingressu** (1920 px + 390 px + tryb ciemny): `/pit38` (nowa karta),
    `/pit38/kreator` (checklist + formularz odliczenia + przycisk zamknięcia), `/plan` (karta
    optymalizatora). Screenshot **i** `browser_console_messages(error)`. Ścieżka
@@ -601,7 +610,7 @@ Optymalizator nie modeluje dryfu ceny/FX między „dziś" a „2 stycznia" (ten
 
 ## Pierwszy krok implementacji
 
-Skopiować ten dokument do repo jako `docs/PLAN_KROK_27_straty_kreator.md` **zanim powstanie
-pierwsza linia kodu** (zasada z `feedback_plans_as_md`), commit osobno — potem §0 (sprawdzenie
-realnych lat stratnych na żywym `/pit38`) jako pierwsza faktyczna czynność przed pisaniem
-`tax/losses.py`.
+Dokument skopiowany do repo jako `docs/PLAN_KROK_27_straty_kreator.md` **przed pierwszą linią kodu**
+(zasada z `feedback_plans_as_md`), commit osobny. §0 (sprawdzenie realnych lat stratnych na żywym
+`/pit38` przez `ha_manage_addon` proxy) wykonane w trakcie planowania — wynik: brak stratnych lat
+2023–2026. Implementacja zaczyna się od migracji v8 + `tax/losses.py` (§1–2).

@@ -241,3 +241,24 @@ def test_discovery_payload_concentration_pct_not_monetary():
     assert p["unit_of_measurement"] == "%"
     assert "device_class" not in p
     assert p["state_class"] == "measurement"
+
+
+# --- krok 27 (0.11.0): straty z lat ubiegłych ---
+
+def test_discovery_payload_losses_entities_present_with_object_id():
+    payloads = discovery_payloads("0.11.0")
+    for slug in ("loss_available_pln", "loss_used_this_year_pln"):
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        assert key in payloads
+        assert payloads[key]["object_id"] == f"nokia_tracker_{slug}"
+        assert payloads[key]["unique_id"] == f"nokia_tracker_{slug}"
+
+
+def test_discovery_payload_losses_entities_are_monetary_total_sensors():
+    payloads = discovery_payloads("0.11.0")
+    for slug in ("loss_available_pln", "loss_used_this_year_pln"):
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        p = payloads[key]
+        assert p["unit_of_measurement"] == "PLN"
+        assert p["device_class"] == "monetary"
+        assert p["state_class"] == "total"

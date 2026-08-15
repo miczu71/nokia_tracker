@@ -183,6 +183,11 @@ _ENTITIES: list[_Entity] = [
            "measurement", "mdi:chart-pie"),
     _Entity("sensor", "vest_this_year_qty", "Vest This Year Qty", None, None,
            "measurement", "mdi:calendar-check"),
+    # --- straty z lat ubiegłych (krok 27, 0.11.0) ---
+    _Entity("sensor", "loss_available_pln", "Loss Available PLN", "PLN",
+           "monetary", "total", "mdi:trending-down"),
+    _Entity("sensor", "loss_used_this_year_pln", "Loss Used This Year PLN", "PLN",
+           "monetary", "total", "mdi:cash-minus"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

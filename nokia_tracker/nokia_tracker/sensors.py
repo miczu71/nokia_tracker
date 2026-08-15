@@ -20,6 +20,7 @@ from .analytics import benchmark as analytics_benchmark
 from .analytics import returns as analytics_returns
 from .tax import grants as taxgrants
 from .tax import lots as taxlots
+from .tax import losses as taxlosses
 from .tax import pit38 as taxpit38
 from .tax import policy as taxpolicy
 from .tax import whatif as taxwhatif
@@ -345,6 +346,19 @@ def pit38_values(conn: sqlite3.Connection, cfg: dict) -> dict:
         "pit38_tax_pln": active["tax_pln"],
         "pit38_dividend_due_pln": report["section_g"]["pl_tax_due_pln"],
         "pit38_reclaimable_pln": report["section_g"]["reclaimable_from_finland_pln"],
+    }
+
+
+def losses_values(conn: sqlite3.Connection, cfg: dict) -> dict:
+    """Krok 27: dwie liczby dla kreatora/dashboardu - dostępna strata i ile
+    już odliczono w bieżącym roku podatkowym, pod AKTYWNĄ polityką kosztu.
+    Wzorzec 1:1 z pit38_values() - ten sam rok (cfg['tax_year'] lub bieżący
+    kalendarzowy)."""
+    year = cfg.get("tax_year") or datetime.now().year
+    avail = taxlosses.available_for_year(conn, cfg, year)
+    return {
+        "loss_available_pln": round(avail["total_remaining_pln"], 2),
+        "loss_used_this_year_pln": round(avail["total_used_this_year_pln"], 2),
     }
 
 

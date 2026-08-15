@@ -22,6 +22,7 @@ from .analytics import history as analytics_history
 from .importers import computershare_pdf
 from .tax import dividends as taxdiv
 from .tax import grants as grantsm
+from .tax import losses as taxlosses
 from .tax import lots as taxlots
 from .ai import scoring as ai_scoring
 from .providers import avanza as avanza_provider
@@ -224,6 +225,7 @@ def main() -> None:
                 # nie konsumuje, a ten łańcuch jest tam celowo krótszy.
                 values.update(sensors.advisor_values(
                     c, cfg, values.get("price_eur"), values.get("eurpln_rate")))
+                values.update(sensors.losses_values(c, cfg))
 
                 mqtt_pub.publish(values)
 
@@ -433,6 +435,28 @@ def main() -> None:
             finally:
                 c.close()
 
+    def rebuild_tax_losses_job() -> None:
+        """Krok 27: przelicza tax_loss_carryforward od zera
+        (tax/losses.py::rebuild()) - żeby korekty importu/danych (nowa
+        sprzedaż, poprawiona cena) odzwierciedliły się w dostępnej stracie
+        bez czekania na ręczne wejście na /pit38/kreator."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                cfg = settingsm.get_settings(c)
+                result = taxlosses.rebuild(c, cfg)
+                if result["conflicts"]:
+                    logger.warning(
+                        "Przeliczenie strat z lat ubiegłych: %d konfliktów "
+                        "(korekta danych vs już wykorzystane odliczenia) - "
+                        "sprawdź /pit38/kreator", len(result["conflicts"]))
+                logger.info(
+                    "Straty z lat ubiegłych przeliczone: %d wierszy", len(result["upserted"]))
+            except Exception:
+                logger.exception("Przeliczenie strat z lat ubiegłych nieudane")
+            finally:
+                c.close()
+
     def check_vest_reminders() -> None:
         """Codziennie: reconciliation (loty -> transze, patrz reconcile_vesting) + przypomnienie
         o nadchodzącym vestingu (cfg['vest_reminder_days'] przed datą, krok 14). Reconciliation
@@ -548,6 +572,7 @@ def main() -> None:
     scheduler.add_job(nightly_backup_job, "cron", hour=4, minute=0)
     scheduler.add_job(backfill_nbp_range_job, "cron", hour=5, minute=0)
     scheduler.add_job(rebuild_portfolio_history_job, "cron", hour=5, minute=30)
+    scheduler.add_job(rebuild_tax_losses_job, "cron", hour=5, minute=45)
     scheduler.start()
 
     app = create_app(db_path=db_path)

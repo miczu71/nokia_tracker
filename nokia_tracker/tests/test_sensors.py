@@ -490,6 +490,35 @@ def test_pit38_values_defaults_tax_year_to_current_year_when_unset(
     assert v["pit38_income_pln"] == pytest.approx((5 * 8.0 - 5 * 5.0) * 4.0)
 
 
+# --- losses_values ---
+
+def test_losses_values_empty_db_all_zero(conn):
+    v = sensors.losses_values(conn, _PIT38_CFG)
+    assert v["loss_available_pln"] == 0.0
+    assert v["loss_used_this_year_pln"] == 0.0
+
+
+def test_losses_values_matches_independent_available_for_year_call(
+        conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+    from nokia_tracker.tax import losses as taxlosses
+
+    # sprzedaż stratna w 2020 -> strata widoczna w oknie 5 lat, więc dostępna
+    # dla tax_year=2024 z _PIT38_CFG (2019..2023 nie obejmuje 2020? window to
+    # [year-5, year-1] = [2019, 2023] -> 2020 jest w oknie).
+    taxlots.add_lot(conn, "2020-01-10", "own", 10, 10.0)
+    taxlots.record_sale(conn, "2020-06-01", 10, 5.0)
+    taxlosses.rebuild(conn, _PIT38_CFG)
+
+    v = sensors.losses_values(conn, _PIT38_CFG)
+    expected = taxlosses.available_for_year(conn, _PIT38_CFG, _PIT38_CFG["tax_year"])
+
+    assert v["loss_available_pln"] == pytest.approx(round(expected["total_remaining_pln"], 2))
+    assert v["loss_used_this_year_pln"] == pytest.approx(
+        round(expected["total_used_this_year_pln"], 2))
+    assert v["loss_available_pln"] > 0.0
+
+
 # --- whatif_values ---
 
 def test_whatif_values_no_price_returns_none(conn):

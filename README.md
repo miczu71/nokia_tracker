@@ -94,13 +94,14 @@ rozwijają się natywnie bez JS (`<details>`), z JS jako pływające menu.
 | **Sprzedaże** | Karta „Podsumowanie" z KPI za wybrany rok (przychód/koszt/dochód/podatek/na rękę); rejestr transakcji — jeden wiersz na sprzedaż z kluczowymi kwotami i przyciskiem „Cofnij" *(od 0.5.0 widocznym od razu, nie tylko po rozwinięciu)*, klik rozwija pełne rozbicie FIFO (który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży z linkiem do tabeli, kwoty EUR/PLN) |
 | **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare, pasek kafelków *(od 0.5.0)* niezvestowane/następny vesting, status transz (oczekuje/nabyte/zaległe), **wartość dziś** (bieżąca cena/kurs) i **wartość zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży, EUR i PLN) per transza |
 | **Wyniki** *(od 0.9.0)* | XIRR na wpłatach własnych i TWR obok siebie, atrybucja zysku na 5 składników (kurs akcji / dopłata ESPP / LTI / dywidendy / efekt EUR-PLN, sumujące się co do grosza), krzywa wartości portfela (PLN) na wykresie razem z kontrfaktycznym OMXH25, tabela zwrotu rok po roku |
+| **Plan** *(od 0.10.0)* | Doradca planu pracowniczego — cztery karty: „Ile tracę, sprzedając dziś" (przepadające dopasowanie ESPP proporcjonalnie do sprzedanych sztuk, z nogą podatkową dla sprzedaży całego ograniczonego pakietu), „Harmonogram vestingu" (oś czasu transz oczekujących, kafelki kwartał/rok/przyszły rok, zaległe osobno), „Planer ESPP" (wpłata × miesiące × cena → akcje własne/dopasowania/podatek, z podglądem na żywo i chipami scenariusza cenowego ±20%), „Ryzyko koncentracji" (udział akcji pracodawcy w majątku vs próg ostrzeżenia) |
 | **Dywidendy** | Formularz dodania wypłaty *(od 0.5.0 z podglądem na żywo — kurs NBP, podatek, dopłata w PL — pod polami)*, jedno źródło prawdy z kursem NBP zamrożonym na Record Date, kafelki podsumowania **w PLN** z EUR jako podlinią *(od 0.5.0 — dawniej licznik EUR na kursach bieżących nie zgadzał się z tabelą poniżej)*, historia z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji |
 | **Importy** | Upload wyciągu Computershare (PDF), kolejka konfliktów (rozbieżności vs poprzedni import, w tym potwierdzenie realnej sprzedaży Withhold-to-Cover), historia importów |
 | **PIT-38** | Karta „Do wpisania w deklarację" (poz. C + sekcja G + kafelek RAZEM DO ZAPŁATY) jako pierwszy ekran; niżej: 3 kafelki polityk kosztu (podstawa prawna w zwiniętym rozbiciu), sekcja G scalona z PIT/ZG (schowana, gdy brak dywidend w roku), symulacja „co jeśli sprzedam teraz" *(od 0.5.0 z wynikiem na żywo bez przeładowania strony)*, ślad obliczeń per lot pogrupowany po dacie sprzedaży, eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku |
 | **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza), kolumna źródła *(od 0.5.0)* |
 | **Prognozy** | Kafelek trafności historycznej (MAPE) *(od 0.5.0)*, historia prognoz 1w/1m/12m vs zrealizowana cena (EUR) |
 | **Kopia zapasowa** *(od 0.8.1)* | Eksport pełnego zrzutu bazy (ZIP: `nokia.db` + manifest + CSV lotów/sprzedaży/grantów/transz/dywidend), przywracanie z podglądem różnicy per tabela przed zapisem (nigdy nie nadpisuje w ciemno), informacja o ostatniej kopii nocnej i liczbie nierozstrzygniętych konfliktów importu |
-| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia, **stawki podatkowe** *(od 0.5.0 — podatek u źródła Finlandia, stawka traktatowa, Belka, domyślny rok podatkowy; dawniej tylko do odczytu)* |
+| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia, **stawki podatkowe** *(od 0.5.0 — podatek u źródła Finlandia, stawka traktatowa, Belka, domyślny rok podatkowy; dawniej tylko do odczytu)*, **doradca planu pracowniczego** *(od 0.10.0 — reszta majątku poza akcjami pracodawcy w PLN i próg ostrzeżenia o koncentracji, dla karty „Ryzyko koncentracji" na Plan)* |
 
 ## Odporność na niestabilne źródła
 
@@ -280,6 +281,14 @@ prefiks niezależnie od nazwy encji).
 | `sensor.nokia_tracker_twr_pct` | Time-weighted return — neutralizuje moment wpłat, jedyna miara porównywalna z indeksem wprost |
 | `sensor.nokia_tracker_fx_effect_pln` | Część zysku wynikająca WYŁĄCZNIE ze zmiany kursu EUR/PLN od dnia nabycia każdego lotu do dziś |
 | `sensor.nokia_tracker_benchmark_omxh25_counterfactual_pln` | Wartość dziś, gdyby te same wpłaty własne (co do dnia i kwoty) poszły w OMXH25 zamiast Nokii |
+
+### Doradca planu pracowniczego *(od 0.10.0)*
+
+| Encja | Opis |
+|---|---|
+| `sensor.nokia_tracker_forfeit_value_pln` | Wartość dopasowania ESPP, które przepadłoby sprzedażą dzisiaj wszystkich akcji własnych objętych ograniczeniem (proporcjonalnie do sprzedanych sztuk) — `unknown` bez ceny/kursu |
+| `sensor.nokia_tracker_concentration_pct` | Udział akcji pracodawcy (wartość rynkowa + oczekujące dopasowania) w łącznym majątku — `unknown`, dopóki „Reszta majątku" na Ustawieniach jest zerem |
+| `sensor.nokia_tracker_vest_this_year_qty` | Suma transz oczekujących z efektywną datą dostępności w bieżącym roku kalendarzowym — liczona zawsze, niezależnie od ceny |
 
 ## Serwisy
 

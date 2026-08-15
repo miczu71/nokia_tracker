@@ -17,7 +17,7 @@ from pathlib import Path
 import openpyxl
 from flask import Flask, Response, redirect, render_template, request, url_for
 
-from . import __version__, analysis, backup as backupm, db as dbm, fx
+from . import __version__, advisor as advisorm, analysis, backup as backupm, db as dbm, fx
 from . import format as fmt
 from . import portfolio as portfoliom
 from . import quotes, sensors
@@ -175,6 +175,10 @@ def create_app(db_path: str) -> Flask:
             # złożone w trzy kubełki (wolne/z ograniczeniem/zablokowane) + sumę — zastępuje
             # ręczną arytmetykę total_qty/total_value_* dawniej inline tutaj.
             buckets = portfoliom.dashboard_buckets(position, restricted, unvested)
+            # Krok 26 (docs/PLAN_KROK_26_doradca.md): kwota przepadującego dopasowania
+            # ESPP dopisana do istniejącego zdania ostrzegawczego (dawniej bez kwoty).
+            forfeit = advisorm.forfeit_summary(
+                conn, values.get("price_eur"), values.get("eurpln_rate"))
 
             # Krok 18: metadane kursu EUR/PLN (skąd, kiedy) dla linii rozgraniczającej
             # kurs bieżący (Yahoo/ECB, prezentacyjny) od kursu NBP zamrożonego na
@@ -193,7 +197,7 @@ def create_app(db_path: str) -> Flask:
             return render_template(
                 "dashboard.html", active="dashboard", version=__version__,
                 values=values, position=position, dividends=dividends, fx_info=fx_info,
-                unvested=unvested, restricted=restricted, buckets=buckets,
+                unvested=unvested, restricted=restricted, buckets=buckets, forfeit=forfeit,
                 chart_ranges=list(_CHART_RANGES), default_chart_range=_DEFAULT_CHART_RANGE,
                 chart_api_url=url_for("chart_api"),
                 alerts=[dict(r) for r in recent_alerts],
@@ -829,6 +833,94 @@ def create_app(db_path: str) -> Flask:
         finally:
             conn.close()
 
+    @app.get("/plan")
+    def plan_get():
+        """Krok 26 (docs/PLAN_KROK_26_doradca.md): cztery pytania, na które żadne
+        narzędzie premium nie odpowiada — ile tracę sprzedając dziś, kiedy co wpada,
+        ile da mi wpłacanie X EUR/mc, czy nie mam za dużo w jednym koszyku, który jest
+        jednocześnie moim pracodawcą. Strona i sensor MQTT (`sensors.advisor_values`)
+        liczą przez tę samą `advisor.overview()`, żeby nigdy nie pokazały dwóch różnych
+        liczb dla tego samego faktu."""
+        conn = _conn()
+        try:
+            ids = _ids(conn)
+            price_row = quotes.latest_quote(conn, ids["primary"], granularity="daily")
+            eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+            price_eur = price_row["close"] if price_row else None
+            eurpln_rate = eurpln_row["close"] if eurpln_row else None
+
+            cfg = settingsm.get_settings(conn)
+            plan_overview = advisorm.overview(conn, cfg, price_eur, eurpln_rate)
+
+            espp_result = None
+            espp_error = None
+            monthly_raw = request.args.get("espp_monthly")
+            months_raw = request.args.get("espp_months")
+            price_raw = request.args.get("espp_price")
+            if monthly_raw and months_raw and price_raw:
+                try:
+                    espp_result = advisorm.espp_plan(
+                        float(monthly_raw), int(float(months_raw)), float(price_raw),
+                        eurpln_rate=eurpln_rate, match_pct=cfg["espp_match_pct"],
+                        cost_basis_policy=cfg["cost_basis_policy"],
+                        tax_pct=cfg["pl_capital_gains_tax_pct"])
+                except ValueError as e:
+                    espp_error = str(e)
+
+            espp_scenarios = None
+            if price_eur:
+                espp_scenarios = [
+                    ("bieżąca", price_eur), ("−20%", price_eur * 0.8),
+                    ("+20%", price_eur * 1.2)]
+
+            return render_template(
+                "plan.html", active="plan", version=__version__,
+                overview=plan_overview, cfg=cfg, price_eur=price_eur,
+                espp_result=espp_result, espp_error=espp_error,
+                espp_monthly=monthly_raw, espp_months=months_raw, espp_price=price_raw,
+                espp_scenarios=espp_scenarios,
+                has_restricted=bool(plan_overview["forfeit"]["items"]),
+                has_timeline=bool(plan_overview["timeline"]["tranches"]))
+        finally:
+            conn.close()
+
+    @app.get("/api/preview/espp")
+    def preview_espp():
+        conn = _conn()
+        try:
+            try:
+                monthly_eur = float(request.args.get("espp_monthly") or 0)
+                months = int(float(request.args.get("espp_months") or 0))
+                price_eur = float(request.args.get("espp_price") or 0)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+
+            cfg = settingsm.get_settings(conn)
+            ids = _ids(conn)
+            eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+            eurpln_rate = eurpln_row["close"] if eurpln_row else None
+
+            try:
+                result = advisorm.espp_plan(
+                    monthly_eur, months, price_eur, eurpln_rate=eurpln_rate,
+                    match_pct=cfg["espp_match_pct"], cost_basis_policy=cfg["cost_basis_policy"],
+                    tax_pct=cfg["pl_capital_gains_tax_pct"])
+            except ValueError as e:
+                return {"ok": False, "error": str(e)}
+
+            lines = [
+                {"label": "Akcje własne", "value": result["own_shares"], "unit": "szt."},
+                {"label": "Akcje dopasowania", "value": result["matched_shares"], "unit": "szt."},
+                {"label": "Razem", "value": result["total_shares"], "unit": "szt."},
+            ]
+            if result["tax_pln"] is not None:
+                lines.append({"label": "Podatek", "value": result["tax_pln"], "unit": "PLN"})
+                lines.append({"label": "Na rękę", "value": result["net_proceeds_pln"],
+                              "unit": "PLN", "emphasis": True})
+            return {"ok": True, "lines": lines}
+        finally:
+            conn.close()
+
     @app.get("/imports")
     def imports_get():
         conn = _conn()
@@ -1094,6 +1186,11 @@ def create_app(db_path: str) -> Flask:
                 "pl_capital_gains_tax_pct": float(
                     request.form.get("pl_capital_gains_tax_pct") or 19.0),
                 "tax_year": int(request.form.get("tax_year") or 0),
+                # Krok 26: doradca planu pracowniczego.
+                "other_net_worth_pln": float(
+                    request.form.get("other_net_worth_pln") or 0.0),
+                "concentration_alert_pct": float(
+                    request.form.get("concentration_alert_pct") or 25.0),
             }
             with dbm.WRITE_LOCK:
                 settingsm.set_settings(conn, updates)

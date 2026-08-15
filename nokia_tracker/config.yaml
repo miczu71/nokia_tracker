@@ -1,5 +1,5 @@
 name: Nokia Tracker
-version: "0.9.0"
+version: "0.10.0"
 slug: nokia_tracker
 description: >-
   Osobisty asystent inwestycyjny dla akcji Nokia (NOKIA.HE, Nasdaq Helsinki).
@@ -69,6 +69,9 @@ options:
   pl_capital_gains_tax_pct: 19.0
   vest_reminder_days: 7
   tax_year: 0
+  # --- doradca planu pracowniczego (krok 26, 0.10.0) ---
+  other_net_worth_pln: 0.0
+  concentration_alert_pct: 25.0
   # --- infra ---
   mqtt_host: "core-mosquitto"
   mqtt_port: 1883
@@ -119,6 +122,8 @@ schema:
   pl_capital_gains_tax_pct: float
   vest_reminder_days: int
   tax_year: int
+  other_net_worth_pln: float
+  concentration_alert_pct: float
   mqtt_host: str
   mqtt_port: int
   mqtt_user: str

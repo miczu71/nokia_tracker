@@ -54,6 +54,10 @@ export PL_CAPITAL_GAINS_TAX_PCT=$(jq -r '.pl_capital_gains_tax_pct // "19"' "$CO
 export VEST_REMINDER_DAYS=$(jq -r '.vest_reminder_days // "7"' "$CONFIG")
 export TAX_YEAR=$(jq -r '.tax_year // "0"' "$CONFIG")
 
+# --- doradca planu pracowniczego (krok 26, 0.10.0) ---
+export OTHER_NET_WORTH_PLN=$(jq -r '.other_net_worth_pln // "0"' "$CONFIG")
+export CONCENTRATION_ALERT_PCT=$(jq -r '.concentration_alert_pct // "25"' "$CONFIG")
+
 # --- infra ---
 export MQTT_HOST=$(jq -r '.mqtt_host // "core-mosquitto"' "$CONFIG")
 export MQTT_PORT=$(jq -r '.mqtt_port // "1883"' "$CONFIG")

@@ -10,6 +10,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from . import advisor as advisorm
 from . import forecasts as forecastsm
 from . import indicators as ind
 from . import market, quotes
@@ -412,4 +413,36 @@ def results_values(conn: sqlite3.Connection, price_eur: float | None,
         "fx_effect_pln": round(attribution["fx_effect_pln"], 2),
         "benchmark_omxh25_counterfactual_pln": (
             round(benchmark_value, 2) if benchmark_value is not None else None),
+    }
+
+
+def advisor_values(conn: sqlite3.Connection, cfg: dict, price_eur: float | None,
+                   eurpln_rate: float | None) -> dict:
+    """Sensory grupy 'Doradca planu pracowniczego' (krok 26, 0.10.0). Zasila się z
+    `advisor.overview()` — TYM SAMYM kompozytorem, którego używa strona `/plan` — żeby
+    strona i sensor MQTT nigdy nie pokazały dwóch różnych liczb dla tego samego faktu.
+
+    Świadome odstępstwo od wzorca `results_values` powyżej: tam WSZYSTKIE klucze wracają
+    `None` bez ceny, bo wszystkie są od niej pochodne. Tutaj `vest_this_year_qty` jest
+    znany wyłącznie z harmonogramu vestingu (czysta ilość, nie wycena) — zwracanie `None`
+    byłoby kłamstwem przez przemilczenie, więc liczy się zawsze, niezależnie od ceny."""
+    overview = advisorm.overview(conn, cfg, price_eur, eurpln_rate)
+    vest_this_year_qty = round(overview["timeline"]["buckets"]["this_year"]["qty"], 4)
+
+    if not price_eur or not eurpln_rate:
+        return {
+            "forfeit_value_pln": None,
+            "concentration_pct": None,
+            "vest_this_year_qty": vest_this_year_qty,
+        }
+
+    forfeit_value_pln = overview["forfeit"]["forfeit_value_pln"]
+    concentration_pct = overview["concentration"]["pct"]
+
+    return {
+        "forfeit_value_pln": (
+            round(forfeit_value_pln, 2) if forfeit_value_pln is not None else None),
+        "concentration_pct": (
+            round(concentration_pct, 2) if concentration_pct is not None else None),
+        "vest_this_year_qty": vest_this_year_qty,
     }

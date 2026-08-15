@@ -214,3 +214,30 @@ def test_discovery_payload_results_entities_present():
         p = payloads[f"homeassistant/sensor/nokia_tracker/{slug}/config"]
         assert p["unit_of_measurement"] == "PLN"
         assert p["device_class"] == "monetary"
+
+
+# --- krok 26 (docs/PLAN_KROK_26_doradca.md): doradca planu pracowniczego ---
+
+def test_discovery_payload_advisor_entities_present_with_object_id():
+    payloads = discovery_payloads("0.10.0")
+    for slug in ("forfeit_value_pln", "concentration_pct", "vest_this_year_qty"):
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        assert key in payloads
+        assert payloads[key]["object_id"] == f"nokia_tracker_{slug}"
+        assert payloads[key]["unique_id"] == f"nokia_tracker_{slug}"
+
+
+def test_discovery_payload_forfeit_value_pln_is_monetary_total():
+    payloads = discovery_payloads("0.10.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/forfeit_value_pln/config"]
+    assert p["unit_of_measurement"] == "PLN"
+    assert p["device_class"] == "monetary"
+    assert p["state_class"] == "total"
+
+
+def test_discovery_payload_concentration_pct_not_monetary():
+    payloads = discovery_payloads("0.10.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/concentration_pct/config"]
+    assert p["unit_of_measurement"] == "%"
+    assert "device_class" not in p
+    assert p["state_class"] == "measurement"

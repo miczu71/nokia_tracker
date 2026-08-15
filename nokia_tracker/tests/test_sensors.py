@@ -579,3 +579,57 @@ def test_results_values_benchmark_counterfactual(conn, _fake_nbp_rate_for_pit38)
                                benchmark_instrument_id=bench_id)
 
     assert v["benchmark_omxh25_counterfactual_pln"] == pytest.approx(55.0, abs=0.01)
+
+
+# --- krok 26 (docs/PLAN_KROK_26_doradca.md): advisor_values ---
+
+_ADVISOR_CFG = {
+    "position_qty": 0.0, "avg_cost_eur": 0.0, "cost_basis_policy": "own_only",
+    "pl_capital_gains_tax_pct": 19.0, "espp_match_pct": 50.0,
+    "other_net_worth_pln": 0.0, "concentration_alert_pct": 25.0,
+}
+
+
+def test_advisor_values_all_three_keys_present(conn):
+    v = sensors.advisor_values(conn, _ADVISOR_CFG, price_eur=None, eurpln_rate=None)
+    assert set(v) == {"forfeit_value_pln", "concentration_pct", "vest_this_year_qty"}
+
+
+def test_advisor_values_money_keys_none_without_price_but_qty_present(
+        conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import grants as grantsm
+
+    grant_id = grantsm.add_grant(conn, "espp", "2026-01-01", 75.0, "espp_grant:x")
+    grantsm.add_vest(
+        conn, grant_id, "2026-08-01", 75.0, "espp_vest:x", available_from="2026-08-27")
+
+    v = sensors.advisor_values(conn, _ADVISOR_CFG, price_eur=None, eurpln_rate=None)
+
+    assert v["forfeit_value_pln"] is None
+    assert v["concentration_pct"] is None
+    assert v["vest_this_year_qty"] == pytest.approx(75.0)
+
+
+def test_advisor_values_forfeit_rounded_to_two_places(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import grants as grantsm, lots as taxlots
+
+    taxlots.add_lot(conn, "2025-10-27", "own", 29.24, 5.41, source="pdf_import")
+    grant_id = grantsm.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grantsm.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2099-01-01")
+
+    v = sensors.advisor_values(conn, _ADVISOR_CFG, price_eur=8.222, eurpln_rate=4.3)
+
+    assert v["forfeit_value_pln"] == pytest.approx(round(29.24 * 8.222 * 4.3, 2))
+
+
+def test_advisor_values_concentration_uses_setting(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import lots as taxlots
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 100.0, 5.0, source="manual")
+    cfg = dict(_ADVISOR_CFG, other_net_worth_pln=300.0)
+
+    v = sensors.advisor_values(conn, cfg, price_eur=10.0, eurpln_rate=4.0)
+
+    # employer_value_pln = 100*10*4 = 4000; total = 4300; pct = 4000/4300*100
+    assert v["concentration_pct"] == pytest.approx(round(4000 / 4300 * 100, 2))

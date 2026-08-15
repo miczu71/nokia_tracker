@@ -102,7 +102,9 @@
       <div class="pf-bucket-qty">{{ buckets.restricted.qty|qty }}<span class="stat-unit">akcji</span></div>
       {{ pf_money(buckets.restricted.value_pln, buckets.restricted.value_eur) }}
       <div class="pf-note">do {{ buckets.restricted.free_until }} — sprzedaż wcześniej oznacza
-        utratę dopasowania 50% · <a href="{{ url_for('grants_get') }}">szczegóły</a></div>
+        utratę {{ forfeit.forfeit_qty|qty }} akcji dopasowania{% if forfeit.forfeit_value_pln is not none %},
+        czyli {{ forfeit.forfeit_value_pln|money }} zł{% endif %} ·
+        <a href="{{ url_for('plan_get') }}">szczegóły</a></div>
     </div>
     {% endif %}
 

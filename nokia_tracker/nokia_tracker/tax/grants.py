@@ -288,6 +288,194 @@ def _value(qty: float, price_eur: float | None, eurpln_rate: float | None
     return eur, pln
 
 
+def _effective_date(row: dict) -> str:
+    """COALESCE(available_from, vest_date) w Pythonie — jedno miejsce, którego używają
+    `restricted_own_lots` i `vesting_timeline` (krok 26, docs/PLAN_KROK_26_doradca.md).
+    `unvested_summary`/`list_espp`/`list_lti_grouped` celowo NIE zrefaktoryzowane na to
+    wywołanie — te trzy mają produkcyjnych konsumentów (encje MQTT, pulpit, kubełki
+    portfela), a zero zysku nie jest warte ryzyka zmiany zachowania przy okazji."""
+    return row["available_from"] or row["vest_date"]
+
+
+def restricted_own_lots(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
+    """Krok 26 (docs/PLAN_KROK_26_doradca.md): surowe fakty per ograniczony lot `own` —
+    ile dopasowania ESPP wisi na TYM KONKRETNYM locie, zero wyceny (wycenę i przepadek
+    liczy `advisor.py`). Reguła wykrycia ograniczenia jest identyczna jak w
+    `restricted_own_summary` przed tym krokiem (JAKAKOLWIEK transza `pending`, także LTI,
+    z `grant_date` == `lots.acquired_date`) — zawężenie do samego ESPP zmieniłoby
+    `restricted_qty` widoczne na pulpicie.
+
+    `matched_qty` (dopasowanie ESPP przypisane TEMU lotowi) jest inną rzeczą niż samo
+    wykrycie: liczy się WYŁĄCZNIE z transz `pending` programu `espp` — lot ograniczony
+    wyłącznie grantem LTI ma `matched_qty == 0.0` (sprzedaż akcji własnych nie unieważnia
+    transzy RSU). Gdy dwa loty `own` dzielą jedną `grant_date` (jedyne powiązanie to data,
+    `lots.grant_id` jest martwe — nigdy niezapisywane), dopasowanie jest dzielone PRO RATA
+    po ORYGINALNEJ ilości (`lots.quantity`, mianownik obejmuje też loty sprzedane do zera —
+    stąd `SELECT ... FROM lots`, nie `open_lots`), żeby nie podwoić przepadku."""
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+
+    pending = conn.execute(
+        "SELECT v.id AS vest_id, v.quantity, v.available_from, v.vest_date, "
+        "g.grant_date, g.program FROM vests v JOIN grants g ON g.id = v.grant_id "
+        "WHERE v.status = 'pending'").fetchall()
+
+    detect_by_date: dict[str, list[str]] = {}
+    matched_by_date: dict[str, dict] = {}
+    for p in pending:
+        effective_date = _effective_date(p)
+        detect_by_date.setdefault(p["grant_date"], []).append(effective_date)
+        if p["program"] == "espp":
+            bucket = matched_by_date.setdefault(p["grant_date"], {"qty": 0.0, "vest_ids": []})
+            bucket["qty"] += p["quantity"]
+            bucket["vest_ids"].append(p["vest_id"])
+
+    result: list[dict] = []
+    for lot in taxlots.open_lots(conn, as_of=today):
+        if lot["lot_type"] != "own":
+            continue
+        date = lot["acquired_date"]
+        matches = detect_by_date.get(date)
+        if not matches:
+            continue
+
+        matched_bucket = matched_by_date.get(date)
+        if matched_bucket:
+            siblings = conn.execute(
+                "SELECT quantity FROM lots WHERE lot_type = 'own' AND acquired_date = ?",
+                (date,)).fetchall()
+            denom = sum(s["quantity"] for s in siblings)
+            matched_qty = (matched_bucket["qty"] * lot["quantity"] / denom) if denom else 0.0
+            pending_vest_ids = matched_bucket["vest_ids"]
+        else:
+            matched_qty = 0.0
+            pending_vest_ids = []
+
+        original_quantity = lot["quantity"]
+        match_rate = matched_qty / original_quantity if original_quantity else 0.0
+
+        result.append({
+            "lot_id": lot["id"],
+            "acquired_date": date,
+            "original_quantity": original_quantity,
+            "qty_remaining": lot["qty_remaining"],
+            "matched_qty": matched_qty,
+            "match_rate": match_rate,
+            "free_until": max(matches),
+            "pending_vest_ids": pending_vest_ids,
+        })
+    return result
+
+
+def vesting_timeline(conn: sqlite3.Connection, price_eur: float | None = None,
+                     eurpln_rate: float | None = None, today: str | None = None) -> dict:
+    """Krok 26 (docs/PLAN_KROK_26_doradca.md): oś czasu transz `pending` — funkcja
+    SIOSTRZANA do `unvested_summary`, nie jej rozszerzenie (tamta ma trzech produkcyjnych
+    konsumentów, zmiana jej kontraktu jest ryzykiem bez zysku).
+
+    `tranches` posortowane po `(effective_date, vest_id)` — kolejność monotoniczna, żeby
+    kropki na osi czasu nie lądowały losowo. `offset_pct` (0..100, pozycja na szynie)
+    liczony w Pythonie po CAŁEJ liście (także `overdue`) — szablon dostaje gotową liczbę,
+    a filtrowanie zaległych z wizualnej szyny (pokazywane osobno jako pasek ostrzegawczy)
+    to decyzja widoku, nie tej funkcji. Jedna transza -> `offset_pct = 50.0`.
+
+    `buckets` (`this_quarter`/`this_year` KUMULATYWNIE/`next_year`/`later`) liczone
+    WYŁĄCZNIE z transz nie-zaległych — `overdue` jest z definicji niepewne (ta sama zasada
+    co `unvested_summary`, krok 21) i nigdy nie wchodzi do sum po cichu, tylko do własnego
+    klucza `overdue`. Wyceny `None` (nie `0.0`) gdy brakuje ceny/kursu — milczymy uczciwie,
+    zero nie znaczy "bez wartości", znaczy "nieznane"."""
+    if today is None:
+        today = datetime.now().strftime("%Y-%m-%d")
+    has_price = price_eur is not None
+    has_pln = has_price and eurpln_rate is not None
+
+    rows = conn.execute(
+        "SELECT v.id AS vest_id, v.grant_id, v.vest_date, v.available_from, v.quantity, "
+        "g.program, g.grant_date FROM vests v JOIN grants g ON g.id = v.grant_id "
+        "WHERE v.status = 'pending'").fetchall()
+
+    tranches: list[dict] = []
+    for r in rows:
+        d = dict(r)
+        effective_date = _effective_date(d)
+        overdue = effective_date < today
+        value_eur, value_pln = _value(d["quantity"], price_eur, eurpln_rate)
+        days_until = None
+        if not overdue:
+            days_until = (datetime.strptime(effective_date, "%Y-%m-%d")
+                         - datetime.strptime(today, "%Y-%m-%d")).days
+        year = int(effective_date[:4])
+        quarter = (int(effective_date[5:7]) - 1) // 3 + 1
+        tranches.append({
+            "vest_id": d["vest_id"], "grant_id": d["grant_id"], "program": d["program"],
+            "grant_date": d["grant_date"], "vest_date": d["vest_date"],
+            "available_from": d["available_from"], "effective_date": effective_date,
+            "quantity": d["quantity"], "value_eur": value_eur, "value_pln": value_pln,
+            "overdue": overdue, "days_until": days_until,
+            "quarter": f"{year}-Q{quarter}", "year": str(year),
+        })
+    tranches.sort(key=lambda t: (t["effective_date"], t["vest_id"]))
+
+    if tranches:
+        first_d = datetime.strptime(tranches[0]["effective_date"], "%Y-%m-%d")
+        last_d = datetime.strptime(tranches[-1]["effective_date"], "%Y-%m-%d")
+        span_days = (last_d - first_d).days
+        for t in tranches:
+            if span_days == 0:
+                t["offset_pct"] = 50.0
+            else:
+                d2 = datetime.strptime(t["effective_date"], "%Y-%m-%d")
+                t["offset_pct"] = (d2 - first_d).days / span_days * 100
+
+    def _empty_bucket() -> dict:
+        return {"qty": 0.0, "value_eur": (0.0 if has_price else None),
+                "value_pln": (0.0 if has_pln else None)}
+
+    def _add(bucket: dict, qty: float, value_eur: float | None, value_pln: float | None) -> None:
+        bucket["qty"] += qty
+        if has_price:
+            bucket["value_eur"] += value_eur or 0.0
+        if has_pln:
+            bucket["value_pln"] += value_pln or 0.0
+
+    today_year = int(today[:4])
+    today_quarter = (int(today[5:7]) - 1) // 3 + 1
+
+    this_quarter = _empty_bucket()
+    this_year = _empty_bucket()
+    next_year = _empty_bucket()
+    later = _empty_bucket()
+    overdue_bucket = _empty_bucket()
+    overdue_count = 0
+
+    for t in tranches:
+        if t["overdue"]:
+            _add(overdue_bucket, t["quantity"], t["value_eur"], t["value_pln"])
+            overdue_count += 1
+            continue
+        y = int(t["year"])
+        q = int(t["quarter"].split("Q")[1])
+        if y == today_year:
+            _add(this_year, t["quantity"], t["value_eur"], t["value_pln"])
+            if q == today_quarter:
+                _add(this_quarter, t["quantity"], t["value_eur"], t["value_pln"])
+        elif y == today_year + 1:
+            _add(next_year, t["quantity"], t["value_eur"], t["value_pln"])
+        else:
+            _add(later, t["quantity"], t["value_eur"], t["value_pln"])
+
+    overdue_bucket["count"] = overdue_count
+
+    return {
+        "tranches": tranches,
+        "buckets": {"this_quarter": this_quarter, "this_year": this_year,
+                    "next_year": next_year, "later": later},
+        "overdue": overdue_bucket,
+        "span": {"first": tranches[0]["effective_date"] if tranches else None,
+                 "last": tranches[-1]["effective_date"] if tranches else None},
+    }
+
+
 def unvested_summary(conn: sqlite3.Connection, price_eur: float | None = None,
                      eurpln_rate: float | None = None, today: str | None = None) -> dict:
     """Krok 21 (docs/PLAN_KROK_21_portfel_calkowity.md): jedno źródło prawdy dla
@@ -367,35 +555,21 @@ def restricted_own_summary(conn: sqlite3.Connection, price_eur: float | None = N
 
     Loty innych typów (`matched`/`lti`/`dividend_drip`) nigdy nie są ograniczone —
     ograniczenie w wyciągu dotyczy wyłącznie świeżo kupionych akcji własnych czekających
-    na własne dopasowanie, nie już nabytych/podarowanych akcji."""
-    if today is None:
-        today = datetime.now().strftime("%Y-%m-%d")
+    na własne dopasowanie, nie już nabytych/podarowanych akcji.
 
-    pending = conn.execute(
-        "SELECT v.available_from, v.vest_date, g.grant_date FROM vests v "
-        "JOIN grants g ON g.id = v.grant_id WHERE v.status = 'pending'").fetchall()
-    effective_by_grant_date: dict[str, list[str]] = {}
-    for p in pending:
-        effective_date = p["available_from"] or p["vest_date"]
-        effective_by_grant_date.setdefault(p["grant_date"], []).append(effective_date)
+    Krok 26 (docs/PLAN_KROK_26_doradca.md): przepisane na delegację do
+    `restricted_own_lots()`, żeby reguła wykrycia ograniczenia żyła w jednym miejscu —
+    ta funkcja tylko agreguje. Wyjście bit-w-bit identyczne z wersją przed refaktorem
+    (patrz `test_restricted_own_summary_still_matches_after_delegation`)."""
+    lots = restricted_own_lots(conn, today=today)
 
-    restricted_qty = 0.0
-    items: list[dict] = []
-    free_dates: list[str] = []
-    for lot in taxlots.open_lots(conn, as_of=today):
-        if lot["lot_type"] != "own":
-            continue
-        matches = effective_by_grant_date.get(lot["acquired_date"])
-        if not matches:
-            continue
-        free_until = max(matches)
-        restricted_qty += lot["qty_remaining"]
-        free_dates.append(free_until)
-        items.append({
-            "acquired_date": lot["acquired_date"],
-            "quantity": lot["qty_remaining"],
-            "free_until": free_until,
-        })
+    restricted_qty = sum(item["qty_remaining"] for item in lots)
+    free_dates = [item["free_until"] for item in lots]
+    items = [{
+        "acquired_date": item["acquired_date"],
+        "quantity": item["qty_remaining"],
+        "free_until": item["free_until"],
+    } for item in lots]
 
     value_eur, value_pln = _value(restricted_qty, price_eur, eurpln_rate)
 

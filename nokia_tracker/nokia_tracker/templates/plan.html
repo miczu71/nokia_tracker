@@ -1,0 +1,197 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat, tax_disclaimer %}
+{% block title %}Plan — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Plan</h1>
+</div>
+
+<p class="disclaimer">
+  ⚠️ Kalkulator pomocniczy, nie doradztwo inwestycyjne ani podatkowe. Cztery pytania, na
+  które żadne narzędzie giełdowe premium nie odpowiada, bo nie zna Twojego planu
+  pracowniczego: ile tracę sprzedając dziś, kiedy co wpada, ile da mi regularna wpłata,
+  czy nie mam za dużo w jednym koszyku, który jest jednocześnie moim pracodawcą.
+</p>
+
+{% set forfeit = overview.forfeit %}
+<div class="card">
+  <div class="card-title">Ile tracę, sprzedając dziś</div>
+  {% if not has_restricted %}
+  <p class="muted">
+    Żaden lot własny nie jest dziś objęty ograniczeniem — wszystkie dopasowania ESPP
+    już zvestowały.
+  </p>
+  {% else %}
+  <div class="grid stats">
+    {{ stat('Akcje z ograniczeniem', forfeit.restricted_qty|qty, 'szt.') }}
+    {{ stat('Przepadające dopasowanie', forfeit.forfeit_qty|qty, 'szt.', cls='highlight') }}
+    {{ stat('Wartość przepadku', forfeit.forfeit_value_pln|money, 'zł', cls='highlight') }}
+    {{ stat('Uwolnienie za', forfeit.days_until_free|qty(0) if forfeit.days_until_free is not none else none,
+            'dni', sub=forfeit.free_until) }}
+  </div>
+  {% if overview.sale_today %}
+  {% set sale_active = overview.sale_today.policies[overview.sale_today.active_policy] %}
+  <div class="grid stats">
+    {{ stat('Podatek przy sprzedaży dziś', sale_active.tax_pln|money, 'zł') }}
+    {{ stat('Łączny koszt sprzedaży dziś (podatek + przepadek)',
+            (sale_active.tax_pln + (forfeit.forfeit_value_pln or 0))|money, 'zł') }}
+  </div>
+  {% endif %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Data nabycia</th><th class="num">Pozostało</th><th class="num">Z ilu</th>
+            <th class="num">Dopasowanie</th><th class="num">Wartość przepadku</th>
+            <th>Wolne od</th></tr>
+      </thead>
+      <tbody>
+        {% for item in forfeit['items'] %}
+        <tr>
+          <td class="nowrap">{{ item.acquired_date }}</td>
+          <td class="num">{{ item.qty_remaining|qty(4) }}</td>
+          <td class="num">{{ item.original_quantity|qty(4) }}</td>
+          <td class="num">{{ item.forfeit_qty|qty(4) }}</td>
+          <td class="num">{{ item.forfeit_value_pln|money }} zł</td>
+          <td class="nowrap">{{ item.free_until }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">
+    Przepadek liczony proporcjonalnie do sprzedanych sztuk (mianownik = oryginalna
+    ilość lotu) — jeśli część lotu już sprzedałeś, pozostałe akcje wciąż niosą pełne
+    dopasowanie na jednostkę.
+  </p>
+  {% endif %}
+</div>
+
+{% set timeline = overview.timeline %}
+<div class="card">
+  <div class="card-title">Harmonogram vestingu</div>
+  {% if not has_timeline %}
+  <p class="muted">Brak oczekujących transz — wszystko już zvestowało.</p>
+  {% else %}
+  <div class="grid stats">
+    {{ stat('W tym kwartale', timeline.buckets.this_quarter.qty|qty, 'szt.',
+            sub=(timeline.buckets.this_quarter.value_pln|money ~ ' zł' if timeline.buckets.this_quarter.value_pln is not none else none)) }}
+    {{ stat('W tym roku', timeline.buckets.this_year.qty|qty, 'szt.',
+            sub=(timeline.buckets.this_year.value_pln|money ~ ' zł' if timeline.buckets.this_year.value_pln is not none else none)) }}
+    {{ stat('W przyszłym roku', timeline.buckets.next_year.qty|qty, 'szt.',
+            sub=(timeline.buckets.next_year.value_pln|money ~ ' zł' if timeline.buckets.next_year.value_pln is not none else none)) }}
+  </div>
+
+  {% if timeline.overdue.count %}
+  <p class="disclaimer error">
+    ⚠️ {{ timeline.overdue.count }} zaległych transz ({{ timeline.overdue.qty|qty }} szt.) —
+    data dostępności minęła, a status wciąż „pending". Sprawdź wyciąg, zanim potraktujesz
+    je jako pewne (nie wchodzą do kafelków powyżej).
+  </p>
+  {% endif %}
+
+  <div class="tl-rail">
+    {% for t in timeline.tranches if not t.overdue %}
+    <div class="tl-dot" style="--tl-offset: {{ t.offset_pct }}%">
+      <div class="tl-dot-marker"></div>
+      <div class="tl-dot-label">
+        <strong>{{ t.effective_date }}</strong>
+        <span>{{ t.quantity|qty }} szt. ({{ 'ESPP' if t.program == 'espp' else 'LTI' }})</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card no-print">
+  <div class="card-title">Planer ESPP</div>
+  <form class="inline-form" id="espp-form" method="get" action="{{ url_for('plan_get') }}">
+    <label>Wpłata (EUR/mc)
+      <input type="number" step="0.01" name="espp_monthly" value="{{ espp_monthly or '' }}" required>
+    </label>
+    <label>Liczba miesięcy
+      <input type="number" step="1" name="espp_months" value="{{ espp_months or '' }}" required>
+    </label>
+    <label>Cena (EUR/akcję)
+      <input type="number" step="0.0001" name="espp_price"
+             value="{{ espp_price or price_eur or '' }}" required>
+    </label>
+    <button class="btn primary" type="submit">Policz</button>
+  </form>
+  {% if espp_scenarios %}
+  <div class="chip-row">
+    {% for label, scenario_price in espp_scenarios %}
+    <a class="chip" href="{{ url_for('plan_get') }}?espp_monthly={{ espp_monthly or 200 }}&espp_months={{ espp_months or 12 }}&espp_price={{ '%.4f'|format(scenario_price) }}">{{ label }}: {{ '%.4f'|format(scenario_price) }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="preview-box" id="espp-preview" hidden></div>
+
+  {% if espp_error %}
+  <p class="disclaimer error">⚠️ {{ espp_error }}</p>
+  {% endif %}
+
+  {% if espp_result %}
+  <div class="grid stats">
+    {{ stat('Wpłacone', espp_result.contributed_eur|money, 'EUR') }}
+    {{ stat('Akcje własne', espp_result.own_shares|qty, 'szt.') }}
+    {{ stat('Akcje dopasowania', espp_result.matched_shares|qty, 'szt.') }}
+    {{ stat('Razem akcji', espp_result.total_shares|qty, 'szt.') }}
+    {{ stat('Wartość na koniec', espp_result.end_value_eur|money, 'EUR',
+            sub=(espp_result.end_value_pln|money ~ ' zł' if espp_result.end_value_pln is not none else none)) }}
+    {% if espp_result.tax_pln is not none %}
+    {{ stat('Podatek (aktywna polityka)', espp_result.tax_pln|money, 'zł') }}
+    {{ stat('Na rękę', espp_result.net_proceeds_pln|money, 'zł', cls='highlight') }}
+    {% endif %}
+  </div>
+  <p class="muted">
+    Cztery uproszczenia tego scenariusza: (1) cena płaska — ta sama przy „zakupie" i
+    „sprzedaży", stąd przy polityce „Wszystkie w wartości nabycia" podatek wychodzi
+    dokładnie 0; (2) podatek liczony na samych nowych akcjach, w izolacji od Twojego
+    realnego stosu FIFO; (3) jeden dzisiejszy kurs EUR/PLN dla wszystkich wpłat, nie
+    kurs NBP zamrożony per zdarzenie; (4) dopasowanie zakłada dotrwanie do vestingu —
+    sprzedaż wcześniej je kasuje (patrz karta „Ile tracę, sprzedając dziś" wyżej).
+  </p>
+  {{ tax_disclaimer() }}
+  {% endif %}
+</div>
+
+{% set conc = overview.concentration %}
+<div class="card">
+  <div class="card-title">Ryzyko koncentracji</div>
+  {% if not conc.configured %}
+  <p class="muted">
+    Podaj resztę majątku w <a href="{{ url_for('settings_get') }}">Ustawieniach</a>,
+    żeby policzyć koncentrację.
+  </p>
+  {% else %}
+  <div class="conc-bar-wrap">
+    <div class="conc-bar{% if conc.over_threshold %} over{% endif %}" style="--conc-pct: {{ conc.pct }}%"></div>
+  </div>
+  <div class="grid stats">
+    {{ stat('Akcje pracodawcy', conc.employer_value_pln|money, 'zł') }}
+    {{ stat('Reszta majątku', conc.other_net_worth_pln|money, 'zł') }}
+    {{ stat('Udział akcji pracodawcy', conc.pct|pct(1, false), '%', cls=('highlight' if conc.over_threshold else '')) }}
+  </div>
+  {% if conc.over_threshold %}
+  <p class="disclaimer error">
+    ⚠️ Powyżej progu {{ conc.threshold_pct|pct(1, false) }}%. To jednocześnie Twój
+    pracodawca — spadek kursu i utrata dochodu przychodzą tym samym kanałem.
+  </p>
+  {% endif %}
+  {% endif %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+NT.initFormPreview({
+  formId: "espp-form", boxId: "espp-preview",
+  url: {{ url_for('preview_espp')|tojson }},
+  requiredFields: ["espp_monthly", "espp_months", "espp_price"],
+  fields: [["espp_monthly", "espp_monthly"], ["espp_months", "espp_months"],
+           ["espp_price", "espp_price"]],
+});
+</script>
+{% endblock %}

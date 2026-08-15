@@ -102,6 +102,9 @@ def main() -> None:
         "pl_capital_gains_tax_pct": _env("PL_CAPITAL_GAINS_TAX_PCT", "19"),
         "vest_reminder_days": _env("VEST_REMINDER_DAYS", "7"),
         "tax_year": _env("TAX_YEAR", "0"),
+        # --- doradca planu pracowniczego (krok 26, 0.10.0) ---
+        "other_net_worth_pln": _env("OTHER_NET_WORTH_PLN", "0"),
+        "concentration_alert_pct": _env("CONCENTRATION_ALERT_PCT", "25"),
     })
 
     history_years = int(settingsm.get_settings(conn)["history_backfill_years"])
@@ -216,6 +219,11 @@ def main() -> None:
                 values.update(sensors.whatif_values(c, cfg, values.get("price_eur")))
                 values.update(sensors.results_values(
                     c, values.get("price_eur"), values.get("eurpln_rate"), omxh25_id))
+                # Krok 26 (docs/PLAN_KROK_26_doradca.md): świadomie NIE dopisane do
+                # łańcucha digestu w run_daily_analysis() poniżej — notifier tych kluczy
+                # nie konsumuje, a ten łańcuch jest tam celowo krótszy.
+                values.update(sensors.advisor_values(
+                    c, cfg, values.get("price_eur"), values.get("eurpln_rate")))
 
                 mqtt_pub.publish(values)
 

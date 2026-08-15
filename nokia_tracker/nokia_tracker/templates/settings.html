@@ -125,6 +125,20 @@
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-title">Doradca planu pracowniczego</div>
+    <div class="row2">
+      <label>Reszta majątku poza akcjami pracodawcy (zł)
+        <input type="number" step="0.01" name="other_net_worth_pln" value="{{ cfg.other_net_worth_pln }}">
+      </label>
+      <label>Próg ostrzeżenia o koncentracji (%)
+        <input type="number" step="0.1" name="concentration_alert_pct" value="{{ cfg.concentration_alert_pct }}">
+      </label>
+    </div>
+    <p class="muted">Używane na <a href="{{ url_for('plan_get') }}">Plan</a> do policzenia,
+      jaki udział majątku stanowią akcje pracodawcy — pole puste/zerowe wyłącza wyliczenie.</p>
+  </div>
+
   <div class="form-actions">
     <button class="btn primary" type="submit">Zapisz</button>
   </div>

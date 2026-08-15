@@ -23,6 +23,34 @@ from . import policy as taxpolicy
 from . import trace as taxtrace
 
 
+def _apply_policies(plan: list[dict], revenue_pln: float, cfg: dict
+                    ) -> tuple[dict[str, dict], str]:
+    """Krok 26 (docs/PLAN_KROK_26_doradca.md): pętla trzech polityk kosztu wydzielona
+    z `simulate_sale` bez zmiany zachowania, żeby `advisor.espp_plan()` mogła wołać
+    DOKŁADNIE tę samą matematykę na syntetycznej alokacji FIFO (akcje planera, które
+    jeszcze nie istnieją jako loty) — bez tego dwa miejsca liczyłyby podatek dwiema
+    kopiami tej samej pętli, gwarancja rozjazdu prędzej czy później."""
+    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
+    policies: dict[str, dict] = {}
+    for name, allowed_types in taxpolicy.POLICIES.items():
+        cost_pln = sum(a["cost_pln"] for a in plan if a["lot_type"] in allowed_types)
+        income_pln = revenue_pln - cost_pln
+        tax_pln = round(max(0.0, income_pln * tax_rate), 2)
+        policies[name] = {
+            "cost_pln": round(cost_pln, 2),
+            "income_pln": round(income_pln, 2),
+            "tax_pln": tax_pln,
+            "legal_basis_pl": taxpolicy.LEGAL_BASIS_PL[name],
+        }
+
+    active_policy = cfg.get("cost_basis_policy", "own_only")
+    active_tax_pln = policies[active_policy]["tax_pln"]
+    for data in policies.values():
+        data["delta_vs_active_pln"] = round(data["tax_pln"] - active_tax_pln, 2)
+
+    return policies, active_policy
+
+
 def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
                   price_eur: float, fee_eur: float = 0.0,
                   sale_date: str | None = None) -> dict:
@@ -53,23 +81,7 @@ def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
     plan = taxlots._plan_fifo(open_rows, quantity, price_eur, fee_eur, nbp_rate)
     revenue_pln = sum(alloc["revenue_pln"] for alloc in plan)
 
-    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
-    policies: dict[str, dict] = {}
-    for name, allowed_types in taxpolicy.POLICIES.items():
-        cost_pln = sum(a["cost_pln"] for a in plan if a["lot_type"] in allowed_types)
-        income_pln = revenue_pln - cost_pln
-        tax_pln = round(max(0.0, income_pln * tax_rate), 2)
-        policies[name] = {
-            "cost_pln": round(cost_pln, 2),
-            "income_pln": round(income_pln, 2),
-            "tax_pln": tax_pln,
-            "legal_basis_pl": taxpolicy.LEGAL_BASIS_PL[name],
-        }
-
-    active_policy = cfg.get("cost_basis_policy", "own_only")
-    active_tax_pln = policies[active_policy]["tax_pln"]
-    for data in policies.values():
-        data["delta_vs_active_pln"] = round(data["tax_pln"] - active_tax_pln, 2)
+    policies, active_policy = _apply_policies(plan, revenue_pln, cfg)
 
     # Krok 16: rozbicie do numeru tabeli NBP — patrz tax/trace.py. Osobny klucz
     # `lots_consumed_detailed` obok `lots_consumed`, żeby nie psuć istniejących
@@ -90,5 +102,5 @@ def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
         "lots_consumed_detailed": detailed,
         "policies": policies,
         "active_policy": active_policy,
-        "net_proceeds_pln": round(revenue_pln - active_tax_pln, 2),
+        "net_proceeds_pln": round(revenue_pln - policies[active_policy]["tax_pln"], 2),
     }

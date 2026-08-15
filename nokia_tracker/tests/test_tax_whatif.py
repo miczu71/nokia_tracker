@@ -120,3 +120,19 @@ def test_simulate_sale_defaults_to_today_when_sale_date_omitted(conn, monkeypatc
     monkeypatch.setattr("nokia_tracker.tax.whatif.fx_nbp.rate_for_event", _capture)
     whatif.simulate_sale(conn, _base_cfg(), 5, 8.0)
     assert seen_dates == [datetime.now().strftime("%Y-%m-%d")]
+
+
+# --- krok 26 (docs/PLAN_KROK_26_doradca.md): _apply_policies wydzielone z simulate_sale ---
+
+def test_apply_policies_called_directly_matches_simulate_sale(conn):
+    lots.add_lot(conn, "2022-01-01", "own", 100.0, 5.0, source="manual")
+    lots.add_lot(conn, "2023-01-01", "matched", 50.0, 0.0, source="manual")
+
+    result = whatif.simulate_sale(conn, _base_cfg(), 120.0, 8.0, sale_date="2026-07-28")
+
+    direct_policies, direct_active = whatif._apply_policies(
+        result["lots_consumed"], sum(a["revenue_pln"] for a in result["lots_consumed"]),
+        _base_cfg())
+
+    assert direct_policies == result["policies"]
+    assert direct_active == result["active_policy"]

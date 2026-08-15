@@ -29,7 +29,7 @@ def client(tmp_path):
 
 @pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/sales", "/dividends", "/grants",
                                   "/imports", "/news", "/forecasts", "/settings", "/pit38",
-                                  "/dane", "/wyniki"])
+                                  "/dane", "/wyniki", "/plan"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -1609,3 +1609,170 @@ def test_wyniki_page_yearly_table_from_portfolio_history(tmp_path):
     html = client.get("/wyniki").get_data(as_text=True)
     assert "2023" in html
     assert "2024" in html
+
+
+# --- /plan (krok 26, docs/PLAN_KROK_26_doradca.md) ---
+
+def _make_plan_app(tmp_path, monkeypatch, filename="krok26_plan.db", price_eur=8.0,
+                   eurpln_rate=4.0):
+    from nokia_tracker import db as dbm, quotes as quotesm, fx
+    from nokia_tracker.models import Candle
+    from nokia_tracker.tax import grants as grantsm, lots as taxlots
+
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, "stub"))
+
+    db_path = str(tmp_path / filename)
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+
+    primary_id = quotesm.ensure_instrument(conn, "NOKIA.HE", "Nokia Oyj", "EUR", "primary")
+    eurpln_id = quotesm.ensure_instrument(conn, fx.EURPLN_SYMBOL, "EUR/PLN", "PLN", "fx")
+    quotesm.upsert_candles(conn, primary_id, "daily",
+                           [Candle(ts="2026-06-01T00:00:00+00:00", close=price_eur)],
+                           source="yahoo")
+    quotesm.upsert_candles(conn, eurpln_id, "daily",
+                           [Candle(ts="2026-06-01T00:00:00+00:00", close=eurpln_rate)],
+                           source="yahoo")
+
+    taxlots.add_lot(conn, "2025-10-27", "own", 29.24, 5.41, source="pdf_import")
+    grant_id = grantsm.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grantsm.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2099-01-01")
+
+    conn.commit()
+    conn.close()
+    return create_app(db_path)
+
+
+def test_plan_page_empty_state(client):
+    html = client.get("/plan").get_data(as_text=True)
+    assert "Plan" in html
+    assert "Żaden lot własny nie jest dziś objęty ograniczeniem" in html
+    assert "Brak oczekujących transz" in html
+    assert "Podaj resztę majątku" in html
+
+
+def test_plan_page_shows_forfeit_amount(tmp_path, monkeypatch):
+    app = _make_plan_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/plan").get_data(as_text=True)
+        # forfeit_value_pln = 29.24 * 8.0 * 4.0 = 935.68 -> money() -> "936"
+        assert "936" in html
+
+
+def test_plan_page_shows_days_until_free(tmp_path, monkeypatch):
+    app = _make_plan_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/plan").get_data(as_text=True)
+        assert "Uwolnienie za" in html
+        assert "2099-01-01" in html
+
+
+def test_plan_page_shows_vesting_timeline_dates(tmp_path, monkeypatch):
+    app = _make_plan_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/plan").get_data(as_text=True)
+        assert "2099-01-01" in html
+        assert "ESPP" in html
+
+
+def test_plan_page_espp_planner_renders_from_get_params(tmp_path, monkeypatch):
+    # Kurs EUR/PLN musi być w bazie, żeby planer policzył nogę podatkową (bez FX
+    # tax_pln zostaje None — patrz test_espp_plan_pln_none_without_fx).
+    app = _make_plan_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get(
+            "/plan?espp_monthly=200&espp_months=12&espp_price=8").get_data(as_text=True)
+        assert "450" in html  # total_shares
+        assert "912" in html  # tax_pln (own_only, eurpln=4.0 z fixture)
+
+
+def test_plan_page_scenario_chip_minus_20_pct_has_exact_price(tmp_path, monkeypatch):
+    app = _make_plan_app(tmp_path, monkeypatch, price_eur=8.222)
+    with app.test_client() as c:
+        html = c.get("/plan").get_data(as_text=True)
+        assert "espp_price=6.5776" in html
+
+
+def test_plan_page_concentration_warning_above_threshold(tmp_path, monkeypatch):
+    from nokia_tracker import db as dbm, quotes as quotesm, fx
+    from nokia_tracker.models import Candle
+    from nokia_tracker.tax import lots as taxlots
+    from nokia_tracker import settings as settingsm
+
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, "stub"))
+
+    db_path = str(tmp_path / "krok26_conc.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    primary_id = quotesm.ensure_instrument(conn, "NOKIA.HE", "Nokia Oyj", "EUR", "primary")
+    eurpln_id = quotesm.ensure_instrument(conn, fx.EURPLN_SYMBOL, "EUR/PLN", "PLN", "fx")
+    quotesm.upsert_candles(conn, primary_id, "daily",
+                           [Candle(ts="2026-06-01T00:00:00+00:00", close=10.0)], source="yahoo")
+    quotesm.upsert_candles(conn, eurpln_id, "daily",
+                           [Candle(ts="2026-06-01T00:00:00+00:00", close=4.0)], source="yahoo")
+    taxlots.add_lot(conn, "2020-01-01", "own", 100.0, 5.0, source="manual")
+    settingsm.set_settings(
+        conn, {"other_net_worth_pln": 100.0, "concentration_alert_pct": 25.0})
+    conn.commit()
+    conn.close()
+
+    client = create_app(db_path).test_client()
+    html = client.get("/plan").get_data(as_text=True)
+    assert "Powyżej progu" in html
+    assert "To jednocześnie Twój" in html
+
+
+def test_plan_page_concentration_empty_state_links_to_settings(client):
+    html = client.get("/plan").get_data(as_text=True)
+    assert 'href="/settings"' in html
+
+
+def test_preview_espp_returns_lines_http_200(client):
+    resp = client.get("/api/preview/espp?espp_monthly=200&espp_months=12&espp_price=8")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert any(line["label"] == "Razem" for line in data["lines"])
+
+
+def test_preview_espp_bad_input_returns_ok_false_http_200(client):
+    resp = client.get("/api/preview/espp?espp_monthly=200&espp_months=12&espp_price=0")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is False
+
+
+def test_preview_espp_writes_nothing(client):
+    before = client.get("/lots").get_data(as_text=True)
+    client.get("/api/preview/espp?espp_monthly=200&espp_months=12&espp_price=8")
+    after = client.get("/lots").get_data(as_text=True)
+    assert before == after
+
+
+def test_settings_post_saves_other_net_worth_and_threshold(client):
+    resp = client.post("/settings", data={
+        "ai_primary": "local", "ai_fallback": "gemini",
+        "other_net_worth_pln": "150000.5", "concentration_alert_pct": "30.0",
+    })
+    assert resp.status_code == 302
+    html = client.get("/settings").get_data(as_text=True)
+    assert 'value="150000.5"' in html
+    assert 'value="30.0"' in html
+
+
+def test_dashboard_restricted_note_shows_forfeit_amount(tmp_path, monkeypatch):
+    app = _make_full_portfolio_dashboard_app(tmp_path, monkeypatch, "krok26_dashboard.db")
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        # grant_a: match_rate = 50/100 = 0.5, lot 100 szt -> forfeit_qty=50,
+        # forfeit_value_pln = 50 * 10 (price) * 4 (eurpln) = 2000
+        assert "utratę 50,00 akcji dopasowania" in html
+        assert "2\xa0000" in html
+
+
+def test_nav_contains_plan_link(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'href="/plan"' in html

@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.10.0] - 2026-08-15
+
+Krok 26 (`docs/PLAN_KROK_26_doradca.md`), trzecia fala z `docs/ROADMAP.md` — Doradca planu
+pracowniczego: jedyna część roadmapy, której nie da się kupić w narzędziu premium, bo żadne z nich
+nie zna specyfiki polskiego ESPP/LTI. Cztery pytania, na które dodatek dotąd nie odpowiadał wprost:
+ile tracę sprzedając dziś, kiedy co wpada, ile da mi regularna wpłata, czy nie mam za dużo w jednym
+koszyku, który jest jednocześnie moim pracodawcą.
+
+### Dodano
+- **Strona „Plan"** (grupa „Portfel") — cztery karty:
+  - **„Ile tracę, sprzedając dziś"** — dopisuje KWOTĘ do ostrzeżenia, które dotąd (od kroku 21)
+    było samym zdaniem bez liczby. Przepadek dopasowania ESPP liczony proporcjonalnie do
+    sprzedanych sztuk (mianownik = oryginalna ilość lotu), z tabelą per lot i (gdy pokrycie
+    pozwala) nogą podatkową sprzedaży całego ograniczonego pakietu.
+  - **„Harmonogram vestingu"** — oś czasu oczekujących transz (kafelki: w tym kwartale / w tym
+    roku / w przyszłym roku, zaległe pokazywane osobno, nigdy zsumowane po cichu), pozioma szyna
+    z kropkami na desktopie, pionowa lista na telefonie.
+  - **„Planer ESPP"** — wpłata EUR/mc × liczba miesięcy × cena → akcje własne, akcje dopasowania,
+    wartość na koniec, podatek wg aktywnej polityki kosztu; podgląd na żywo pod formularzem, trzy
+    chipy scenariusza cenowego (bieżąca / −20% / +20%) zamiast suwaka, którym nie da się trafić na
+    telefonie.
+  - **„Ryzyko koncentracji"** — udział akcji pracodawcy (wartość rynkowa + oczekujące dopasowania)
+    w łącznym majątku vs konfigurowalny próg ostrzeżenia; puste, dopóki „Reszta majątku" na
+    Ustawieniach jest zerem (żeby nikomu, kto nic nie wpisał, nie wyskoczyło fałszywe 100%).
+- 3 nowe sensory MQTT: `forfeit_value_pln`, `concentration_pct`, `vest_this_year_qty`.
+- 2 nowe opcje/ustawienia: `other_net_worth_pln` (reszta majątku w PLN, zwykłe pole liczbowe —
+  świadomie NIE encja HA), `concentration_alert_pct` (próg ostrzeżenia, domyślnie 25%).
+- `tax/grants.py::restricted_own_lots()` (surowe fakty per ograniczony lot — ile dopasowania ESPP
+  na nim wisi, `restricted_own_summary()` przepisane na delegację do niej, wyjście bit-w-bit
+  identyczne) i `vesting_timeline()` (oś czasu, funkcja siostrzana do `unvested_summary()`, nie jej
+  rozszerzenie — żeby nie ruszać kontraktu z trzema produkcyjnymi konsumentami).
+- Nowy moduł `advisor.py` — `forfeit_summary()`/`forfeit_for_quantity()`/`forfeit_for_allocations()`
+  (ta ostatnia przyjmuje kształt `simulate_sale()["lots_consumed"]` — hak dla przyszłego what-if na
+  `/pit38`, bez nowej matematyki), `espp_plan()` (czysta, karmi syntetyczne loty do
+  `tax/lots.py::_plan_fifo()` zamiast podrabiać dane w bazie), `concentration()`, `overview()`
+  (jeden kompozytor dla strony `/plan` I sensora MQTT — nigdy dwóch różnych liczb dla tego samego
+  faktu).
+- `tax/whatif.py::_apply_policies()` — pętla trzech polityk kosztu wydzielona z `simulate_sale`
+  bez zmiany zachowania, żeby planer ESPP liczył podatek DOKŁADNIE tą samą matematyką.
+- **Brak migracji bazy** — świadomie: wszystkie cztery funkcje wyprowadzalne z istniejących danych
+  (`lots`/`grants`/`vests` + jeden wiersz w tabeli KV `settings`).
+
+### Zweryfikowano na realnych danych przed wdrożeniem
+Trzy transze dopasowania ESPP (29,24 + 28,99 + 17,37 = 75,60606 szt.) implikują 151,20 akcji
+własnych kupionych na tych datach, a ograniczonych jest tylko 142,7294 — różnica to ślad znanej
+częściowej sprzedaży z 2025-10-27. Przewidziano ręcznie przed wdrożeniem: przepadek ≈ 71,37 szt.
+(nie 75,60606 — gdyby reguła proporcjonalna nie zadziałała, obie liczby byłyby równe), wartość
+≈ 587 EUR. Zgodność przewidywania z tym, co pokazała strona po deployu, to najostrzejszy sygnał, że
+mianownik proporcji (`lots.quantity`, nie `qty_remaining`) i wykrycie częściowej sprzedaży działają
+poprawnie.
+
 ## [0.9.0] - 2026-08-14
 
 Krok 25 (`docs/PLAN_KROK_25_wyniki.md`), druga fala z `docs/ROADMAP.md` — wyniki: XIRR, TWR,

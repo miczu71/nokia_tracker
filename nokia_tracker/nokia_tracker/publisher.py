@@ -176,6 +176,13 @@ _ENTITIES: list[_Entity] = [
     _Entity("sensor", "benchmark_omxh25_counterfactual_pln",
            "Benchmark OMXH25 Counterfactual PLN", "PLN", "monetary", "total",
            "mdi:swap-horizontal"),
+    # --- doradca planu pracowniczego (krok 26, 0.10.0) ---
+    _Entity("sensor", "forfeit_value_pln", "Forfeit Value PLN", "PLN", "monetary",
+           "total", "mdi:cash-remove"),
+    _Entity("sensor", "concentration_pct", "Concentration Pct", "%", None,
+           "measurement", "mdi:chart-pie"),
+    _Entity("sensor", "vest_this_year_qty", "Vest This Year Qty", None, None,
+           "measurement", "mdi:calendar-check"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

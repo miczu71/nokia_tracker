@@ -40,3 +40,16 @@ def test_unknown_key_ignored(conn):
     settingsm.set_settings(conn, {"nieistniejacy_klucz": "x"})
     settingsm.seed_from_options(conn, {"nieistniejacy_klucz": "y"})
     # brak wyjątku = sukces; klucz po prostu pominięty
+
+# --- krok 26 (docs/PLAN_KROK_26_doradca.md): doradca planu pracowniczego ---
+
+def test_other_net_worth_pln_defaults_to_zero(conn):
+    s = settingsm.get_settings(conn)
+    assert s["other_net_worth_pln"] == 0.0
+    assert s["concentration_alert_pct"] == 25.0
+
+
+def test_defaults_cover_every_settings_type():
+    """Strażnik: bez tego `get_settings` wywala KeyError przy zapomnianym DEFAULT dla
+    nowego klucza w SETTINGS_TYPES (dziś go brak — dodane w kroku 26)."""
+    assert set(settingsm.DEFAULTS) == set(settingsm.SETTINGS_TYPES)

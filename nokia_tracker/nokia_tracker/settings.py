@@ -50,6 +50,9 @@ SETTINGS_TYPES: dict[str, type] = {
     "pl_capital_gains_tax_pct": float,
     "vest_reminder_days": int,
     "tax_year": int,
+    # --- doradca planu pracowniczego (krok 26, 0.10.0) ---
+    "other_net_worth_pln": float,
+    "concentration_alert_pct": float,
 }
 
 # Klucze API i hasła MQTT NIE żyją w tabeli settings — zostają wyłącznie w
@@ -92,6 +95,8 @@ DEFAULTS: dict[str, object] = {
     "pl_capital_gains_tax_pct": 19.0,
     "vest_reminder_days": 7,
     "tax_year": 0,
+    "other_net_worth_pln": 0.0,
+    "concentration_alert_pct": 25.0,
 }
 
 

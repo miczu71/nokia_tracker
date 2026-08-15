@@ -82,6 +82,21 @@
 </div>
 
 <div class="card">
+  <div class="card-title">Straty z lat ubiegłych ({{ policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }})</div>
+  {% if report.loss_carryforward['items'] %}
+  <div class="grid stats">
+    {{ stat('Dostępna strata', '%.2f'|format(report.loss_carryforward.total_remaining_pln), 'PLN') }}
+    {{ stat('Odliczone w tym roku', '%.2f'|format(report.loss_carryforward.total_used_this_year_pln), 'PLN') }}
+    {{ stat('Podatek po odliczeniu', '%.2f'|format(report.loss_carryforward.tax_after_loss_pln), 'PLN', cls='highlight') }}
+  </div>
+  <a class="btn no-print" href="{{ url_for('pit38_wizard_get', year=year) }}">Kreator rozliczenia →</a>
+  {% else %}
+  <p class="muted">Brak dostępnych strat z ostatnich 5 lat w polityce
+    {{ policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }}.</p>
+  {% endif %}
+</div>
+
+<div class="card">
   <div class="card-title">Sekcja G — dywidendy zagraniczne (PIT/ZG)
     {% if report.section_g.has_estimated %}
     <span class="badge" title="Część kwot poniżej to szacunek (35% u źródła założone) - źródło (wyciąg bez sekcji Dividend (Reinvested)) nie ma rozbicia Gross/Taxes/Fees, patrz /dywidendy">zawiera szacunki</span>

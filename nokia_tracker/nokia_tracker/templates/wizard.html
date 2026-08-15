@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat, tax_disclaimer %}
+{% block title %}Kreator rozliczenia — Nokia Tracker{% endblock %}
+{% block content %}
+
+{% set _blocking_keys = ['import', 'conflicts', 'balance'] %}
+
+<div class="page-head">
+  <h1>Kreator rozliczenia — {{ year }}</h1>
+  <form class="year-form no-print" method="get" action="{{ url_for('pit38_wizard_get') }}">
+    <label>Rok
+      <select name="year" onchange="this.form.submit()">
+        {% for y in years %}
+        <option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+</div>
+
+{{ tax_disclaimer() }}
+
+{% if deduct_error %}
+<p class="disclaimer error">⚠️ {{ deduct_error }}</p>
+{% endif %}
+
+{% if close_error %}
+<p class="disclaimer error">⚠️ Nie można zamknąć roku — nierozstrzygnięte kroki blokujące (import/konflikty/saldo).</p>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Checklista</div>
+  <ul>
+    {% for step in steps %}
+    <li class="{% if step.done %}good{% elif step.key in _blocking_keys %}bad{% else %}muted{% endif %}">
+      <span>{{ '✓' if step.done else '○' }}</span>
+      <strong>{{ step.label }}</strong>
+      <span class="muted">{{ step.detail_pl }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="card">
+  <div class="card-title">Odlicz stratę</div>
+  {% if report.loss_carryforward['items'] %}
+  {% for item in report.loss_carryforward['items'] %}
+  <form class="inline-form" method="post" action="{{ url_for('pit38_wizard_deduct') }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="loss_id" value="{{ item.loss_id }}">
+    <label>Strata z {{ item.origin_year }}: dostępne {{ item.max_deduction_pln }} PLN
+      (razem z tego co już odliczono w tym roku), wygasa po {{ item.expires_after_year }}
+      <input type="number" step="0.01" name="amount_pln" min="0"
+             max="{{ item.max_deduction_pln }}" value="{{ item.used_this_year_pln }}">
+    </label>
+    <button class="btn primary" type="submit">Zapisz odliczenie</button>
+  </form>
+  {% endfor %}
+  {% else %}
+  <p class="muted">Brak dostępnych strat z lat ubiegłych do odliczenia w {{ year }}.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Zamknięcie roku</div>
+  {% if closed %}
+  <p class="muted">Rok zamknięty.</p>
+  <form method="post" action="{{ url_for('pit38_wizard_reopen') }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <button class="btn" type="submit">Odblokuj</button>
+  </form>
+  {% else %}
+  <form method="post" action="{{ url_for('pit38_wizard_close') }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <button class="btn primary" type="submit" {% if not can_close %}disabled{% endif %}>Zamknij rok</button>
+  </form>
+  {% if not can_close %}
+  <p class="muted">Blokują: {{ steps | selectattr('key', 'in', _blocking_keys)
+      | rejectattr('done') | map(attribute='label') | join(', ') }}</p>
+  {% endif %}
+  {% endif %}
+</div>
+
+<p class="no-print"><a href="{{ url_for('pit38_get', year=year) }}">&larr; Powrót do PIT-38</a></p>
+
+{% endblock %}

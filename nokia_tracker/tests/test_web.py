@@ -3,6 +3,7 @@ ustawień + no-store na HTML (BLUEPRINT §3/§9, krok 9). Zero żywego AI —
 /analyze-now mockuje analysis.run_daily_analysis."""
 import io
 import json
+import re
 import sqlite3
 import zipfile
 from datetime import datetime
@@ -29,7 +30,7 @@ def client(tmp_path):
 
 @pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/sales", "/dividends", "/grants",
                                   "/imports", "/news", "/forecasts", "/settings", "/pit38",
-                                  "/dane", "/wyniki", "/plan"])
+                                  "/dane", "/wyniki", "/plan", "/pit38/kreator"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -1141,6 +1142,173 @@ def test_pit38_export_xlsx_returns_xlsx_attachment(client, _fake_nbp_rate_pit38)
     assert "pit38_2024.xlsx" in resp.headers["Content-Disposition"]
     # niepusty realny plik XLSX (magic bytes ZIP - openpyxl zapisuje jako zip)
     assert resp.data[:2] == b"PK"
+
+
+# --- /pit38/kreator (krok 27, docs/PLAN_KROK_27_straty_kreator.md) ---
+
+def _make_wizard_app(tmp_path, monkeypatch, filename="krok27_wizard.db"):
+    """2023: strata (kupno 10 szt. po 10 EUR, sprzedaż po 5 EUR -> strata 200 PLN
+    przy stałym kursie 4.0). 2024: dochód (kupno 10 szt. po 5 EUR, sprzedaż po
+    8 EUR -> dochód 120 PLN, podatek 22.80 PLN bez odliczenia straty). Wywołuje
+    `losses.rebuild()` od razu, żeby `tax_loss_carryforward` było zasilone
+    niezależnie od tego, czy test w ogóle odwiedza /pit38/kreator (który sam
+    robi rebuild) — patrz `tax/losses.py::rebuild`."""
+    from nokia_tracker.tax import losses as lossesm
+    from nokia_tracker.tax import lots as taxlots
+
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, "stub"))
+
+    db_path = str(tmp_path / filename)
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+
+    taxlots.add_lot(conn, "2023-01-10", "own", 10, 10.0)
+    taxlots.record_sale(conn, "2023-06-01", 10, 5.0)
+    taxlots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    taxlots.record_sale(conn, "2024-06-01", 10, 8.0)
+    conn.commit()
+
+    cfg = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0}
+    lossesm.rebuild(conn, cfg)
+    conn.close()
+    return create_app(db_path), db_path
+
+
+def test_pit38_wizard_checklist_shows_missing_import(client):
+    html = client.get("/pit38/kreator").get_data(as_text=True)
+    assert "Wgraj wyciąg za ten rok" in html
+    assert "Brak zaimportowanego wyciągu z datą &#39;as of&#39; w tym roku." in html \
+        or "Brak zaimportowanego wyciągu z datą 'as of' w tym roku." in html
+
+
+def test_pit38_wizard_page_lists_deduction_form_for_available_loss(tmp_path, monkeypatch):
+    app, _db_path = _make_wizard_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/pit38/kreator?year=2024").get_data(as_text=True)
+        assert "Strata z 2023" in html
+        assert "Zapisz odliczenie" in html
+
+
+def test_pit38_wizard_deduct_valid_amount_reduces_total_due(tmp_path, monkeypatch):
+    app, _db_path = _make_wizard_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        before = c.get("/pit38?year=2024").get_data(as_text=True)
+        assert "22.80" in before or "22,80" in before
+
+        wizard_html = c.get("/pit38/kreator?year=2024").get_data(as_text=True)
+        loss_id = re.search(r'name="loss_id" value="(\d+)"', wizard_html).group(1)
+
+        resp = c.post(
+            "/pit38/kreator/odlicz",
+            data={"year": "2024", "loss_id": loss_id, "amount_pln": "50"},
+            follow_redirects=False)
+        assert resp.status_code == 302
+        assert "deduct_error" not in resp.headers["Location"]
+
+        # dochód po odliczeniu: 120 - 50 = 70 * 19% = 13.30
+        after = c.get("/pit38?year=2024").get_data(as_text=True)
+        assert "13.30" in after or "13,30" in after
+
+
+def test_pit38_wizard_deduct_over_limit_redirects_with_error_and_no_write(tmp_path, monkeypatch):
+    app, db_path = _make_wizard_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        wizard_html = c.get("/pit38/kreator?year=2024").get_data(as_text=True)
+        loss_id = re.search(r'name="loss_id" value="(\d+)"', wizard_html).group(1)
+
+        conn = dbm.get_conn(db_path)
+        before_count = conn.execute("SELECT COUNT(*) FROM tax_loss_deductions").fetchone()[0]
+        conn.close()
+
+        resp = c.post(
+            "/pit38/kreator/odlicz",
+            data={"year": "2024", "loss_id": loss_id, "amount_pln": "99999"},
+            follow_redirects=False)
+        assert resp.status_code == 302
+        assert "deduct_error" in resp.headers["Location"]
+
+        conn = dbm.get_conn(db_path)
+        after_count = conn.execute("SELECT COUNT(*) FROM tax_loss_deductions").fetchone()[0]
+        conn.close()
+        assert after_count == before_count == 0
+
+
+def test_pit38_wizard_close_blocked_by_unresolved_balance_conflict(tmp_path, monkeypatch):
+    app, db_path = _make_wizard_app(tmp_path, monkeypatch)
+    conn = dbm.get_conn(db_path)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','y','2024-12-31')")
+    import_id = conn.execute("SELECT id FROM imports").fetchone()[0]
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json, resolved) VALUES (?, 'balance', 'k', '{}', '{}', 0)", (import_id,))
+    conn.commit()
+    conn.close()
+
+    with app.test_client() as c:
+        resp = c.post("/pit38/kreator/zamknij", data={"year": "2024"}, follow_redirects=False)
+        assert resp.status_code == 302
+        assert "close_error=1" in resp.headers["Location"]
+
+    conn = dbm.get_conn(db_path)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM tax_year_closed WHERE year=2024").fetchone()[0] == 0
+    conn.close()
+
+
+def test_pit38_wizard_close_succeeds_and_writes_snapshot_when_steps_done(tmp_path, monkeypatch):
+    app, db_path = _make_wizard_app(tmp_path, monkeypatch)
+    conn = dbm.get_conn(db_path)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','y','2024-12-31')")
+    conn.commit()
+    conn.close()
+
+    with app.test_client() as c:
+        resp = c.post("/pit38/kreator/zamknij", data={"year": "2024"}, follow_redirects=False)
+        assert resp.status_code == 302
+        assert "closed=1" in resp.headers["Location"]
+
+    conn = dbm.get_conn(db_path)
+    row = conn.execute("SELECT * FROM tax_year_closed WHERE year=2024").fetchone()
+    conn.close()
+    assert row is not None
+    assert row["total_due_pln_snapshot"] == pytest.approx(22.80)
+
+
+def test_pit38_wizard_reopen_clears_tax_year_closed(tmp_path, monkeypatch):
+    app, db_path = _make_wizard_app(tmp_path, monkeypatch)
+    conn = dbm.get_conn(db_path)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','y','2024-12-31')")
+    conn.commit()
+    conn.close()
+
+    with app.test_client() as c:
+        c.post("/pit38/kreator/zamknij", data={"year": "2024"})
+        resp = c.post("/pit38/kreator/odblokuj", data={"year": "2024"}, follow_redirects=False)
+        assert resp.status_code == 302
+
+    conn = dbm.get_conn(db_path)
+    assert conn.execute(
+        "SELECT COUNT(*) FROM tax_year_closed WHERE year=2024").fetchone()[0] == 0
+    conn.close()
+
+
+def test_pit38_page_shows_available_loss_card_and_wizard_link(tmp_path, monkeypatch):
+    app, _db_path = _make_wizard_app(tmp_path, monkeypatch)
+    with app.test_client() as c:
+        html = c.get("/pit38?year=2024").get_data(as_text=True)
+        assert "Straty z lat ubiegłych" in html
+        assert "200.00" in html  # total_remaining_pln
+        assert 'href="/pit38/kreator?year=2024"' in html
+
+
+def test_pit38_page_shows_no_loss_message_when_none_available(client):
+    html = client.get("/pit38").get_data(as_text=True)
+    assert "Brak dostępnych strat" in html
+    assert "/pit38/kreator" not in html
 
 
 # --- krok 18: PLN na pulpicie (kurs bieżący, nie NBP) ---

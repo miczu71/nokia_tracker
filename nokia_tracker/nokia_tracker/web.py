@@ -29,6 +29,7 @@ from .importers import computershare_pdf
 from .providers import fx_nbp
 from .tax import dividends as taxdiv
 from .tax import grants as grantsm
+from .tax import losses as taxlosses
 from .tax import lots as taxlots
 from .tax import pit38 as taxpit38
 from .tax import policy as taxpolicy
@@ -1374,6 +1375,72 @@ def create_app(db_path: str) -> Flask:
                 buf.getvalue(),
                 mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": f"attachment; filename={filename}"})
+        finally:
+            conn.close()
+
+    @app.get("/pit38/kreator")
+    def pit38_wizard_get():
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            year = request.args.get("year", type=int) or cfg.get("tax_year") or datetime.now().year
+            taxlosses.rebuild(conn, cfg)
+            report = taxpit38.annual_report(conn, cfg, year)
+            steps = taxlosses.wizard_steps(conn, cfg, year, report)
+            closed = taxlosses.is_year_closed(conn, year)
+            can_close = all(s["done"] for s in steps if s["key"] in ("import", "conflicts", "balance"))
+            return render_template(
+                "wizard.html", active="pit38", version=__version__,
+                year=year, years=_years_with_data(conn), steps=steps, report=report,
+                closed=closed, can_close=can_close, cfg=cfg,
+                deduct_error=request.args.get("deduct_error"),
+                close_error=request.args.get("close_error") == "1")
+        finally:
+            conn.close()
+
+    @app.post("/pit38/kreator/odlicz")
+    def pit38_wizard_deduct():
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            year = int(request.form["year"])
+            try:
+                with dbm.WRITE_LOCK:
+                    taxlosses.record_deduction(
+                        conn, cfg, int(request.form["loss_id"]), year,
+                        float(request.form["amount_pln"]))
+            except ValueError as e:
+                return redirect(url_for("pit38_wizard_get", year=year, deduct_error=str(e)))
+            return redirect(url_for("pit38_wizard_get", year=year))
+        finally:
+            conn.close()
+
+    @app.post("/pit38/kreator/zamknij")
+    def pit38_wizard_close():
+        conn = _conn()
+        try:
+            year = int(request.form["year"])
+            cfg = settingsm.get_settings(conn)
+            report = taxpit38.annual_report(conn, cfg, year)
+            steps = taxlosses.wizard_steps(conn, cfg, year, report)
+            blocking = [s for s in steps if s["key"] in ("import", "conflicts", "balance")
+                        and not s["done"]]
+            if blocking:
+                return redirect(url_for("pit38_wizard_get", year=year, close_error="1"))
+            with dbm.WRITE_LOCK:
+                taxlosses.close_year(conn, cfg, year, report["total_due_pln"])
+            return redirect(url_for("pit38_wizard_get", year=year, closed="1"))
+        finally:
+            conn.close()
+
+    @app.post("/pit38/kreator/odblokuj")
+    def pit38_wizard_reopen():
+        conn = _conn()
+        try:
+            year = int(request.form["year"])
+            with dbm.WRITE_LOCK:
+                taxlosses.reopen_year(conn, year)
+            return redirect(url_for("pit38_wizard_get", year=year))
         finally:
             conn.close()
 

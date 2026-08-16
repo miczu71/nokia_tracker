@@ -234,6 +234,88 @@ odpowiedzią, jak wszędzie indziej.
 
 ---
 
+## Roadmapa v2 — dalszy rozwój po fali czatu (0.14.0+)
+
+> Zatwierdzona 2026-08-16, po sesji decyzyjnej z użytkownikiem (kolejność zaakceptowana bez zmian).
+> Powód: fale 0.8.1–0.13.0 wyżej wyczerpane, zostało tylko samo 1.0.0 (świadomie odłożone do końca
+> pełnego sezonu podatkowego) — ten dodatek odpowiada na "co dalej po tym", żeby nie było luki.
+> Metoda: research rynkowy 2026-08-16 (ESPP/RSU trackery, Capitally, Snowball Analytics, Getquin,
+> Sharesight, DivTracker, Stock Events, standardy zarządzania koncentracją, trendy AI 2026),
+> zderzony z zasadą "nie gonić Koyfina" z sekcji wyżej — przewaga leży w polskim rozliczeniu i
+> dostępie do własnych danych, nie w ogólnorynkowych wykresach.
+
+### Co nowego u innych od pierwszej wersji tej roadmapy
+
+| Obserwacja | Źródło | Wniosek |
+|---|---|---|
+| Capitally: 6 metod kosztu, presety na 11 jurysdykcji, tax-loss harvesting jako osobne narzędzie decyzyjne (nie tylko liczba w raporcie) | [Capitally](https://www.mycapitally.com/blog/best-portfolio-tracker-for-the-modern-diy-investor) | PL wciąż nieobsłużona przez premium — potwierdza tezę z sekcji wyżej. Wzorzec "narzędzie decyzyjne, nie tylko liczba" do skopiowania dla optymalizatora z 0.11.0 |
+| DivTracker: prognoza dywidend do 10 lat naprzód, netto po podatkach | [DivTracker](https://divtracker.app/) | Mamy tylko historię — brakuje prognozy forward |
+| Snowball Analytics: kalendarz dywidend + rolling 12-miesięczna prognoza | [Snowball](https://www.matchmybroker.com/tools/snowball-analytics-review) | Doprecyzowuje kształt backlogowego punktu "kalendarz i prognoza dywidend" niżej |
+| Standard branżowy koncentracji: próg ostrzegawczy 10–15% majątku w jednej spółce | [Bank of America Private Bank](https://www.privatebank.bankofamerica.com/articles/concentrated-stock-positions.html) | `concentration_alert_pct` ma domyślnie 25% (krok 26) — profesjonalny standard jest niżej. Nie zmieniać samowolnie, pokazać jako punkt odniesienia |
+| 10b5-1 plans: rozłożenie sprzedaży koncentrowanej pozycji na regularny harmonogram zamiast decyzji jednorazowej | [Raymond James](https://www.raymondjames.com/ggresources/insights/2025/11/12/rule-10b5-1-plans-a-portfolio-diversification-tool) | Naturalne rozszerzenie optymalizatora z 0.11.0 (dziś tylko "dziś vs 2 stycznia", jednorazowo) |
+| Trend AI 2026: asystenci finansowi (Cleo, Origin) przechodzą z reaktywnego na proaktywne coachowanie | [useorigin.com](https://useorigin.com/resources/blog/ai-in-personal-finance-2026-comparing-the-top-tools-and-approaches) | Asystent z 0.13.0 jest czysto reaktywny — naturalny następny krok to te same intencje wypychane proaktywnie |
+| Portfolio trackery klasy premium liczą metryki ryzyka (Sharpe, max drawdown, zmienność) | benchmark ogólnorynkowy | `/wyniki` ma dziś tylko zwrot, zero ryzyka |
+| Twój e-PIT **nie ma publicznego API dla aplikacji trzecich** — pełna automatyzacja złożenia z zewnątrz niemożliwa | [e-pity.pl](https://www.e-pity.pl/twoj-e-pit/) | Nie obiecywać auto-złożenia. Realistyczny cel węższy: eksport do formatu, który oficjalny program rozumie |
+
+### Fale
+
+**0.14.0 — Kalendarz i prognoza dywidend.** Domyka backlogowy punkt niżej. Kalendarz ex-dywidendy
+(rozróżniający "szacowana z historii" od "potwierdzona" — Nokia płaci raz w roku, data niepewna do
+ogłoszenia na WZA), prognoza forward deterministyczna (nie AI) 1/3/5 lat naprzód, netto po
+łańcuchu podatkowym z sekcji G. Nowa funkcja w `tax/dividends.py` (`forecast()`), rozszerzenie
+`templates/dividends.html`. Zero nowej tabeli.
+
+**0.15.0 — Ryzyko koncentracji v2: benchmark + planer systematycznego wyjścia.** Dwa dodatki do
+karty z 0.10.0: (a) punkt odniesienia 10-15% obok własnego progu użytkownika, z linkiem do źródła;
+(b) planer "sprzedawaj N akcji miesięcznie/kwartalnie przez K okresów" → symulacja rok po roku
+(podatek z uwzględnieniem dostępnej straty, przepadająca dopłata ESPP, końcowa koncentracja),
+zbudowany na `tax/whatif.py::_plan_fifo` wywoływanej K razy z przesuniętą datą (trzeci konsument
+tej funkcji, zero nowej matematyki FIFO). Nowa `advisor.py::exit_plan()`, piąta karta na `/plan`.
+Zero migracji.
+
+**0.16.0 — Metryki ryzyka portfela na `/wyniki`.** Nowy `analytics/risk.py`: `sharpe_ratio()`
+(z `portfolio_history` + nowe ustawienie `risk_free_rate_pct`, wartość statyczna, nie live-fetch),
+`max_drawdown()`, `volatility_annualized()` (czysty Python, bez numpy — ta sama zasada co
+`returns.py` z 0.9.0). Trzy nowe kafelki, z jawnym zastrzeżeniem że metryki ryzyka dla pojedynczej
+spółki pracowniczej są z natury gorsze niż dla zdywersyfikowanego portfela. Zero migracji.
+
+**0.17.0 — Asystent proaktywny (co-pilot).** Nowy dzienny scheduler job spina już policzone gdzie
+indziej warunki (zbliżający się vesting, niewykorzystana strata + zysk w bieżącym roku, zbliżająca
+się szacowana data ex-dywidendy z 0.14.0) i wypycha je przez **AI #2 z istniejącego łańcucha czatu**
+(zero nowej integracji AI) — ten sam kontrakt "liczby renderuje silnik, AI tylko narracja" co
+0.13.0. Wysyłka przez `notify.family`, opcjonalnie przez most Telegram gdy gotowy. Anty-spam:
+własny znacznik "ostatnio wysłano" per warunek (wzorzec `alert_min_interval` z `alerts.py`, krok
+8) — bez tego jeden zbliżający się vesting nudge'owałby codziennie. Nowy `ai/copilot.py` (cienka
+warstwa nad `ai/chat.py`), nowy job w `main.py`.
+
+**0.18.0 (warunkowa, wymaga researchu przed planowaniem) — Eksport PIT-38 do formatu
+e-Deklaracji.** Potwierdzone: nie ma publicznego API do automatycznego złożenia — ta fala tego nie
+zmienia. Cel węższy: sprawdzić, czy oficjalny schemat XSD dla PIT-38 jest publicznie dostępny i
+stabilny na tyle, by generować plik `.xml` importowalny do oficjalnego programu (zamiast dzisiejszego
+ręcznego przepisywania z ekranu). **Pierwszy krok tej fali to sesja researchu, nie kod** — jeśli
+schemat niedostępny/niestabilny, fala odpada bez implementacji.
+
+**Nowa pozycja backlogu (świadomie nie budowana):** wash-sale-style ograniczenie odliczenia straty
+przy szybkim odkupie — USA ma twardą 30-dniową regułę, **nie potwierdzone czy polska ustawa o PIT
+ma odpowiednik** dla PIT-38 (art. 9 ust. 3 nie wspomina o tym wprost). Nie zakładać przez analogię
+do USA bez sprawdzenia aktualnego tekstu ustawy, zgodnie z zasadą "podstawa prawna potwierdzana,
+nie zakładana" (BLUEPRINT §3a).
+
+### Kolejność v2
+
+```
+0.14.0 (dywidendy)     ──►  niezależna, tylko istniejące dane
+0.15.0 (koncentracja)  ──►  wymaga tax/losses.py (0.11.0) i advisor.py (0.10.0) — oba już są
+0.16.0 (ryzyko)        ──►  wymaga portfolio_history (0.9.0) — już jest
+0.17.0 (proaktywny AI) ──►  wymaga chat.py (0.13.0); pełna wartość dopiero po 0.14.0
+0.18.0 (e-Deklaracje)  ──►  osobny tor, zaczyna się od researchu, nie od kodu
+```
+
+0.14.0–0.16.0 wzajemnie niezależne, kolejność dowolna. 0.17.0 ma sens dopiero po 0.14.0. 0.18.0
+celowo osobno.
+
+---
+
 ## Backlog (świadomie poza falami)
 
 - Kalendarz wyników kwartalnych + konsensus analityków (Finnhub free) obok prognozy AI, z backtestem

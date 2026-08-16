@@ -262,3 +262,44 @@ def test_discovery_payload_losses_entities_are_monetary_total_sensors():
         assert p["unit_of_measurement"] == "PLN"
         assert p["device_class"] == "monetary"
         assert p["state_class"] == "total"
+
+
+# --- kalendarz dywidend (krok 30, 0.14.0) ---
+
+def test_discovery_payload_dividend_outlook_entities_present_with_object_id():
+    payloads = discovery_payloads("0.14.0")
+    for slug in ("next_dividend_date", "dividend_next_12m_gross_eur",
+                 "dividend_next_12m_net_pln"):
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        assert key in payloads
+        assert payloads[key]["object_id"] == f"nokia_tracker_{slug}"
+        assert payloads[key]["unique_id"] == f"nokia_tracker_{slug}"
+
+
+def test_discovery_payload_next_dividend_date_has_json_attributes_topic():
+    payloads = discovery_payloads("0.14.0")
+    p = payloads["homeassistant/sensor/nokia_tracker/next_dividend_date/config"]
+    assert p["json_attributes_topic"] == "nokia_tracker/sensors/next_dividend_date/attrs"
+    # data, nie liczba - żadnej jednostki/klasy urządzenia (ta sama zasada co
+    # next_vest_date - BLUEPRINT §2 pitfall #2, publisher.py:40-43)
+    assert "device_class" not in p or p["device_class"] == "date"
+
+
+def test_discovery_payload_dividend_next_12m_entities_are_monetary_total():
+    payloads = discovery_payloads("0.14.0")
+    for slug, unit in [("dividend_next_12m_gross_eur", "EUR"),
+                       ("dividend_next_12m_net_pln", "PLN")]:
+        key = f"homeassistant/sensor/nokia_tracker/{slug}/config"
+        p = payloads[key]
+        assert p["unit_of_measurement"] == unit
+        assert p["device_class"] == "monetary"
+        assert p["state_class"] == "total"
+
+
+def test_discovery_payload_dividend_outlook_slugs_avoid_forecast_prefix():
+    """Krok 30: `forecast_*` jest zajęte przez prognozy CENOWE - kolizja nazwy
+    pomyliłaby dwie zupełnie różne rzeczy (patrz dividend_outlook.py docstring)."""
+    payloads = discovery_payloads("0.14.0")
+    for slug in ("next_dividend_date", "dividend_next_12m_gross_eur",
+                 "dividend_next_12m_net_pln"):
+        assert not slug.startswith("forecast")

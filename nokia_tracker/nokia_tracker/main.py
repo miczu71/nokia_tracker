@@ -229,6 +229,11 @@ def main() -> None:
                 values.update(sensors.advisor_values(
                     c, cfg, values.get("price_eur"), values.get("eurpln_rate")))
                 values.update(sensors.losses_values(c, cfg))
+                # Krok 30 (docs/PLAN_KROK_30_dywidendy.md): tak samo jak advisor_values
+                # wyżej, świadomie NIE dopisane do łańcucha digestu w
+                # run_daily_analysis() poniżej — notifier tych kluczy nie konsumuje.
+                values.update(sensors.dividend_outlook_values(
+                    c, cfg, values.get("eurpln_rate")))
 
                 mqtt_pub.publish(values)
 

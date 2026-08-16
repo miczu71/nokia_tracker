@@ -188,6 +188,14 @@ _ENTITIES: list[_Entity] = [
            "monetary", "total", "mdi:trending-down"),
     _Entity("sensor", "loss_used_this_year_pln", "Loss Used This Year PLN", "PLN",
            "monetary", "total", "mdi:cash-minus"),
+    # --- kalendarz dywidend (krok 30, 0.14.0) — nazwy świadomie omijają
+    # `forecast_*`, zajęte przez prognozy CENOWE (forecast_1w_eur i in.) ---
+    _Entity("sensor", "next_dividend_date", "Next Dividend Date", None, "date", None,
+           "mdi:calendar-cash", has_attrs=True),
+    _Entity("sensor", "dividend_next_12m_gross_eur", "Dividend Next 12M Gross EUR",
+           "EUR", "monetary", "total", "mdi:cash-clock"),
+    _Entity("sensor", "dividend_next_12m_net_pln", "Dividend Next 12M Net PLN",
+           "PLN", "monetary", "total", "mdi:cash-check"),
     # --- binary ---
     _Entity("binary_sensor", "market_open", "Market Open", None, None, None,
            "mdi:store-clock-outline"),

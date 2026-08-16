@@ -11,6 +11,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from . import advisor as advisorm
+from . import dividend_outlook as dividend_outlookm
 from . import forecasts as forecastsm
 from . import indicators as ind
 from . import market, quotes
@@ -468,4 +469,33 @@ def advisor_values(conn: sqlite3.Connection, cfg: dict, price_eur: float | None,
         "concentration_pct": (
             round(concentration_pct, 2) if concentration_pct is not None else None),
         "vest_this_year_qty": vest_this_year_qty,
+    }
+
+
+def dividend_outlook_values(conn: sqlite3.Connection, cfg: dict,
+                            eurpln_rate: float | None) -> dict:
+    """Sensory grupy 'Kalendarz dywidend' (krok 30, 0.14.0). Zasila się z
+    `dividend_outlook.calendar()` — TĄ SAMĄ funkcją, której używa `/dividends` — żeby
+    strona i sensor MQTT nigdy nie pokazały dwóch różnych dat/kwot dla tego samego
+    faktu (ten sam wzorzec co `advisor_values` powyżej).
+
+    `next_dividend_date` liczy się zawsze, niezależnie od `eurpln_rate` — data i
+    stawka EUR są znane bez kursu, tylko kwota PLN go wymaga (stąd
+    `dividend_next_12m_net_pln` może być `None` nawet gdy data jest znana)."""
+    outlook = dividend_outlookm.calendar(conn, cfg, eurpln_rate=eurpln_rate)
+    next_event = outlook["next_event"]
+
+    return {
+        "next_dividend_date": next_event["record_date"] if next_event else None,
+        "next_dividend_date_attrs": ({
+            "gross_per_share_eur": next_event["gross_per_share_eur"],
+            "entitled_qty": round(next_event["entitled_qty"], 4),
+            "gross_eur": round(next_event["gross_eur"], 2),
+            "certainty": next_event["certainty"],
+            "instalment": next_event["instalment"],
+        } if next_event else {}),
+        "dividend_next_12m_gross_eur": round(outlook["ntm_gross_eur"], 2),
+        "dividend_next_12m_net_pln": (
+            round(outlook["ntm_net_in_hand_pln"], 2)
+            if outlook["ntm_net_in_hand_pln"] is not None else None),
     }

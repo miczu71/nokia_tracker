@@ -667,3 +667,33 @@ def test_advisor_values_concentration_uses_setting(conn, _fake_nbp_rate_for_pit3
 
     # employer_value_pln = 100*10*4 = 4000; total = 4300; pct = 4000/4300*100
     assert v["concentration_pct"] == pytest.approx(round(4000 / 4300 * 100, 2))
+
+
+# --- dividend_outlook_values (krok 30, 0.14.0) ---
+
+def test_dividend_outlook_values_empty_db_none_date_zero_totals(conn):
+    v = sensors.dividend_outlook_values(conn, _PIT38_CFG, eurpln_rate=4.0)
+    assert v["next_dividend_date"] is None
+    assert v["next_dividend_date_attrs"] == {}
+    assert v["dividend_next_12m_gross_eur"] == 0.0
+    assert v["dividend_next_12m_net_pln"] is None
+
+
+def test_dividend_outlook_values_next_date_and_attrs(conn, _fake_nbp_rate_for_pit38):
+    from nokia_tracker.tax import dividends as taxdiv, lots as taxlots
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 500.0, 5.0)
+    for pay_date, rate in [("2025-02-20", 0.04), ("2025-05-15", 0.04),
+                           ("2025-08-14", 0.04), ("2025-11-13", 0.04)]:
+        gross = 500.0 * rate
+        taxdiv.add_dividend(conn, record_date=pay_date, entitled_quantity=500.0,
+                            gross_eur=gross, taxes_eur=gross * 0.35, fees_eur=0.0)
+
+    v = sensors.dividend_outlook_values(conn, _PIT38_CFG, eurpln_rate=4.0)
+
+    assert v["next_dividend_date"] is not None
+    attrs = v["next_dividend_date_attrs"]
+    assert attrs["entitled_qty"] == pytest.approx(500.0)
+    assert attrs["certainty"] == "estimated"
+    assert v["dividend_next_12m_gross_eur"] > 0
+    assert v["dividend_next_12m_net_pln"] is not None

@@ -18,6 +18,7 @@ import openpyxl
 from flask import Flask, Response, redirect, render_template, request, url_for
 
 from . import __version__, advisor as advisorm, analysis, backup as backupm, db as dbm, fx
+from . import dashboard_insights
 from . import format as fmt
 from . import portfolio as portfoliom
 from . import quotes, sensors
@@ -195,6 +196,22 @@ def create_app(db_path: str) -> Flask:
             recent_alerts = conn.execute(
                 "SELECT * FROM alerts_log ORDER BY fired_at DESC LIMIT 5").fetchall()
 
+            # Krok 28.5 (docs/PLAN_KROK_28_ux_mobile.md §5): "Dziś warto wiedzieć" —
+            # reużywa dane już policzone powyżej (unvested) + dwa lekkie odczyty
+            # (dostępna strata, dochód tego roku wg aktywnej polityki), zero nowej
+            # matematyki podatkowej — te same funkcje co /pit38 i /pit38/kreator.
+            current_year = datetime.now().year
+            loss_available_pln = taxlosses.available_for_year(
+                conn, cfg, current_year)["total_remaining_pln"]
+            income_pln_this_year = taxpolicy.compute_all_policies(
+                conn, cfg, current_year)[cfg["cost_basis_policy"]]["income_pln"]
+            insights = dashboard_insights.today_worth_knowing(
+                change_pct_day=values.get("change_pct_day"),
+                next_vest_date=unvested.get("next_vest_date"),
+                next_vest_qty=unvested.get("next_vest_qty"),
+                loss_available_pln=loss_available_pln,
+                income_pln_this_year=income_pln_this_year)
+
             return render_template(
                 "dashboard.html", active="dashboard", version=__version__,
                 values=values, position=position, dividends=dividends, fx_info=fx_info,
@@ -202,6 +219,7 @@ def create_app(db_path: str) -> Flask:
                 chart_ranges=list(_CHART_RANGES), default_chart_range=_DEFAULT_CHART_RANGE,
                 chart_api_url=url_for("chart_api"),
                 alerts=[dict(r) for r in recent_alerts],
+                insights=insights,
             )
         finally:
             conn.close()

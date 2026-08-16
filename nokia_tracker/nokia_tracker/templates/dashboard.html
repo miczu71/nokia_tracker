@@ -52,6 +52,17 @@
   <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
 </div>
 
+{% if insights %}
+{#- Krok 28.5 (docs/PLAN_KROK_28_ux_mobile.md §5): "Dziś warto wiedzieć" —
+    zdania liczone deterministycznie w web.py/dashboard_insights.py, nie przez AI. #}
+<div class="card insights">
+  <div class="card-title">Dziś warto wiedzieć</div>
+  {% for line in insights %}
+  <p>{{ line }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-title">Portfel</div>
   {% set dividends_net_pln = (dividends.dividends_net_eur * fx_info.rate)

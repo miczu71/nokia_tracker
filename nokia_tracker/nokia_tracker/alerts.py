@@ -95,29 +95,50 @@ def _check_divergence(values: dict) -> dict | None:
     }
 
 
-def _allow_fire(conn: sqlite3.Connection, kind: str, min_interval_minutes: int) -> bool:
-    if min_interval_minutes <= 0:
-        return True
+def last_fired_at(conn: sqlite3.Connection, kind: str) -> str | None:
     row = conn.execute(
         "SELECT fired_at FROM alerts_log WHERE kind = ? ORDER BY fired_at DESC LIMIT 1", (kind,)
     ).fetchone()
-    if not row:
+    return row["fired_at"] if row else None
+
+
+def allow_fire(conn: sqlite3.Connection, kind: str, min_interval_minutes: int) -> bool:
+    """Anty-spam: `True` gdy nigdy nie odpalił, gdy `min_interval_minutes <= 0`,
+    albo gdy minęło >= `min_interval_minutes` od ostatniego `fired_at` tego
+    `kind`. Publiczne od kroku 33 (docs/PLAN_KROK_33_copilot.md) — ten sam
+    mechanizm gate'uje teraz też `ai/copilot.py` (jeden znacznik per warunek),
+    nie tylko progi alertów z tego modułu."""
+    if min_interval_minutes <= 0:
         return True
-    last_fired = datetime.fromisoformat(row["fired_at"])
+    fired_at = last_fired_at(conn, kind)
+    if not fired_at:
+        return True
+    last_fired = datetime.fromisoformat(fired_at)
     if last_fired.tzinfo is None:
         last_fired = last_fired.replace(tzinfo=timezone.utc)
     return datetime.now(timezone.utc) - last_fired >= timedelta(minutes=min_interval_minutes)
 
 
-def _fire(conn: sqlite3.Connection, alert: dict, mqtt_pub, notify_service: str) -> None:
+def log_fired(conn: sqlite3.Connection, kind: str, severity: str, title: str,
+             message: str, payload: dict | None = None) -> str:
+    """Zapisuje wpis do `alerts_log` (INSERT + commit), zwraca `fired_at` (ISO,
+    UTC). Wyodrębnione z `_fire` w kroku 33 — jedyne miejsce, które zna format
+    znacznika czasu, jaki potem parsuje `allow_fire`; ręcznie pisany INSERT
+    gdzie indziej (np. `datetime.now().isoformat()`, naive LOKALNY zamiast
+    UTC) po cichu przesunąłby cooldown o 1-2h."""
     fired_at = datetime.now(timezone.utc).isoformat()
-    extra = {k: v for k, v in alert.items() if k not in ("kind", "severity", "title", "message")}
     conn.execute(
         "INSERT INTO alerts_log (kind, severity, title, message, payload, fired_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
-        (alert["kind"], alert["severity"], alert["title"], alert["message"],
-         json.dumps(extra, ensure_ascii=False), fired_at))
+        (kind, severity, title, message, json.dumps(payload or {}, ensure_ascii=False), fired_at))
     conn.commit()
+    return fired_at
+
+
+def _fire(conn: sqlite3.Connection, alert: dict, mqtt_pub, notify_service: str) -> None:
+    extra = {k: v for k, v in alert.items() if k not in ("kind", "severity", "title", "message")}
+    fired_at = log_fired(conn, alert["kind"], alert["severity"], alert["title"],
+                         alert["message"], extra)
 
     if mqtt_pub is not None:
         try:
@@ -145,7 +166,7 @@ def check_and_fire(conn: sqlite3.Connection, cfg: dict, values: dict, mqtt_pub=N
     for alert in candidates:
         if alert is None:
             continue
-        if _allow_fire(conn, alert["kind"], cfg["alert_min_interval_minutes"]):
+        if allow_fire(conn, alert["kind"], cfg["alert_min_interval_minutes"]):
             _fire(conn, alert, mqtt_pub, cfg.get("notify_service", ""))
             fired.append(alert)
     return fired

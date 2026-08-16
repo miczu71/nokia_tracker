@@ -10,6 +10,7 @@ from nokia_tracker.ai.prompts import (
     DAILY_ANALYSIS_SCHEMA,
     chat_intent_prompt,
     chat_narration_prompt,
+    copilot_narration_prompt,
     daily_analysis_prompt,
 )
 
@@ -128,3 +129,40 @@ def test_chat_narration_prompt_includes_all_lines():
 def test_chat_narration_prompt_handles_empty_lines_without_crash():
     prompt = chat_narration_prompt("Coś tam?", "Temat", [])
     assert "brak" in prompt.lower()
+
+
+# --- copilot_narration_prompt (krok 33): reużywa CHAT_NARRATION_SCHEMA, ale
+# NIE reużywa chat_narration_prompt (ten zakłada, że użytkownik o coś
+# zapytał — nieuczciwe wobec proaktywnego pushu, gdzie nikt nie pytał) ---
+
+_CONDITIONS = [
+    {"title": "Zbliżający się vesting",
+     "lines": [{"label": "Data dostępności", "value": "2026-09-10", "unit": ""},
+              {"label": "Ilość", "value": 12.5, "unit": "szt."}]},
+    {"title": "Niewykorzystana strata z lat ubiegłych",
+     "lines": [{"label": "Dostępna strata", "value": 200.0, "unit": "PLN"}]},
+]
+
+
+def test_copilot_narration_prompt_includes_every_condition_line():
+    prompt = copilot_narration_prompt(_CONDITIONS)
+    assert "Zbliżający się vesting" in prompt
+    assert "2026-09-10" in prompt
+    assert "12.5" in prompt
+    assert "Niewykorzystana strata z lat ubiegłych" in prompt
+    assert "200.0" in prompt
+
+
+def test_copilot_narration_prompt_forbids_changing_numbers():
+    prompt = copilot_narration_prompt(_CONDITIONS)
+    assert "nie zmieniaj" in prompt.lower()
+
+
+def test_copilot_narration_prompt_has_no_user_question_framing():
+    prompt = copilot_narration_prompt(_CONDITIONS)
+    assert "zadał pytanie" not in prompt
+
+
+def test_copilot_narration_prompt_handles_empty_conditions_without_crash():
+    prompt = copilot_narration_prompt([])
+    assert isinstance(prompt, str) and prompt

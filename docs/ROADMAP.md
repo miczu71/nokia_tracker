@@ -295,14 +295,20 @@ zwroty liczone naiwnie na `market_value_eur` myliły ruch ceny ze zmianą ilośc
 (vesting/ESPP), naprawione netowaniem cashflow (jak `returns.py::twr()`). Zobacz
 `docs/PLAN_KROK_32_ryzyko.md` i `CHANGELOG.md` [0.16.0]/[0.16.1].
 
-**0.17.0 — Asystent proaktywny (co-pilot).** Nowy dzienny scheduler job spina już policzone gdzie
-indziej warunki (zbliżający się vesting, niewykorzystana strata + zysk w bieżącym roku, zbliżająca
-się szacowana data ex-dywidendy z 0.14.0) i wypycha je przez **AI #2 z istniejącego łańcucha czatu**
+**0.17.0 — Asystent proaktywny (co-pilot). WYDANE 2026-08-16.** Nowy dzienny scheduler job (07:15)
+spina już policzone gdzie indziej warunki (zbliżający się vesting, niewykorzystana strata + zysk
+w bieżącym roku, zbliżająca się szacowana data ex-dywidendy z 0.14.0) i wypycha je przez **AI #2**
 (zero nowej integracji AI) — ten sam kontrakt "liczby renderuje silnik, AI tylko narracja" co
-0.13.0. Wysyłka przez `notify.family`, opcjonalnie przez most Telegram gdy gotowy. Anty-spam:
-własny znacznik "ostatnio wysłano" per warunek (wzorzec `alert_min_interval` z `alerts.py`, krok
-8) — bez tego jeden zbliżający się vesting nudge'owałby codziennie. Nowy `ai/copilot.py` (cienka
-warstwa nad `ai/chat.py`), nowy job w `main.py`.
+0.13.0, z jedną poprawką znalezioną przy planowaniu: wiadomość push (w odróżnieniu od czatu) ZAWSZE
+zawiera też deterministyczne zdania silnika, nie tylko narrację — push to sam tekst, bez
+renderowanej obok tabelki. Wysyłka przez `notify.family`; most Telegram **odłożony** (wciąż w
+budowie, czeka na token). Anty-spam: własny znacznik "ostatnio wysłano" per warunek (`alerts_log`,
+`allow_fire`/`log_fired` — upublicznione z `alerts.py`, wzorzec `alert_min_interval` z kroku 8).
+Vesting celowo NIE używa `vest_reminder_days` (już konsumowane przez `check_vest_reminders` o
+06:30 — dwa powiadomienia o tej samej transzy tego samego ranka byłoby złe UX) — własne okno 30
+dni. Nowy `ai/copilot.py`, `GET /api/preview/copilot` (podgląd bez skutków ubocznych), nowy job w
+`main.py`. Zero migracji, zero nowych sensorów MQTT. 1048 testów (1001 → 1048). Zobacz
+`docs/PLAN_KROK_33_copilot.md` i `CHANGELOG.md` [0.17.0].
 
 **0.18.0 (warunkowa, wymaga researchu przed planowaniem) — Eksport PIT-38 do formatu
 e-Deklaracji.** Potwierdzone: nie ma publicznego API do automatycznego złożenia — ta fala tego nie

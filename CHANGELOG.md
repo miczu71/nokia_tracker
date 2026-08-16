@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.17.0] - 2026-08-16
+
+Krok 33 (`docs/PLAN_KROK_33_copilot.md`), czwarta fala z Roadmapy v2 — asystent
+proaktywny (co-pilot). Zero migracji, zero nowej integracji AI, zero nowych
+sensorów MQTT, zero zmian w `templates/settings.html` (trzy nowe ustawienia
+zostają options-only, jak `risk_free_rate_pct` z 0.16.0).
+
+### Dodano
+- **Nowy `ai/copilot.py`** — jeden dzienny job (07:15) spina trzy już policzone
+  warunki (zbliżający się vesting w oknie 30 dni, niewykorzystana strata z lat
+  ubiegłych + zysk w bieżącym roku, zbliżająca się dywidenda w oknie 30 dni) w
+  JEDNĄ złączoną wiadomość push przez `notify.family`, narrowaną przez AI #2 z
+  łańcucha czatu (0.13.0) — ten sam kontrakt „liczby liczy silnik, AI tylko
+  narruje". W odróżnieniu od czatu wiadomość ZAWSZE zawiera deterministyczne
+  zdania silnika (nie tylko narrację) — push to sam tekst, bez renderowanej
+  obok tabelki, więc halucynacja liczby nie byłaby widocznie sprzeczna z
+  niczym.
+- **Anti-spam per warunek** przez `alerts_log` (30-dniowy cooldown,
+  `copilot_min_interval_days`) — `alerts.py::allow_fire`/`log_fired`
+  upublicznione właśnie dla tego reużycia (były `_allow_fire`/`_fire`).
+- **Nowy `GET /api/preview/copilot`** — podgląd bez skutków ubocznych (bez AI,
+  bez wysyłki, bez konsumpcji cooldownu), do bezpiecznej weryfikacji na
+  produkcji, `?today=` opcjonalny.
+- Trzy nowe ustawienia: `copilot_enabled` (domyślnie włączone, ale nieaktywne
+  bez `notify_service`), `copilot_time` (domyślnie 07:15),
+  `copilot_min_interval_days` (domyślnie 30, `0` wyłącza anti-spam).
+
+### Zmieniono
+- `alerts.py`: `_allow_fire`→`allow_fire`, wyodrębniony `log_fired` z `_fire`
+  (zachowanie bez zmian, cała istniejąca suita `test_alerts.py` bez modyfikacji
+  poza dwoma nowymi testami pinującymi publiczne API).
+
+### Decyzje projektowe
+- Vesting w co-pilocie NIE używa `vest_reminder_days` (już konsumowane przez
+  istniejący `check_vest_reminders` o 06:30 — użycie tego samego progu dałoby
+  dwa powiadomienia o tej samej transzy tego samego ranka) ani
+  `due_for_reminder()`/`mark_reminder_sent()` (też już konsumowane przez ten
+  sam job) — własna stała `_LOOKAHEAD_DAYS=30` + `unvested_summary()`
+  (read-only).
+- Zdania dla warunków vesting/strata reużywają KODU
+  `dashboard_insights.today_worth_knowing()` (z resztą sygnałów wyzerowaną),
+  nie kopiują tekstu — dashboard i push nigdy się nie rozjadą.
+- Telegram (wspomniany w roadmapie jako opcjonalny kanał) odłożony — most
+  wciąż w budowie, tylko `notify.family` w tej fali.
+
+### Zweryfikowano
+- TDD: `tests/test_ai_copilot.py` (39 testów) + rozszerzenia
+  `test_prompts.py`/`test_alerts.py`/`test_web.py`, wszystkie napisane i
+  zaobserwowane w stanie RED przed implementacją.
+- 1048 testów (1001 → 1048, +47), bez regresji.
+- Sprawdzenie na realnych danych produkcyjnych przez `GET /api/preview/copilot`
+  (zero realnego push podczas weryfikacji).
+
 ## [0.16.1] - 2026-08-16
 
 Patch tego samego dnia — bug znaleziony przy weryfikacji 0.16.0 na produkcji.

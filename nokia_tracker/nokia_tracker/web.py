@@ -39,6 +39,7 @@ from .tax import policy as taxpolicy
 from .tax import trace as taxtrace
 from .tax import whatif as taxwhatif
 from .ai import chat as ai_chat
+from .ai import copilot as ai_copilot
 from .ai import openai_compat
 from .ai import status as ai_status
 
@@ -1169,6 +1170,24 @@ def create_app(db_path: str) -> Flask:
                 lines.append({"label": "Na rękę", "value": result["totals"]["net_proceeds_pln"],
                               "unit": "PLN", "emphasis": True})
             return {"ok": True, "lines": lines}
+        finally:
+            conn.close()
+
+    @app.get("/api/preview/copilot")
+    def preview_copilot():
+        """Krok 33 (docs/PLAN_KROK_33_copilot.md): podgląd co-pilota BEZ
+        skutków ubocznych — nie woła AI, nie wysyła powiadomienia i nie
+        zapisuje do alerts_log (nie konsumuje cooldownu), więc wolno go
+        wołać na produkcji do weryfikacji. `?today=YYYY-MM-DD` pozwala
+        sprawdzić, co odpaliłoby się innego dnia."""
+        conn = _conn()
+        try:
+            today = request.args.get("today") or None
+            cfg = settingsm.get_settings(conn)
+            try:
+                return ai_copilot.preview(conn, cfg, today=today)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna data (oczekiwano RRRR-MM-DD)."}
         finally:
             conn.close()
 

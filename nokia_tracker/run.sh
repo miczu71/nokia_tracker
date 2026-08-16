@@ -61,6 +61,11 @@ export TAX_YEAR=$(jq -r '.tax_year // "0"' "$CONFIG")
 export OTHER_NET_WORTH_PLN=$(jq -r '.other_net_worth_pln // "0"' "$CONFIG")
 export CONCENTRATION_ALERT_PCT=$(jq -r '.concentration_alert_pct // "25"' "$CONFIG")
 
+# --- asystent proaktywny / co-pilot (krok 33, 0.17.0) ---
+export COPILOT_ENABLED=$(jq -r '.copilot_enabled // "true"' "$CONFIG")
+export COPILOT_TIME=$(jq -r '.copilot_time // "07:15"' "$CONFIG")
+export COPILOT_MIN_INTERVAL_DAYS=$(jq -r '.copilot_min_interval_days // "30"' "$CONFIG")
+
 # --- infra ---
 export MQTT_HOST=$(jq -r '.mqtt_host // "core-mosquitto"' "$CONFIG")
 export MQTT_PORT=$(jq -r '.mqtt_port // "1883"' "$CONFIG")

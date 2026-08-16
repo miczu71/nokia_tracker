@@ -215,6 +215,35 @@ def test_fire_skips_notify_when_service_empty(conn, monkeypatch):
     assert calls == []
 
 
+# --- allow_fire/log_fired publiczne od kroku 33 (reużywane przez
+# ai/copilot.py, patrz docs/PLAN_KROK_33_copilot.md) ---
+
+def test_log_fired_writes_row_with_utc_isoformat_timestamp(conn):
+    fired_at = alerts.log_fired(conn, "some_kind", "info", "Tytuł", "Wiadomość",
+                                {"foo": "bar"})
+    row = conn.execute("SELECT * FROM alerts_log WHERE kind = 'some_kind'").fetchone()
+    assert row["fired_at"] == fired_at
+    assert row["severity"] == "info"
+    assert row["title"] == "Tytuł"
+    assert row["message"] == "Wiadomość"
+    # allow_fire musi umieć sparsować dokładnie ten format z powrotem (UTC,
+    # nie naive-lokalny) — ten test pinuje kontrakt między log_fired a
+    # allow_fire, żeby ręcznie pisany INSERT gdzie indziej nigdy nie
+    # przesunął cichcem cooldownu o strefę czasową.
+    parsed = datetime.fromisoformat(fired_at)
+    assert parsed.tzinfo is not None
+
+
+def test_allow_fire_is_public_and_respects_interval(conn):
+    assert alerts.allow_fire(conn, "some_kind", 60) is True  # brak wpisu -> zawsze wolno
+    alerts.log_fired(conn, "some_kind", "info", "T", "M")
+    assert alerts.allow_fire(conn, "some_kind", 60) is False  # świeży wpis -> cooldown
+    old = (datetime.now(timezone.utc) - timedelta(minutes=61)).isoformat()
+    conn.execute("UPDATE alerts_log SET fired_at = ?", (old,))
+    conn.commit()
+    assert alerts.allow_fire(conn, "some_kind", 60) is True
+
+
 # --- wiele alertów naraz ---
 
 def test_multiple_alert_kinds_can_fire_in_one_check(conn):

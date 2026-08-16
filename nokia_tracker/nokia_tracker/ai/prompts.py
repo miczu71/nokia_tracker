@@ -219,6 +219,36 @@ def chat_narration_prompt(question: str, title: str, lines: list[dict],
     )
 
 
+def copilot_narration_prompt(conditions: list[dict]) -> str:
+    """`conditions`: `[{'title', 'lines': [{'label','value','unit'}, ...]}, ...]`
+    — JUŻ POLICZONE przez ai/copilot.py (krok 33). W odróżnieniu od
+    `chat_narration_prompt` to jest PROAKTYWNY push — nikt nie zadał pytania,
+    więc prompt tego nie udaje (żadnej frazy „użytkownik zadał pytanie”).
+    Ten sam kontrakt liczbowy i ten sam `CHAT_NARRATION_SCHEMA`: model tylko
+    ubiera już policzone fakty w naturalny język, nigdy nie liczy ani nie
+    zgaduje nowej liczby."""
+    if not conditions:
+        blocks = "(brak warunków)"
+    else:
+        blocks = "\n\n".join(
+            f"[{c['title']}]\n" + "\n".join(
+                f"- {l['label']}: {l['value']} {l.get('unit', '')}".strip()
+                for l in c["lines"])
+            for c in conditions
+        )
+    return (
+        "Jesteś asystentem inwestora posiadającego akcje pracownicze Nokia Oyj "
+        "(NOKIA.HE, Nasdaq Helsinki). Nikt Cię o nic nie zapytał — to Ty "
+        "zauważyłeś poniższe fakty i wysyłasz krótkie, proaktywne przypomnienie "
+        "na telefon. Wartości poniżej są JUŻ POLICZONE przez silnik aplikacji. "
+        "NIE ZMIENIAJ ANI NIE DOPISUJ ŻADNEJ LICZBY ani daty — użyj dokładnie "
+        "tych wartości i jednostek, nic więcej nie licz ani nie zgaduj.\n\n"
+        f"{blocks}\n\n"
+        "Napisz 1-3 zdania po polsku, spinające te sprawy w jedną wiadomość, "
+        "bez wstępów typu 'Oto podsumowanie'. To nie jest porada inwestycyjna."
+    )
+
+
 def score_news_prompt(articles: list[dict]) -> str:
     """articles: [{'index':int,'title':str,'summary':str|None,'source':str|None}, ...]"""
     lines = [

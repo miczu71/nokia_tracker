@@ -24,6 +24,7 @@ from .tax import dividends as taxdiv
 from .tax import grants as grantsm
 from .tax import losses as taxlosses
 from .tax import lots as taxlots
+from .ai import copilot as ai_copilot
 from .ai import scoring as ai_scoring
 from .providers import avanza as avanza_provider
 from .providers import finnhub as finnhub_provider
@@ -109,6 +110,10 @@ def main() -> None:
         # --- doradca planu pracowniczego (krok 26, 0.10.0) ---
         "other_net_worth_pln": _env("OTHER_NET_WORTH_PLN", "0"),
         "concentration_alert_pct": _env("CONCENTRATION_ALERT_PCT", "25"),
+        # --- asystent proaktywny / co-pilot (krok 33, 0.17.0) ---
+        "copilot_enabled": "1" if _env("COPILOT_ENABLED", "true") == "true" else "0",
+        "copilot_time": _env("COPILOT_TIME", "07:15"),
+        "copilot_min_interval_days": _env("COPILOT_MIN_INTERVAL_DAYS", "30"),
     })
 
     history_years = int(settingsm.get_settings(conn)["history_backfill_years"])
@@ -465,6 +470,25 @@ def main() -> None:
             finally:
                 c.close()
 
+    def copilot_job() -> None:
+        """Krok 33 (docs/PLAN_KROK_33_copilot.md): jeden dzienny push spinający
+        aktywne warunki (vesting / niewykorzystana strata / dywidenda) — cała
+        logika w ai/copilot.py, tu tylko sesja bazy i log (closures schedulera
+        są nietestowalne, patrz tests/test_ai_copilot.py). `_ai_cfg` zamiast
+        `get_settings`, bo narracja AI #2 potrzebuje kluczy API z ENV."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                result = ai_copilot.run(c, _ai_cfg(c))
+                if result["sent"]:
+                    logger.info("Co-pilot: push wysłany (%s)", ", ".join(result["kinds"]))
+                else:
+                    logger.debug("Co-pilot: brak wysyłki (%s)", result["reason"])
+            except Exception:
+                logger.exception("Co-pilot nieudany")
+            finally:
+                c.close()
+
     def check_vest_reminders() -> None:
         """Codziennie: reconciliation (loty -> transze, patrz reconcile_vesting) + przypomnienie
         o nadchodzącym vestingu (cfg['vest_reminder_days'] przed datą, krok 14). Reconciliation
@@ -560,6 +584,14 @@ def main() -> None:
                        digest_time)
         digest_hour, digest_minute = 20, 10
 
+    copilot_time = _env("COPILOT_TIME", "07:15")
+    try:
+        copilot_hour, copilot_minute = (int(x) for x in copilot_time.split(":", 1))
+    except ValueError:
+        logger.warning("COPILOT_TIME=%r nieprawidłowy (oczekiwano HH:MM) — używam 07:15",
+                       copilot_time)
+        copilot_hour, copilot_minute = 7, 15
+
     scheduler = BackgroundScheduler(timezone=_env("TZ", "Europe/Warsaw"))
     scheduler.add_job(publish_sensors, "interval", minutes=poll_minutes,
                       next_run_time=datetime.now())
@@ -581,6 +613,11 @@ def main() -> None:
     scheduler.add_job(backfill_nbp_range_job, "cron", hour=5, minute=0)
     scheduler.add_job(rebuild_portfolio_history_job, "cron", hour=5, minute=30)
     scheduler.add_job(rebuild_tax_losses_job, "cron", hour=5, minute=45)
+    # 07:15 — PO 05:45 (przeliczenie strat), 06:15 (kursy NBP) i 06:30
+    # (reconciliation vestingu), żeby co-pilot widział świeże dane. Bez
+    # day_of_week (w odróżnieniu od digestu) — warunki są kalendarzowe
+    # (vesting/dywidenda/rok podatkowy), nie sesyjne.
+    scheduler.add_job(copilot_job, "cron", hour=copilot_hour, minute=copilot_minute)
     scheduler.start()
 
     app = create_app(db_path=db_path)

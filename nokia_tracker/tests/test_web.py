@@ -2430,3 +2430,24 @@ def test_api_assistant_disabled_returns_ok_false_without_calling_ask(client, mon
 def test_assistant_page_shows_ai_status_bar(client):
     html = client.get("/asystent").get_data(as_text=True)
     assert "local (freellmapi)" in html
+
+
+# --- /api/preview/copilot (krok 33) — zero skutków ubocznych, patrz
+# ai/copilot.py::preview() i tests/test_ai_copilot.py dla logiki warunków ---
+
+def test_preview_copilot_returns_ok_shape(client):
+    resp = client.get("/api/preview/copilot")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["would_send"] is False  # pusta baza -> brak warunków
+    assert data["conditions"] == []
+    assert data["lines"] == []
+
+
+def test_preview_copilot_rejects_malformed_today_param(client):
+    resp = client.get("/api/preview/copilot?today=nie-data")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert "error" in data

@@ -59,6 +59,10 @@ SETTINGS_TYPES: dict[str, type] = {
     "concentration_alert_pct": float,
     # --- ryzyko portfela (krok 32, 0.16.0) ---
     "risk_free_rate_pct": float,
+    # --- asystent proaktywny / co-pilot (krok 33, 0.17.0) ---
+    "copilot_enabled": int,
+    "copilot_time": str,
+    "copilot_min_interval_days": int,
 }
 
 # Klucze API i hasła MQTT NIE żyją w tabeli settings — zostają wyłącznie w
@@ -107,6 +111,9 @@ DEFAULTS: dict[str, object] = {
     "other_net_worth_pln": 0.0,
     "concentration_alert_pct": 25.0,
     "risk_free_rate_pct": 3.0,
+    "copilot_enabled": 1,
+    "copilot_time": "07:15",
+    "copilot_min_interval_days": 30,
 }
 
 

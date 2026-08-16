@@ -10,8 +10,19 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.16.1** — trzecia fala Roadmapy v2 z [`docs/ROADMAP.md`](docs/ROADMAP.md):
-metryki ryzyka portfela na **Wynikach**. Nowa karta „Ryzyko portfela”: **Sharpe ratio**,
+**Status:** wydanie **0.17.0** — czwarta fala Roadmapy v2 z [`docs/ROADMAP.md`](docs/ROADMAP.md):
+asystent proaktywny (co-pilot). Nowy dzienny job (07:15) spina trzy już policzone warunki
+(zbliżający się vesting, niewykorzystana strata z lat ubiegłych + zysk w bieżącym roku,
+zbliżająca się dywidenda — okno 30 dni na każdy) w JEDNĄ złączoną wiadomość push przez
+`notify.family`, narrowaną przez AI #2 z łańcucha czatu (0.13.0) — zero nowej integracji AI.
+Wiadomość zawsze zawiera deterministyczne zdania silnika, niezależnie czy narracja AI się
+powiodła. Anti-spam per warunek (30-dniowy cooldown) przez `alerts_log` — ten sam mechanizm co
+istniejące alerty progowe. Nowy `GET /api/preview/copilot` do bezpiecznej weryfikacji (bez AI,
+bez wysyłki). Vesting w co-pilocie celowo NIE dubluje istniejącego przypomnienia o
+`vest_reminder_days` (06:30) — własne okno 30 dni, osobna wiadomość. Telegram (opcjonalny kanał
+z roadmapy) odłożony, most wciąż w budowie. Zero migracji, zero nowych sensorów MQTT.
+
+Wcześniej (0.16.0/0.16.1): trzecia fala Roadmapy v2 — metryki ryzyka portfela na **Wynikach**. Nowa karta „Ryzyko portfela”: **Sharpe ratio**,
 **zmienność annualizowana** i **maksymalny spadek (drawdown)**, liczone czystym Pythonem (bez
 numpy — ta sama zasada co XIRR/TWR z 0.9.0, powód: musl/armv7) na już zmaterializowanej krzywej
 wartości portfela (`portfolio_history`), w EUR — ta sama waluta bazowa co TWR, żeby efekt
@@ -394,6 +405,17 @@ karcie „Ryzyko portfela" na Wynikach; brak nowych sensorów MQTT dla tej fali,
 |---|---|
 | `sensor.nokia_tracker_loss_available_pln` | Suma dostępnych strat z ostatnich 5 lat pod aktywną polityką kosztu, jeszcze nieodliczonych |
 | `sensor.nokia_tracker_loss_used_this_year_pln` | Suma jawnie zarejestrowanych odliczeń w bieżącym roku podatkowym (przez kreator rozliczenia) |
+
+### Powiadomienia proaktywne — asystent / co-pilot *(od 0.17.0)*
+
+Codziennie o 07:15 (`copilot_time`) dodatek sprawdza trzy warunki (zbliżający się vesting,
+niewykorzystana strata z lat ubiegłych + zysk w bieżącym roku, zbliżająca się dywidenda — okno
+30 dni na każdy) i — jeśli którykolwiek jest aktywny — wysyła JEDNĄ złączoną wiadomość przez
+`notify.family`, narrowaną przez AI (opcjonalnie, zawsze z deterministycznym zdaniem silnika w
+tle). Anti-spam: 30-dniowy cooldown per warunek (`copilot_min_interval_days`), więc jedna
+transza/dywidenda nudge'uje raz, nie codziennie. Wyłączenie: `copilot_enabled: false` w opcjach
+add-onu. Podgląd bez wysyłki: `GET /api/preview/copilot`. Brak nowych sensorów MQTT — to funkcja
+czysto powiadomieniowa.
 
 ## Serwisy
 

@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.12.0] - 2026-08-16
+
+Krok 28 (`docs/PLAN_KROK_28_ux_mobile.md`), piąta fala z `docs/ROADMAP.md` — UX/mobile
++ wykresy. Retrofit wszystkich istniejących stron pod mobile-first + trzy nowe wizualizacje
+Chart.js, w sześciu podkrokach (28.1–28.6), każdy osobno zweryfikowany testami i Playwright.
+
+### Dodano
+- **Globalny przełącznik waluty PLN/EUR** w nagłówku (zapamiętany w `localStorage`) — nowy
+  `cur_block()` w `_macros.html` renderuje obie waluty naraz, CSS przełącza widoczny wariant;
+  wykresy (`/wyniki`) przerysowują się bez przeładowania strony (`nt:currency-change`).
+- **Tabele → karty poniżej 430px** — `<table>` zostaje w DOM (CSS-only), etykiety z `data-label`
+  przez `::before`; zastosowane na Lotach, Sprzedażach, Grantach, Dywidendach, Newsach.
+- **Globalny selektor roku podatkowego** w nagłówku — zastąpił trzy zdublowane kopie na
+  `/pit38`, `/sales`, kreatorze (`@app.context_processor`).
+- **Trzy nowe wykresy**: donut trzech kubełków portfela (pulpit), słupki dywidend rok po roku,
+  waterfall Poz. C na `/pit38` (przychód→koszt→dochód→strata odliczona [informacyjnie]→
+  podatek→na rękę — suma zgodna z silnikiem co do grosza).
+- **„Dziś warto wiedzieć"** na pulpicie — 0-3 zdania deterministyczne (bez AI): zmiana kursu,
+  najbliższy vesting, sygnał podatkowy (tylko gdy jest i dostępna strata, i zysk w tym roku).
+- Sortowanie kolumn (Loty, Dywidendy, Newsy), „Pokaż więcej" na Newsach (limit 50→200), sticky
+  pasek z ceną/wartością portfela na pulpicie, jednolite stany puste (`empty_state()`), szkielety
+  ładowania wykresów, widok do druku na `/wyniki` i `/plan`.
+
+### Naprawiono
+- **Kontrfaktyczny benchmark OMXH25** (`/wyniki` i sensor MQTT
+  `benchmark_omxh25_counterfactual_pln`) liczył się w EUR (przepływy z `build_xirr_cashflows`
+  są EUR, OMXH25 zarejestrowany jako `currency="EUR"`) i publikował się bez konwersji pod
+  jednostką/nazwą „PLN" od kroku 25 (0.9.0) — realna wartość EUR podpisana jako PLN, zawyżenie/
+  zaniżenie o rząd kursu EUR/PLN (~4x). Znalezione empirycznie przy budowie przełącznika waluty.
+
+### Bez zmian (celowo poza falą)
+- Oś czasu vestingu z pierwotnego planu — okazała się już istnieć (`.tl-rail`/`.tl-dot` z kroku 26).
+- Filtrowanie rocznego na `/wyniki`/`/grants`/`/dividends`/`/lots` — pierwotny szkic planu to
+  zakładał, ale roadmapa mówiła tylko o konsolidacji trzech ISTNIEJĄCYCH selektorów w jeden.
+
+831 testów (od 820 na starcie fali, +11 nowych dla `dashboard_insights.py`, TDD).
+
 ## [0.11.0] - 2026-08-16
 
 Krok 27 (`docs/PLAN_KROK_27_straty_kreator.md`), czwarta fala z `docs/ROADMAP.md` — Podatki:

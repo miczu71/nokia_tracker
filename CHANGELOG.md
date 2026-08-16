@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.14.0] - 2026-08-16
+
+Krok 30 (`docs/PLAN_KROK_30_dywidendy.md`), pierwsza fala z Roadmapy v2
+(`docs/ROADMAP.md`) — kalendarz i prognoza dywidend.
+
+Rozpoznanie na realnych danych produkcyjnych przy planowaniu obaliło dwie przesłanki
+pierwotnego zapisu w roadmapie: Nokia płaci **kwartalnie**, nie raz w roku (realne
+record date 2023-2026 potwierdzają rytm), i harmonogram ogłoszeń dostał **nową tabelę**
+zamiast pól w ustawieniach (decyzja użytkownika — WZA uchwala kwotę roczną w 4 ratach,
+chce wpisać cały harmonogram naraz). Oba odstępstwa udokumentowane wprost w
+`docs/ROADMAP.md`.
+
+### Dodano
+- **Migracja v10: `dividend_schedule`** — ogłoszony harmonogram WZA. Klucz naturalny
+  `(fiscal_year, instalment)`, trzy poziomy pewności (`dates_confirmed` odróżnia
+  potwierdzoną datę od samej zapowiedzianej kwoty), `matched_dividend_id` łączy ratę
+  z realną wypłatą po jej zaimportowaniu.
+- **Nowy moduł `dividend_outlook.py`** (nie `tax/dividends.py::forecast()` — kolizja
+  nazwy z prognozami CENOWYMI, `forecasts.py`/`forecast_1w_eur`/...). `per_share_history()`
+  liczy stawkę na akcję jako medianę ostatnich 4 REALNYCH wypłat, wykluczając wiersze
+  odtworzone z „Vested Dividend Shares” (`taxdiv.is_estimated()`, nowa funkcja dzielona
+  z `tax/pit38.py`) — te mają w polu ilości akcje kupione z reinwestycji, nie bazę
+  uprawnioną, więc naiwne liczenie dałoby stawkę ~150× za wysoką. Poniżej 4 realnych
+  wypłat silnik nie zgaduje — zero zdarzeń szacowanych, tylko jawny powód.
+- `entitled_base()`/`qty_on()` — dywidenda liczona od akcji FAKTYCZNIE posiadanych
+  (wolne + z ograniczeniem zbycia), nie od zablokowanych transz ESPP/LTI. `calendar()`
+  scala raty z harmonogramu z zdarzeniami szacowanymi (rata ogłoszona zawsze wypiera
+  szacowaną w tym samym kwartale), podatek liczy ISTNIEJĄCYM łańcuchem sekcji G
+  (`compute_dividend_tax`/`compute_dividend_tax_pln`), zero nowej matematyki podatkowej.
+- **`/dividends`**: karta „Kalendarz” (wykres + tabela zdarzeń, badge
+  potwierdzona/zapowiedziana/szacowana, horyzont `?lata=1|3|5`), karta „Ogłoszony
+  harmonogram” (formularz na 4 raty naraz, bez walidacji dat przyszłych — to sens tej
+  tabeli), karta „Założenia prognozy” (stawka z pasmem niepewności, liczba wypłat
+  rocznie, ile realnych/szacunkowych wypłat wzięto pod uwagę).
+- 3 nowe sensory MQTT: `next_dividend_date` (+ atrybuty), `dividend_next_12m_gross_eur`,
+  `dividend_next_12m_net_pln` — nazwy świadomie omijają `forecast_*`.
+
+### Zweryfikowano
+- Na realnych danych produkcyjnych: stan posiadania skoczył ~24× (119,66 → 2 888,66
+  akcji) przez vesting ESPP/LTI między ostatnią realną wypłatą a dziś — dokładnie
+  sytuacja, po którą ta fala powstała. `dividends.quantity`/`gross_eur` mają dwie różne
+  semantyki zależnie od pochodzenia wiersza, potwierdzone przez bezpośrednie
+  sparsowanie 5 realnych wyciągów Computershare przed implementacją.
+
+60 nowych testów (904 → 964), TDD przez cały krok.
+
 ## [0.13.1] - 2026-08-16
 
 Naprawa realnego błędu znalezionego na żywo, tego samego dnia co 0.13.0 — pierwsze prawdziwe

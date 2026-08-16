@@ -10,22 +10,41 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.13.0** — szósta fala z [`docs/ROADMAP.md`](docs/ROADMAP.md): asystent,
-czat nad własnymi danymi. Nowa strona **Asystent** (w grupie „Portfel”, plus pole szybkiego
-pytania na pulpicie) odpowiada po polsku na pytania w naturalnym języku — „ile zapłacę podatku
-sprzedając 200 akcji?”, „kiedy mam najbliższy vesting?”, „ile zarobiłem?” — trójstopniowo: AI
-tylko rozpoznaje intencję pytania (jedna z 11: podatek ze sprzedaży, ile mogę sprzedać, vesting,
-ile zarobiłem, dywidendy, koszt sprzedaży teraz, porównanie z benchmarkiem, PIT za rok, straty z
-lat ubiegłych, koncentracja majątku, kiedy sprzedać), **Python liczy odpowiedź istniejącym,
-już przetestowanym silnikiem** (zero nowej matematyki), a druga AI (opcjonalna, wyłączalna)
-tylko ubiera policzone liczby w zdanie — liczby renderuje szablon, nigdy tekst modelu, więc
-halucynacja kwoty jest strukturalnie niemożliwa. Przy okazji naprawiony realny błąd: dzienny
-limit wywołań AI był liczony wspólnie dla wszystkich ogniw, więc wyczerpanie limitu płatnego
-`gemini`/`anthropic` blokowało też darmowy lokalny router `freellmapi` — teraz każde ogniwo ma
-własną pulę, widoczną (razem ze stanem obwodu każdego ogniwa) na nowej karcie „Stan AI” na
-Ustawieniach. Zero nowych sensorów MQTT i zero zmian w silniku podatkowym w tej fali. 1.0.0
-zarezerwowane, zgodnie z pierwotną decyzją z roadmapy, na wydanie po jednym pełnym sezonie
-rozliczeniowym na tym silniku — nie od razu po tej fali.
+**Status:** wydanie **0.14.0** — pierwsza fala Roadmapy v2 z [`docs/ROADMAP.md`](docs/ROADMAP.md):
+kalendarz i prognoza dywidend. Rozpoznanie na realnych danych produkcyjnych obaliło pierwotne
+założenie roadmapy „Nokia płaci raz w roku” — realny rytm jest **kwartalny** — i pokazało, że
+stan posiadania właśnie skoczył kilkudziesięciokrotnie przez vesting, więc najbliższa wypłata
+będzie wielokrotnie większa od ostatniej, a dotąd nic w aplikacji tego nie sygnalizowało. Nowe
+karty na **Dywidendach**: **Kalendarz** (zdarzenia potwierdzone/zapowiedziane z ogłoszonego
+harmonogramu WZA + zdarzenia szacowane z historii, nigdy oba naraz dla tego samego kwartału),
+**Ogłoszony harmonogram** (formularz na całą roczną uchwałę WZA — do 4 rat naraz, z historią
+ogłoszeń i automatycznym dopasowaniem do realnej wypłaty po jej zaimportowaniu), **Założenia
+prognozy** (stawka na akcję z pasmem niepewności, liczba wypłat rocznie, ile realnych wypłat
+użyto, ile szacunkowych wykluczono). Stawka na akcję liczona **wyłącznie z realnych wypłat
+transakcyjnych** — wiersze odtworzone z „Vested Dividend Shares” (lata bez sekcji transakcyjnej
+wyciągu) mają w polu ilości liczbę akcji kupionych z reinwestycji, nie bazę uprawnioną, więc
+naiwne liczenie dałoby stawkę ~150× za wysoką; przy mniej niż 4 realnych wypłatach kalendarz
+uczciwie nie zgaduje (pokazuje tylko potwierdzony harmonogram + jawny powód). Podatek liczony
+istniejącym łańcuchem sekcji G PIT-38, zero nowej matematyki. 3 nowe sensory MQTT
+(`next_dividend_date` + atrybuty, `dividend_next_12m_gross_eur`, `dividend_next_12m_net_pln`).
+
+Wcześniej (0.13.0/0.13.1): szósta fala pierwotnej roadmapy — asystent, czat nad własnymi danymi.
+Nowa strona **Asystent** (w grupie „Portfel”, plus pole szybkiego pytania na pulpicie) odpowiada
+po polsku na pytania w naturalnym języku — „ile zapłacę podatku sprzedając 200 akcji?”, „kiedy
+mam najbliższy vesting?”, „ile zarobiłem?” — trójstopniowo: AI tylko rozpoznaje intencję pytania
+(jedna z 11: podatek ze sprzedaży, ile mogę sprzedać, vesting, ile zarobiłem, dywidendy, koszt
+sprzedaży teraz, porównanie z benchmarkiem, PIT za rok, straty z lat ubiegłych, koncentracja
+majątku, kiedy sprzedać), **Python liczy odpowiedź istniejącym, już przetestowanym silnikiem**
+(zero nowej matematyki), a druga AI (opcjonalna, wyłączalna) tylko ubiera policzone liczby w
+zdanie — liczby renderuje szablon, nigdy tekst modelu, więc halucynacja kwoty jest strukturalnie
+niemożliwa. Przy okazji naprawiony realny błąd: dzienny limit wywołań AI był liczony wspólnie dla
+wszystkich ogniw, więc wyczerpanie limitu płatnego `gemini`/`anthropic` blokowało też darmowy
+lokalny router `freellmapi` — teraz każde ogniwo ma własną pulę, widoczną (razem ze stanem obwodu
+każdego ogniwa) na karcie „Stan AI” na Ustawieniach. Patch 0.13.1 tego samego dnia: schemat
+rozpoznania intencji łamał się na Gemini (nullable-union type), naprawione powrotem do wzorca
+pojedynczego typu + pominięcia z `required`. 1.0.0 zarezerwowane, zgodnie z pierwotną decyzją z
+roadmapy, na wydanie po jednym pełnym sezonie rozliczeniowym na tym silniku — nie od razu po tej
+fali.
 
 Wcześniej (0.12.0): piąta fala — UX/mobile + wykresy. Globalny przełącznik waluty PLN/EUR w
 nagłówku, tabele zamieniające się w karty poniżej 430px, globalny selektor roku podatkowego
@@ -134,7 +153,7 @@ się poziomo; wybrane tabele (Loty, Dywidendy, Newsy) sortowalne klikiem w nagł
 | **Wyniki** *(od 0.9.0)* | XIRR na wpłatach własnych i TWR obok siebie, atrybucja zysku na 5 składników (kurs akcji / dopłata ESPP / LTI / dywidendy / efekt EUR-PLN, sumujące się co do grosza), krzywa wartości portfela na wykresie razem z kontrfaktycznym OMXH25 — **przełącznik PLN/EUR *(od 0.12.0)*** przerysowuje wykres i tabelę bez przeładowania strony, widok do druku *(od 0.12.0)*, tabela zwrotu rok po roku |
 | **Plan** *(od 0.10.0)* | Widok do druku *(od 0.12.0)*. Doradca planu pracowniczego — cztery karty: „Ile tracę, sprzedając dziś" (przepadające dopasowanie ESPP proporcjonalnie do sprzedanych sztuk, z nogą podatkową dla sprzedaży całego ograniczonego pakietu), „Harmonogram vestingu" (oś czasu transz oczekujących, kafelki kwartał/rok/przyszły rok, zaległe osobno), „Planer ESPP" (wpłata × miesiące × cena → akcje własne/dopasowania/podatek, z podglądem na żywo i chipami scenariusza cenowego ±20%), „Ryzyko koncentracji" (udział akcji pracodawcy w majątku vs próg ostrzeżenia), „Kiedy sprzedać — dziś czy 2 stycznia" *(od 0.11.0 — różnica podatku po odliczeniu dostępnej straty vs różnica przepadku dopasowania, rekomendacja deterministyczna)* |
 | **Asystent** *(od 0.13.0)* | Pytanie w naturalnym języku polskim → odpowiedź licząca istniejący silnik aplikacji (zero nowej matematyki), AI tylko rozpoznaje intencję i (opcjonalnie, wyłączalnie) ubiera policzone liczby w zdanie — nigdy odwrotnie. Chip „Zrozumiałem: …” nad odpowiedzią, link do strony ze szczegółami, historia ostatnich pytań, pasek „Stan AI” (aktywne ogniwo, ile zostało z dziennego limitu). Formularz działa bez JS (POST-redirect-GET) |
-| **Dywidendy** | Słupki „rok po roku" (brutto vs netto) *(od 0.12.0)*, formularz dodania wypłaty *(od 0.5.0 z podglądem na żywo — kurs NBP, podatek, dopłata w PL — pod polami)*, jedno źródło prawdy z kursem NBP zamrożonym na Record Date, kafelki podsumowania **w PLN** z EUR jako podlinią *(od 0.5.0 — dawniej licznik EUR na kursach bieżących nie zgadzał się z tabelą poniżej)*, historia (sortowalna *od 0.12.0*) z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji |
+| **Dywidendy** | Słupki „rok po roku" (brutto vs netto) *(od 0.12.0)*, formularz dodania wypłaty *(od 0.5.0 z podglądem na żywo — kurs NBP, podatek, dopłata w PL — pod polami)*, jedno źródło prawdy z kursem NBP zamrożonym na Record Date, kafelki podsumowania **w PLN** z EUR jako podlinią *(od 0.5.0 — dawniej licznik EUR na kursach bieżących nie zgadzał się z tabelą poniżej)*, historia (sortowalna *od 0.12.0*) z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji, **Kalendarz dywidend** *(od 0.14.0 — wykres + tabela zdarzeń potwierdzone/zapowiedziane/szacowane, horyzont 1/3/5 lat)*, **Ogłoszony harmonogram** *(od 0.14.0 — formularz na całą roczną uchwałę WZA, do 4 rat naraz, automatyczne dopasowanie do realnej wypłaty)*, **Założenia prognozy** *(od 0.14.0 — stawka na akcję z pasmem, liczba wypłat rocznie, ile realnych/szacunkowych wypłat użyto)* |
 | **Importy** | Upload wyciągu Computershare (PDF), kolejka konfliktów (rozbieżności vs poprzedni import, w tym potwierdzenie realnej sprzedaży Withhold-to-Cover), historia importów |
 | **PIT-38** | Karta „Do wpisania w deklarację" (poz. C + sekcja G + kafelek RAZEM DO ZAPŁATY) jako pierwszy ekran; waterfall Poz. C *(od 0.12.0 — przychód→koszt→dochód→strata odliczona (informacyjnie)→podatek→na rękę)*; niżej: 3 kafelki polityk kosztu (podstawa prawna w zwiniętym rozbiciu), sekcja G scalona z PIT/ZG (schowana, gdy brak dywidend w roku), symulacja „co jeśli sprzedam teraz" *(od 0.5.0 z wynikiem na żywo bez przeładowania strony)*, ślad obliczeń per lot pogrupowany po dacie sprzedaży, eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku, kreator rozliczenia rocznego *(od 0.11.0 — `/pit38/kreator`, checklista samosprawdzająca się z bazy)*, karta strat z lat ubiegłych z linkiem do kreatora |
 | **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza), kolumna źródła *(od 0.5.0)*, sortowanie klikiem w nagłówek i „Pokaż więcej" *(od 0.12.0 — pierwsze 20 z 200)* |
@@ -289,6 +308,14 @@ prefiks niezależnie od nazwy encji).
 > NBP zamrożonym na dzień wypłaty (zgodna z art. 11a) jest w grupie „PIT-38 i symulacja" niżej oraz
 > na stronie web UI **PIT-38**. To narzędzie pomocnicze, nie doradztwo podatkowe; wartości potwierdź
 > z własnym rozliczeniem lub doradcą przed wpisaniem do deklaracji.
+
+### Kalendarz dywidend *(od 0.14.0)*
+
+| Encja | Opis |
+|---|---|
+| `sensor.nokia_tracker_next_dividend_date` | Data najbliższego zdarzenia (potwierdzone/zapowiedziane z harmonogramu lub szacowane z historii); `gross_per_share_eur`, `entitled_qty`, `gross_eur`, `certainty`, `instalment` w atrybutach |
+| `sensor.nokia_tracker_dividend_next_12m_gross_eur` | Suma brutto zdarzeń w kolejnych 12 miesiącach |
+| `sensor.nokia_tracker_dividend_next_12m_net_pln` | Suma na rękę (PLN, po kursie bieżącym) w kolejnych 12 miesięcy — `unknown` bez kursu EUR/PLN |
 
 ### Loty i FIFO
 

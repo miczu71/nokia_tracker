@@ -71,15 +71,73 @@ def test_analyze_raises_when_all_links_fail(conn, monkeypatch):
     assert provider.active_provider() == "off"
 
 
-def test_analyze_respects_daily_limit(conn, monkeypatch):
+def test_analyze_respects_daily_limit_scoped_to_one_provider(conn, monkeypatch):
+    # Krok 29: limit dzienny sprawdzany PER OGNIWO, nie raz globalnie przed
+    # łańcuchem — 'none' fallback izoluje test do samego 'local', żeby
+    # sprawdzić że jego własny limit działa niezależnie od pozostałych.
     calls = []
     monkeypatch.setattr(openai_compat, "call",
                         lambda *a, **kw: (calls.append(1), ({"ok": True}, 1))[1])
-    cfg = _cfg(ai_max_calls_per_day=1)
+    cfg = _cfg(ai_fallback="none", ai_max_calls_per_day_local=1)
     provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
     with pytest.raises(AIProviderError):
         provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
-    assert len(calls) == 1  # drugie wywołanie nie dotarło do żadnego providera
+    assert len(calls) == 1  # drugie wywołanie nie dotarło do 'local' (limit wyczerpany)
+
+
+def test_analyze_falls_through_when_one_provider_exhausts_its_own_limit(conn, monkeypatch):
+    # Krok 29: naprawa realnego błędu — wyczerpanie limitu PŁATNEGO ogniwa
+    # (albo tu: darmowego 'local') nie może już blokować DRUGIEGO ogniwa w
+    # łańcuchu. Przed tą zmianą usage.allow() był sprawdzany raz, globalnie,
+    # przed całą pętlą — drugie wywołanie analyze() rzucałoby tu wyjątek bez
+    # nawet próby gemini.
+    local_calls = []
+    monkeypatch.setattr(openai_compat, "call",
+                        lambda *a, **kw: (local_calls.append(1), ({"ok": "local"}, 1))[1])
+    monkeypatch.setattr(gemini, "call", lambda *a, **kw: ({"ok": "gemini"}, 5))
+    cfg = _cfg(ai_max_calls_per_day_local=1)  # ai_fallback zostaje domyślne: gemini
+    first = provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
+    assert first == {"ok": "local"}
+    second = provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
+    assert second == {"ok": "gemini"}
+    assert len(local_calls) == 1  # local nie wywołane drugi raz, budżet wyczerpany
+    assert provider.active_provider() == "gemini"
+
+
+def test_analyze_raises_when_all_providers_daily_limits_exhausted(conn, monkeypatch):
+    monkeypatch.setattr(openai_compat, "call", lambda *a, **kw: ({"ok": "local"}, 1))
+    monkeypatch.setattr(gemini, "call", lambda *a, **kw: ({"ok": "gemini"}, 1))
+    cfg = _cfg(ai_max_calls_per_day_local=1, ai_max_calls_per_day=1)
+    provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)  # local zużywa swój limit
+    provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)  # gemini zużywa swój limit
+    with pytest.raises(AIProviderError):
+        provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
+
+
+def test_analyze_zero_local_limit_means_unlimited(conn, monkeypatch):
+    calls = []
+    monkeypatch.setattr(openai_compat, "call",
+                        lambda *a, **kw: (calls.append(1), ({"ok": True}, 1))[1])
+    cfg = _cfg(ai_fallback="none", ai_max_calls_per_day_local=0)
+    for _ in range(5):
+        provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
+    assert len(calls) == 5
+
+
+def test_analyze_local_limit_falls_back_to_shared_limit_when_unset(conn, monkeypatch):
+    # cfg bez ai_max_calls_per_day_local (np. stary settings.get_settings()
+    # przed migracją opcji) — 'local' musi nadal respektować JAKIŚ limit,
+    # nie zachowywać się jak nieograniczony.
+    calls = []
+    monkeypatch.setattr(openai_compat, "call",
+                        lambda *a, **kw: (calls.append(1), ({"ok": True}, 1))[1])
+    cfg = _cfg(ai_fallback="none")
+    del cfg["ai_max_calls_per_day"]
+    cfg["ai_max_calls_per_day"] = 1
+    provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
+    with pytest.raises(AIProviderError):
+        provider.analyze(conn, cfg, "score_news", "prompt", SCHEMA, 2000)
+    assert len(calls) == 1
 
 
 def test_analyze_skips_fallback_none(conn, monkeypatch):
@@ -103,6 +161,19 @@ def test_analyze_skips_link_with_open_circuit(conn, monkeypatch):
     result = provider.analyze(conn, _cfg(), "score_news", "prompt", SCHEMA, 2000)
     assert result == {"ok": "gemini"}
     assert called == []  # obwód 'local' otwarty -> openai_compat.call nigdy nie wywołane
+
+
+def test_analyze_skips_open_circuit_without_consuming_its_daily_budget(conn, monkeypatch):
+    # Pominięcie ogniwa przez otwarty obwód nie może wyglądać jak "wywołanie" w
+    # liczniku ai_usage — inaczej providerowi wracającemu z cooldownu zostałby
+    # ubyty dzień limitu bez ani jednego realnego zapytania.
+    for _ in range(3):
+        ratelimit.record_failure("local")
+    monkeypatch.setattr(gemini, "call", lambda *a, **kw: ({"ok": "gemini"}, 5))
+    provider.analyze(conn, _cfg(ai_max_calls_per_day_local=1), "score_news",
+                     "prompt", SCHEMA, 2000)
+    from nokia_tracker.ai import usage
+    assert usage.calls_today(conn, "local") == 0
 
 
 def test_analyze_reopens_link_after_cooldown(conn, monkeypatch):

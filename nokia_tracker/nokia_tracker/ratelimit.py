@@ -21,6 +21,10 @@ _consecutive_failures: dict[str, int] = {}
 # (record_success wymaga UDANEGO wywołania, a przy is_circuit_open()
 # pomijamy providera właśnie po to, żeby go nie wywoływać).
 _opened_at: dict[str, float] = {}
+# Ostatni komunikat błędu per provider — świadomie ulotne jak powyższe, do
+# pokazania w karcie "Stan AI" (krok 29). Nie jest źródłem prawdy o stanie
+# obwodu (to nadal provider_status()), tylko diagnostyką "dlaczego".
+_last_error: dict[str, str] = {}
 
 
 def _today() -> str:
@@ -56,11 +60,27 @@ def record_success(provider: str) -> None:
     _opened_at.pop(provider, None)
 
 
-def record_failure(provider: str) -> None:
+def record_failure(provider: str, error: str | None = None) -> None:
     n = _consecutive_failures.get(provider, 0) + 1
     _consecutive_failures[provider] = n
     if n >= _FAILURE_THRESHOLD and provider not in _opened_at:
         _opened_at[provider] = time.monotonic()
+    if error is not None:
+        _last_error[provider] = error
+
+
+def last_error(provider: str) -> str | None:
+    return _last_error.get(provider)
+
+
+def cooldown_remaining_seconds(provider: str) -> float | None:
+    """Sekundy do końca cooldownu, albo None gdy obwód nie jest 'down'."""
+    if provider_status(provider) != "down":
+        return None
+    opened = _opened_at.get(provider)
+    if opened is None:
+        return None
+    return max(0.0, _CIRCUIT_COOLDOWN_SECONDS - (time.monotonic() - opened))
 
 
 def provider_status(provider: str) -> str:

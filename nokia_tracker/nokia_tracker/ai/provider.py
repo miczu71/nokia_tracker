@@ -46,18 +46,28 @@ def _model_for(name: str, cfg: dict) -> str:
            "anthropic": cfg["anthropic_model"]}.get(name, name)
 
 
+def _max_calls_for(name: str, cfg: dict) -> int:
+    """Krok 29: 'local' (darmowy router freellmapi) ma WŁASNY, oddzielny
+    budżet od płatnych ogniw — patrz ai_max_calls_per_day_local w settings.py.
+    Brak klucza w cfg (np. wywołanie z pominięciem settings.get_settings())
+    degraduje do wspólnego ai_max_calls_per_day zamiast cichego 'bez limitu',
+    żeby stary caller bez tego klucza nie stał się przypadkiem nieograniczony."""
+    if name == "local":
+        return cfg.get("ai_max_calls_per_day_local", cfg.get("ai_max_calls_per_day", 40))
+    return cfg.get("ai_max_calls_per_day", 40)
+
+
 def analyze(conn: sqlite3.Connection, cfg: dict, task: str, prompt: str,
            schema: dict, max_tokens: int) -> dict:
     """cfg: settings.get_settings(conn) + klucze API z ENV (local_llm_api_key,
     gemini_api_key, anthropic_api_key) — te ostatnie NIE żyją w tabeli
     settings, patrz settings.py. Zwraca sparsowany JSON pierwszego ogniwa,
-    które się powiedzie. Rzuca AIProviderError, gdy limit dzienny już
-    wyczerpany albo WSZYSTKIE ogniwa zawiodą."""
-    if not usage.allow(conn, cfg["ai_max_calls_per_day"]):
-        _active[0] = "off"
-        raise AIProviderError(
-            f"ai: dzienny limit {cfg['ai_max_calls_per_day']} wywołań wyczerpany")
+    które się powiedzie. Rzuca AIProviderError, gdy WSZYSTKIE ogniwa w
+    łańcuchu zawiodą albo mają wyczerpany dzienny limit.
 
+    Limit dzienny sprawdzany PER OGNIWO (krok 29), nie raz globalnie przed
+    pętlą — naprawia realny błąd, w którym wyczerpanie wspólnej puli przez
+    jedno płatne ogniwo blokowało też darmowe 'local'."""
     chain = [cfg["ai_primary"]]
     if cfg["ai_fallback"] and cfg["ai_fallback"] != "none":
         chain.append(cfg["ai_fallback"])
@@ -71,10 +81,17 @@ def analyze(conn: sqlite3.Connection, cfg: dict, task: str, prompt: str,
         if ratelimit.is_circuit_open(name):
             logger.info("AI: ogniwo '%s' w cooldownie (obwód otwarty), pomijam", name)
             continue
+        max_per_day = _max_calls_for(name, cfg)
+        if not usage.allow(conn, name, max_per_day):
+            logger.info("AI: ogniwo '%s' wyczerpało dzienny limit (%d), pomijam",
+                       name, max_per_day)
+            last_err = last_err or AIProviderError(
+                f"ai: dzienny limit ogniwa '{name}' ({max_per_day}) wyczerpany")
+            continue
         try:
             parsed, total_tokens = _call(name, cfg, prompt, schema, task, max_tokens)
         except AIProviderError as exc:
-            ratelimit.record_failure(name)
+            ratelimit.record_failure(name, str(exc))
             logger.warning("AI: ogniwo '%s' nieudane (%s), próbuję kolejne", name, exc)
             last_err = exc
             continue

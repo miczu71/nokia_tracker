@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.16.1] - 2026-08-16
+
+Patch tego samego dnia — bug znaleziony przy weryfikacji 0.16.0 na produkcji.
+
+### Naprawiono
+- **Zmienność/Sharpe/drawdown liczone naiwnie z `market_value_eur`** myliły realny ruch
+  ceny ze zmianą ilości akcji (vesting LTI, dopasowanie ESPP, sprzedaże) — dzień
+  dużego vestingu wyglądał jak +1000% "zwrotu". Produkcja pokazała zmienność
+  annualizowaną +1015,8%, matematycznie niemożliwe dla realnej akcji. `analytics/risk.py`
+  przyjmuje teraz opcjonalny `cashflows` (ten sam kształt co
+  `returns.py::build_twr_cashflows()`), netujący kontrybucje/wypłaty przed policzeniem
+  dziennego zwrotu — dokładnie ten sam mechanizm, którego `twr()` już używał.
+  `max_drawdown()` liczy teraz peak-to-trough na chainowanym indeksie zwrotów netto,
+  nie na surowych wartościach, żeby duża sprzedaż nie wyglądała jak fałszywy drawdown.
+
+### Zweryfikowano
+- TDD: 5 nowych testów demonstrujących bug (failing przed poprawką), 10 oryginalnych
+  bez zmian (zero `cashflows` = zero adjustycji, identyczne zachowanie jak 0.16.0).
+- 1001 testów (996 → 1001), bez regresji.
+
 ## [0.16.0] - 2026-08-16
 
 Krok 32 (`docs/PLAN_KROK_32_ryzyko.md`), trzecia fala z Roadmapy v2 — metryki ryzyka

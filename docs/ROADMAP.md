@@ -290,7 +290,10 @@ Zero migracji.
 nie live-fetch), `max_drawdown()`, `volatility_annualized()` (czysty Python, bez numpy — ta sama
 zasada co `returns.py` z 0.9.0). Trzy nowe kafelki, z jawnym zastrzeżeniem że metryki ryzyka dla
 pojedynczej spółki pracowniczej są z natury gorsze niż dla zdywersyfikowanego portfela. Zero
-migracji. Zobacz `docs/PLAN_KROK_32_ryzyko.md` i `CHANGELOG.md` [0.16.0].
+migracji. **Patch 0.16.1 tego samego dnia:** weryfikacja na produkcji złapała realny błąd —
+zwroty liczone naiwnie na `market_value_eur` myliły ruch ceny ze zmianą ilości akcji
+(vesting/ESPP), naprawione netowaniem cashflow (jak `returns.py::twr()`). Zobacz
+`docs/PLAN_KROK_32_ryzyko.md` i `CHANGELOG.md` [0.16.0]/[0.16.1].
 
 **0.17.0 — Asystent proaktywny (co-pilot).** Nowy dzienny scheduler job spina już policzone gdzie
 indziej warunki (zbliżający się vesting, niewykorzystana strata + zysk w bieżącym roku, zbliżająca

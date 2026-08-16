@@ -10,7 +10,7 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.16.0** — trzecia fala Roadmapy v2 z [`docs/ROADMAP.md`](docs/ROADMAP.md):
+**Status:** wydanie **0.16.1** — trzecia fala Roadmapy v2 z [`docs/ROADMAP.md`](docs/ROADMAP.md):
 metryki ryzyka portfela na **Wynikach**. Nowa karta „Ryzyko portfela”: **Sharpe ratio**,
 **zmienność annualizowana** i **maksymalny spadek (drawdown)**, liczone czystym Pythonem (bez
 numpy — ta sama zasada co XIRR/TWR z 0.9.0, powód: musl/armv7) na już zmaterializowanej krzywej
@@ -20,6 +20,11 @@ sesyjne, spójną z tym, że tabela jest budowana wyłącznie z dni notowania. N
 `risk_free_rate_pct` (statyczna wartość, domyślnie 3%, nie live-fetch). Zastrzeżenie wprost na
 karcie: metryki ryzyka dla pojedynczej spółki pracowniczej są z natury gorsze (brak
 dywersyfikacji) niż dla zdywersyfikowanego portfela. Zero migracji, zero nowych sensorów MQTT.
+**Patch 0.16.1 tego samego dnia:** weryfikacja na produkcji złapała realny błąd — zmienność
+liczona naiwnie z `market_value_eur` myliła ruch ceny ze zmianą ilości akcji (vesting/ESPP),
+dzień dużego vestingu wyglądał jak +1000% "zwrotu" (produkcja pokazała +1015,8%, niemożliwe
+dla realnej akcji). Naprawione netowaniem cashflow, tym samym mechanizmem co
+`returns.py::twr()` już używał.
 
 Wcześniej (0.15.0): druga fala Roadmapy v2 — ryzyko koncentracji v2. Dwa dodatki do karty
 „Ryzyko koncentracji” na **Planie** (z 0.10.0): **benchmark branżowy 10–15%** (BofA Private

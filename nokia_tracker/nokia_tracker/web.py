@@ -897,13 +897,17 @@ def create_app(db_path: str) -> Flask:
             sharpe = volatility_pct = None
             xirr_flows: list[tuple[str, float]] = []
 
-            # Krok 32: `daily_values` budowane bezwarunkowo (nie potrzebuje
-            # dzisiejszej ceny/kursu) — `max_drawdown()` działa nawet, gdy
-            # dzisiejszy poll jeszcze się nie wykonał, tak jak krzywa wartości
-            # i tabela rok-po-roku niżej w tej samej funkcji.
+            # Krok 32: `daily_values`/`twr_flows` budowane bezwarunkowo (nie
+            # potrzebują dzisiejszej ceny/kursu) — `max_drawdown()` działa
+            # nawet, gdy dzisiejszy poll jeszcze się nie wykonał, tak jak
+            # krzywa wartości i tabela rok-po-roku niżej w tej samej funkcji.
+            # `twr_flows` (0.16.1): netuje kontrybucje/wypłaty (vesting, ESPP,
+            # sprzedaże) z dziennych zwrotów — bez tego jeden dzień vestingu
+            # wygląda jak +1000% "zwrotu" (bug znaleziony na produkcji 0.16.0).
             daily_values = [(r["date"], r["market_value_eur"]) for r in history_rows
                             if r["market_value_eur"] is not None]
-            max_dd_result = analytics_risk.max_drawdown(daily_values)
+            twr_flows = analytics_returns.build_twr_cashflows(conn)
+            max_dd_result = analytics_risk.max_drawdown(daily_values, twr_flows)
             max_dd_pct = max_dd_result * 100 if max_dd_result is not None else None
 
             # Krzywa wartości i tabela rok-po-roku wyłącznie z `portfolio_history`
@@ -938,12 +942,13 @@ def create_app(db_path: str) -> Flask:
                 xirr_result = analytics_returns.xirr(xirr_flows)
                 xirr_pct = xirr_result * 100 if xirr_result is not None else None
 
-                twr_flows = analytics_returns.build_twr_cashflows(conn)
                 twr_result = analytics_returns.twr(daily_values, twr_flows)
                 twr_pct = twr_result * 100 if twr_result is not None else None
 
-                sharpe = analytics_risk.sharpe_ratio(daily_values, cfg["risk_free_rate_pct"])
-                volatility_result = analytics_risk.volatility_annualized(daily_values)
+                sharpe = analytics_risk.sharpe_ratio(
+                    daily_values, cfg["risk_free_rate_pct"], cashflows=twr_flows)
+                volatility_result = analytics_risk.volatility_annualized(
+                    daily_values, cashflows=twr_flows)
                 volatility_pct = volatility_result * 100 if volatility_result is not None else None
 
                 attribution = analytics_attribution.decompose(conn, price_eur, eurpln_rate)

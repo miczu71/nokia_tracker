@@ -145,6 +145,33 @@ implementacji (ten sam `stat()` makro z `_macros.html`).
    opis strony `/wyniki` rośnie), `CHANGELOG.md`, adnotacja „WYDANE” w `docs/ROADMAP.md`
    przy 0.16.0 (wzorem 0.13.0/0.14.0/0.15.0).
 
+## Poprawka 0.16.1 — netowanie cashflow (bug znaleziony przy weryfikacji na produkcji)
+
+Po wdrożeniu 0.16.0 na produkcję, sprawdzenie realnych liczb na `/wyniki` pokazało
+zmienność annualizowaną **+1015,8%** — matematycznie niemożliwe dla realnej akcji
+(odpowiadałoby ~64% dziennemu odchyleniu). Przyczyna: `_daily_returns()` liczyła zwrot
+naiwnie z `(v_i - v_i-1) / v_i-1` na `market_value_eur`, które zmienia się nie tylko od
+ruchu ceny, ale też od zmiany ILOŚCI akcji (vesting LTI, dopasowanie ESPP, sprzedaże) —
+dzień dużego vestingu wygląda jak +1000% "zwrotu", chociaż cena się nie ruszyła.
+`returns.py::twr()` już rozwiązuje dokładnie ten problem, netując cashflow danego dnia
+(`build_twr_cashflows()`) — `risk.py` tego nie robił.
+
+**Fix (TDD: nowy failing test przed poprawką):** wszystkie trzy funkcje przyjmują teraz
+opcjonalny parametr `cashflows` (ten sam kształt co `build_twr_cashflows()`), odejmowany
+przed policzeniem dziennego zwrotu w `_daily_returns()`. `max_drawdown()` liczy teraz
+peak-to-trough na **indeksie zwrotów netto** (chainowanym, jak `twr()`), nie na surowych
+wartościach — inaczej duża sprzedaż (realna wypłata, nie strata rynkowa) wyglądałaby jak
+fałszywy drawdown. Bez `cashflows` (domyślnie `None`) zachowanie identyczne jak przed
+0.16.1 — 10 oryginalnych testów przechodzi bez zmian, plus 5 nowych demonstrujących
+netowanie (`test_analytics_risk.py`). `web.py::wyniki_get` przekazuje już istniejące
+`twr_flows` (`build_twr_cashflows(conn)`, przeniesione wyżej, bo nie potrzebuje
+dzisiejszej ceny/kursu — tak jak `daily_values`) do wszystkich trzech wywołań.
+
+Lekcja zgodna z zasadą weryfikacji z `ROADMAP.md` („sprawdzenie na realnych danych przed
+wdrożeniem") — złapane dokładnie tym krokiem, nie przez testy jednostkowe (te testowały
+poprawną matematykę na sztucznych seriach, ale nie modelowały charakterystyki realnego
+portfela pracowniczego: skokowe zmiany ilości akcji).
+
 ## Pliki
 
 | Nowe | Modyfikowane |

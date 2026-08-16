@@ -22,13 +22,15 @@ def test_migrate_creates_all_tables(conn):
         "tax_loss_carryforward", "tax_loss_deductions", "tax_year_closed",
         # asystent czatu (krok 29, 0.13.0)
         "chat_log",
+        # kalendarz i prognoza dywidend (krok 30, 0.14.0)
+        "dividend_schedule",
     }
     assert expected <= tables
 
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 9  # v9: krok 29 - asystent czatu
+    assert version == 10  # v10: krok 30 - kalendarz dywidend
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):

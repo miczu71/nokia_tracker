@@ -308,6 +308,33 @@ _MIGRATIONS = [
     );
     CREATE INDEX idx_chat_log_created ON chat_log(created_at);
     """,
+    # v10 — krok 30: ogłoszony harmonogram dywidend (docs/PLAN_KROK_30_dywidendy.md).
+    # Nokia płaci KWARTALNIE (zweryfikowane na realnych record date 2023-2026), a WZA
+    # uchwala kwotę roczną z upoważnieniem zarządu do decyzji o dacie każdej raty
+    # osobno — stąd `dates_confirmed`: kwota bywa znana pół roku przed datą wypłaty.
+    # Klucz naturalny (fiscal_year, instalment) — ponowne wysłanie formularza z tą
+    # samą ratą UPSERT-uje (data orientacyjna staje się potwierdzoną), nie duplikuje.
+    """
+    CREATE TABLE dividend_schedule (
+        id INTEGER PRIMARY KEY,
+        fiscal_year INTEGER NOT NULL,
+        instalment INTEGER NOT NULL,
+        record_date TEXT NOT NULL,
+        payment_date TEXT,
+        ex_date TEXT,
+        gross_per_share_eur REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        dates_confirmed INTEGER NOT NULL DEFAULT 0,
+        announced_on TEXT,
+        source TEXT NOT NULL DEFAULT 'manual',
+        status TEXT NOT NULL DEFAULT 'announced'
+            CHECK(status IN ('announced','cancelled')),
+        matched_dividend_id INTEGER REFERENCES dividends(id),
+        notes TEXT,
+        UNIQUE(fiscal_year, instalment)
+    );
+    CREATE INDEX idx_dividend_schedule_record ON dividend_schedule(record_date);
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

@@ -54,7 +54,7 @@ def test_export_zip_contains_manifest_db_and_csvs(seeded_db_path):
         assert names == {
             "nokia.db", "manifest.json",
             "lots.csv", "sales.csv", "sale_allocations.csv",
-            "grants.csv", "vests.csv", "dividends.csv",
+            "grants.csv", "vests.csv", "dividends.csv", "dividend_schedule.csv",
         }
         manifest = json.loads(zf.read("manifest.json"))
         assert manifest["app_version"] == __version__
@@ -172,3 +172,44 @@ def test_restore_apply_removes_stale_wal_and_shm_sidecars(tmp_path):
         or (tmp_path / "current.db-wal").read_bytes() != b"stale-wal-content"
     assert not (tmp_path / "current.db-shm").exists() \
         or (tmp_path / "current.db-shm").read_bytes() != b"stale-shm-content"
+
+
+def test_restore_preview_survives_backup_missing_a_newer_table(tmp_path):
+    """Krok 30 (0.14.0): kopia zapasowa zrobiona PRZED migracją v10 (realnie —
+    wyeksportowana przez starsze wydanie dodatku, którego `_CSV_TABLES` jeszcze
+    nie znało `dividend_schedule`) nie ma tej tabeli w `nokia.db` w ogóle.
+    `restore_preview` na BIEŻĄCYM kodzie (który dividend_schedule już zna) nie może
+    wybuchnąć `OperationalError: no such table` — musi potraktować jej brak jak
+    pustą tabelę po stronie kopii (wszystko po stronie "current" to "removed")."""
+    current_path = str(tmp_path / "current.db")
+    conn = dbm.get_conn(current_path)
+    dbm.migrate(conn)
+    _seed(conn, lot_id=1, sale_id=1, grant_id=1)
+    conn.execute(
+        "INSERT INTO dividend_schedule (fiscal_year, instalment, record_date, "
+        "gross_per_share_eur) VALUES (2026, 1, '2026-05-01', 0.04)")
+    conn.commit()
+    conn.close()
+
+    # Ręcznie sklejony ZIP naśladujący realny eksport ze starszego wydania (v9,
+    # sprzed kroku 30) — baza bez dividend_schedule, manifest/CSV bez tej tabeli.
+    old_snapshot_path = tmp_path / "old_snapshot.db"
+    old_conn = sqlite3.connect(str(old_snapshot_path))
+    old_conn.executescript("".join(dbm._MIGRATIONS[:9]))
+    old_conn.execute("PRAGMA user_version = 9")
+    old_conn.commit()
+    old_conn.close()
+
+    buf = __import__("io").BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.write(str(old_snapshot_path), "nokia.db")
+        zf.writestr("manifest.json", json.dumps({
+            "app_version": "0.13.1", "schema_version": 9,
+            "exported_at": "2026-08-01T00:00:00+00:00", "row_counts": {},
+        }))
+
+    result = backup.restore_preview(current_path, buf.getvalue())
+
+    assert result["diff"]["dividend_schedule"] == {"added": 0, "removed": 1, "unchanged": 0}
+    # tabele obecne po obu stronach dalej liczą się normalnie
+    assert result["diff"]["lots"] == {"added": 0, "removed": 1, "unchanged": 0}

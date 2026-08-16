@@ -43,6 +43,12 @@ _CSV_TABLES: dict[str, list[str]] = {
                    "withholding_pct", "withholding_paid_eur", "net_received_eur",
                    "nbp_rate", "nbp_rate_date", "gross_pln", "pl_tax_due_pln",
                    "reinvested_lot_id", "natural_key", "notes"],
+    # krok 30 (0.14.0): ogłoszony harmonogram dywidend — dane wpisane ręcznie przez
+    # użytkownika (WZA), nie odtwarzalne z żadnego zewnętrznego źródła.
+    "dividend_schedule": ["id", "fiscal_year", "instalment", "record_date",
+                            "payment_date", "ex_date", "gross_per_share_eur",
+                            "currency", "dates_confirmed", "announced_on", "source",
+                            "status", "matched_dividend_id", "notes"],
 }
 
 
@@ -113,9 +119,21 @@ def _check_schema_compatible(manifest: dict) -> None:
             "zaktualizuj dodatek przed przywróceniem tej kopii.")
 
 
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+    ).fetchone() is not None
+
+
 def restore_preview(current_db_path: str, zip_bytes: bytes) -> dict:
     """Różnica per tabela PRZED zapisem — ile wierszy przybędzie/zniknie po
-    przywróceniu. Nie modyfikuje żadnej z baz."""
+    przywróceniu. Nie modyfikuje żadnej z baz.
+
+    Kopia starsza niż bieżące wydanie może nie mieć jeszcze jakiejś tabeli z
+    `_CSV_TABLES` (np. `dividend_schedule` dodane w kroku 30/v10) — traktujemy jej
+    brak jak pustą tabelę po stronie kopii, zamiast wywalać się `OperationalError:
+    no such table`. `_check_schema_compatible` wyżej odrzuca tylko kopie z NOWSZEGO
+    schematu niż to wydanie — ten guard pokrywa odwrotny, częstszy przypadek."""
     manifest, db_bytes = _extract(zip_bytes)
     _check_schema_compatible(manifest)
 
@@ -128,7 +146,10 @@ def restore_preview(current_db_path: str, zip_bytes: bytes) -> dict:
         diff = {}
         for table in _CSV_TABLES:
             current_ids = {r[0] for r in current.execute(f"SELECT id FROM {table}")}
-            incoming_ids = {r[0] for r in incoming.execute(f"SELECT id FROM {table}")}
+            if _table_exists(incoming, table):
+                incoming_ids = {r[0] for r in incoming.execute(f"SELECT id FROM {table}")}
+            else:
+                incoming_ids = set()
             diff[table] = {
                 "added": len(incoming_ids - current_ids),
                 "removed": len(current_ids - incoming_ids),

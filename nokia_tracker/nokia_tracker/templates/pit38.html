@@ -32,6 +32,20 @@
   </div>
 </div>
 
+{% if waterfall_pit38.revenue %}
+<div class="card">
+  <div class="card-title">Waterfall — Poz. C (wg aktywnej polityki)</div>
+  <div class="chart-wrap" style="height:280px">
+    <canvas id="pit38-waterfall"></canvas>
+  </div>
+  <p class="muted">
+    „Strata odliczona” to segment informacyjny — obniża podatek, nie jest osobnym
+    wypływem gotówki, więc nie wchodzi do sumy przychód−koszt−podatek=na rękę.
+    Dotyczy wyłącznie Poz. C (sprzedaż akcji) — bez sekcji G (dywidendy).
+  </p>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-title">Polityka kosztu — porównanie</div>
   <div class="grid stats">
@@ -210,5 +224,8 @@ NT.initFormPreview({
   requiredFields: ["whatif_qty", "whatif_price"],
   fields: [["whatif_qty", "quantity"], ["whatif_price", "price_eur"]],
 });
+{% if waterfall_pit38.revenue %}
+NT.initWaterfallChart("pit38-waterfall", {{ waterfall_pit38|tojson }});
+{% endif %}
 </script>
 {% endblock %}

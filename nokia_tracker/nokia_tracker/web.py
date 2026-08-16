@@ -347,10 +347,23 @@ def create_app(db_path: str) -> Flask:
                 "dividend_yield_on_cost_pct": (
                     gross_eur / cost_basis_eur * 100 if cost_basis_eur else None),
             }
+            # Krok 28.4 (docs/PLAN_KROK_28_ux_mobile.md §4): słupki dywidend rok po
+            # roku — agregacja `gross_pln`/`net_pln` już policzonych powyżej per
+            # wiersz, zero nowej logiki podatkowej.
+            yearly: dict[str, dict] = {}
+            for i in items:
+                y = i["pay_date"][:4]
+                bucket = yearly.setdefault(y, {"gross_pln": 0.0, "net_pln": 0.0})
+                bucket["gross_pln"] += i["gross_pln"] or 0
+                bucket["net_pln"] += (i["gross_pln"] or 0) - (i.get("withholding_paid_pln") or 0)
+            yearly_dividends = [
+                {"year": y, "gross_pln": round(v["gross_pln"], 2), "net_pln": round(v["net_pln"], 2)}
+                for y, v in sorted(yearly.items())]
+
             return render_template(
                 "dividends.html", active="dividends", version=__version__,
                 items=items, totals=totals, cfg=cfg, saved=request.args.get("saved") == "1",
-                error=request.args.get("error"))
+                error=request.args.get("error"), yearly_dividends=yearly_dividends)
         finally:
             conn.close()
 
@@ -1349,12 +1362,31 @@ def create_app(db_path: str) -> Flask:
 
             current_price = sensors.market_values(conn, _ids(conn)["primary"]).get("price_eur")
 
+            # Krok 28.4 (docs/PLAN_KROK_28_ux_mobile.md §4): waterfall PIT-38 —
+            # WYŁĄCZNIE Poz. C (przychód ze sprzedaży), zero nowej matematyki,
+            # tylko reshaping już policzonych pól `report`. "Strata odliczona" to
+            # segment INFORMACYJNY (pokazuje wielkość tarczy), nie wchodzi do
+            # łańcucha przychód-koszt-podatek-na rękę — strata obniża PODATEK, nie
+            # jest realnym wypływem gotówki, więc doliczanie jej do łańcucha
+            # dawałoby "na rękę" niezgodne z prawdziwą kwotą (dochód - podatek).
+            active_data = report["policies"][cfg["cost_basis_policy"]]
+            loss_cf = report.get("loss_carryforward") or {}
+            has_loss = bool(loss_cf.get("items"))
+            tax_after_loss = loss_cf["tax_after_loss_pln"] if has_loss else active_data["tax_pln"]
+            loss_used = loss_cf["total_used_this_year_pln"] if has_loss else 0.0
+            net_in_hand = active_data["income_pln"] - tax_after_loss
+            waterfall_pit38 = {
+                "revenue": active_data["revenue_pln"], "cost": active_data["cost_pln"],
+                "income": active_data["income_pln"], "loss_used": loss_used,
+                "tax": tax_after_loss, "net": net_in_hand,
+            }
+
             return render_template(
                 "pit38.html", active="pit38", version=__version__,
                 year=year, report=report, cfg=cfg,
                 whatif_result=whatif_result, whatif_error=whatif_error,
                 whatif_qty=qty_raw, whatif_price=price_raw,
-                current_price=current_price,
+                current_price=current_price, waterfall_pit38=waterfall_pit38,
                 print_mode=request.args.get("print") == "1")
         finally:
             conn.close()

@@ -60,12 +60,19 @@
   {#- Krok 23 (docs/PLAN_KROK_23_portfel_kafelki.md): suma na górze + trzy kubełki
       (wolne/z ograniczeniem/zablokowane), PLN jako waluta główna w tej karcie
       (reszta apki zostaje przy EUR-głównym — patrz decyzja w planie). #}
-  <div class="pf-hero">
-    <div class="pf-hero-label">Wartość całkowita</div>
-    {{ cur_block(buckets.total.value_pln|money if buckets.total.value_pln is not none else none,
-                 buckets.total.value_eur|money if buckets.total.value_eur is not none else none,
-                 cls='pf-hero-cur') }}
-    <div class="pf-hero-sub">{{ buckets.total.qty|qty }} akcji</div>
+  <div class="pf-hero-row">
+    <div class="pf-hero">
+      <div class="pf-hero-label">Wartość całkowita</div>
+      {{ cur_block(buckets.total.value_pln|money if buckets.total.value_pln is not none else none,
+                   buckets.total.value_eur|money if buckets.total.value_eur is not none else none,
+                   cls='pf-hero-cur') }}
+      <div class="pf-hero-sub">{{ buckets.total.qty|qty }} akcji</div>
+    </div>
+    {% if buckets.total.qty %}
+    {#- Krok 28.4 (docs/PLAN_KROK_28_ux_mobile.md §4): donut trzech kubełków —
+        dane już policzone przez dashboard_buckets(), tylko brakowało wizualizacji. #}
+    <div class="pf-donut-wrap no-print"><canvas id="pf-donut"></canvas></div>
+    {% endif %}
   </div>
 
   <div class="pf-buckets">
@@ -233,5 +240,12 @@
 <script>
 NT.initPriceChart("price-chart", "chart-range-bar", {{ chart_api_url|tojson }},
                    {{ default_chart_range|tojson }});
+{% if buckets.total.qty %}
+NT.initBucketDonut("pf-donut", [
+  {label: "Wolne", qty: {{ buckets.free.qty|tojson }}},
+  {label: "Z ograniczeniem", qty: {{ buckets.restricted.qty|tojson }}},
+  {label: "Zablokowane", qty: {{ buckets.locked.qty|tojson }}}
+]);
+{% endif %}
 </script>
 {% endblock %}

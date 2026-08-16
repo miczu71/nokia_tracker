@@ -327,6 +327,95 @@ window.NT = (function () {
     });
   }
 
+  function initBucketDonut(canvasId, buckets) {
+    // Krok 28.4: donut trzech kubełków portfela (Wolne/Z ograniczeniem/
+    // Zablokowane) na pulpicie — te same kolory co kropki .pf-bucket-title
+    // w app.css (--good/--series-3/--baseline), tylko ilości > 0 wchodzą
+    // do wykresu (Chart.js rysuje pusty krąg dla samych zer).
+    const el = document.getElementById(canvasId);
+    if (!el || !window.Chart || !buckets) return;
+    const nonZero = buckets.filter((b) => b.qty > 0);
+    if (!nonZero.length) return;
+    const colors = { "Wolne": cssVar("--good"), "Z ograniczeniem": cssVar("--series-3"),
+                     "Zablokowane": cssVar("--baseline") };
+    new Chart(el.getContext("2d"), {
+      type: "doughnut",
+      data: {
+        labels: nonZero.map((b) => b.label),
+        datasets: [{
+          data: nonZero.map((b) => b.qty),
+          backgroundColor: nonZero.map((b) => colors[b.label] || cssVar("--muted")),
+          borderColor: cssVar("--page"), borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: "65%",
+        plugins: { legend: { display: false }, tooltip: { enabled: true } },
+      },
+    });
+  }
+
+  function initDividendBarChart(canvasId, yearly) {
+    // Krok 28.4: dywidendy rok po roku — brutto vs netto (po podatku u źródła),
+    // `yearly`: [{year, gross_pln, net_pln}], już zagregowane server-side.
+    const el = document.getElementById(canvasId);
+    if (!el || !window.Chart || !yearly || !yearly.length) return;
+    new Chart(el.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: yearly.map((y) => y.year),
+        datasets: [
+          { label: "Brutto PLN", data: yearly.map((y) => y.gross_pln),
+            backgroundColor: cssVar("--series-1") + "55", borderColor: cssVar("--series-1"),
+            borderWidth: 1, maxBarThickness: 48 },
+          { label: "Netto PLN", data: yearly.map((y) => y.net_pln),
+            backgroundColor: cssVar("--series-1"), borderColor: cssVar("--series-1"),
+            borderWidth: 1, maxBarThickness: 48 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, labels: { color: cssVar("--muted") } } },
+        scales: {
+          x: { ticks: { color: cssVar("--muted") }, grid: { display: false } },
+          y: { ticks: { color: cssVar("--muted") }, grid: { color: cssVar("--grid") } },
+        },
+      },
+    });
+  }
+
+  function initWaterfallChart(canvasId, w) {
+    // Krok 28.4: waterfall Poz. C PIT-38 — przychód/koszt/dochód/strata
+    // odliczona (informacyjna)/podatek/na rękę. Chart.js `bar` obsługuje
+    // "pływające" słupki natywnie przez pary [y0, y1] w `data` (bez sztuczek
+    // z przezroczystym datasetem-offsetem). "Strata odliczona" NIE wchodzi
+    // do łańcucha przychód-koszt-podatek-na rękę (patrz komentarz w web.py) —
+    // rysowana jako osobny, wizualnie odróżniony słupek.
+    const el = document.getElementById(canvasId);
+    if (!el || !window.Chart || !w) return;
+    const net = w.income - w.tax;
+    const labels = ["Przychód", "Koszt", "Dochód", "Strata odliczona", "Podatek", "Na rękę"];
+    const data = [
+      [0, w.revenue], [w.income, w.revenue], [0, w.income],
+      [w.income - w.loss_used, w.income], [net, w.income], [0, net],
+    ];
+    const good = cssVar("--good"), bad = cssVar("--bad"), s1 = cssVar("--series-1"),
+          s3 = cssVar("--series-3");
+    const colors = [good, bad, s1, s3, bad, s1];
+    new Chart(el.getContext("2d"), {
+      type: "bar",
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 0 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: cssVar("--muted") }, grid: { display: false } },
+          y: { ticks: { color: cssVar("--muted") }, grid: { color: cssVar("--grid") } },
+        },
+      },
+    });
+  }
+
   // Krok 28.1 (docs/PLAN_KROK_28_ux_mobile.md): globalny przełącznik waluty.
   // Ustawia `<html data-currency>`, zapamiętuje w localStorage (wzorzec
   // `nt.chart.range` powyżej) i rozgłasza `nt:currency-change`, żeby wykresy
@@ -351,6 +440,6 @@ window.NT = (function () {
 
   return {
     initPriceChart, initRowToggles, initFormPreview, initNavGroups, initValueChart,
-    initCurrencyToggle,
+    initCurrencyToggle, initBucketDonut, initDividendBarChart, initWaterfallChart,
   };
 })();

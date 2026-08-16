@@ -34,6 +34,15 @@
   </div>
 </div>
 
+{% if yearly_dividends %}
+<div class="card">
+  <div class="card-title">Dywidendy rok po roku</div>
+  <div class="chart-wrap" style="height:220px">
+    <canvas id="dividend-bar-chart"></canvas>
+  </div>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-title">Dodaj wypłatę dywidendy</div>
   <form class="form" id="dividend-form" method="post" action="{{ url_for('dividends_post') }}">
@@ -143,5 +152,8 @@ NT.initFormPreview({
     ["drip_price_eur", "drip_price_eur"], ["drip_shares", "drip_shares"],
   ],
 });
+{% if yearly_dividends %}
+NT.initDividendBarChart("dividend-bar-chart", {{ yearly_dividends|tojson }});
+{% endif %}
 </script>
 {% endblock %}

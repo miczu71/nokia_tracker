@@ -294,6 +294,10 @@ body {
    wolne/z ograniczeniem/zablokowane) + pasek wyniku (.pf-perf, reużywa
    .grid.stats/stat() z _macros.html bez zmian). Wyłącznie istniejące tokeny
    kolorów — light/dark działa bez nowych deklaracji. */
+.pf-hero-row { display: flex; align-items: center; gap: 18px; margin-bottom: 14px; }
+.pf-hero-row .pf-hero { margin-bottom: 0; flex: 1 1 auto; min-width: 0; }
+.pf-donut-wrap { width: 84px; height: 84px; flex: 0 0 auto; }
+@media (max-width: 480px) { .pf-donut-wrap { display: none; } }
 .pf-hero { margin-bottom: 14px; }
 .pf-hero-label { font-size: 12px; color: var(--muted); text-transform: uppercase;
   letter-spacing: .04em; }

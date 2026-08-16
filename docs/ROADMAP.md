@@ -285,11 +285,12 @@ zbudowany na `tax/whatif.py::_plan_fifo` wywoływanej K razy z przesuniętą dat
 tej funkcji, zero nowej matematyki FIFO). Nowa `advisor.py::exit_plan()`, piąta karta na `/plan`.
 Zero migracji.
 
-**0.16.0 — Metryki ryzyka portfela na `/wyniki`.** Nowy `analytics/risk.py`: `sharpe_ratio()`
-(z `portfolio_history` + nowe ustawienie `risk_free_rate_pct`, wartość statyczna, nie live-fetch),
-`max_drawdown()`, `volatility_annualized()` (czysty Python, bez numpy — ta sama zasada co
-`returns.py` z 0.9.0). Trzy nowe kafelki, z jawnym zastrzeżeniem że metryki ryzyka dla pojedynczej
-spółki pracowniczej są z natury gorsze niż dla zdywersyfikowanego portfela. Zero migracji.
+**0.16.0 — Metryki ryzyka portfela na `/wyniki`. WYDANE 2026-08-16.** Nowy `analytics/risk.py`:
+`sharpe_ratio()` (z `portfolio_history` + nowe ustawienie `risk_free_rate_pct`, wartość statyczna,
+nie live-fetch), `max_drawdown()`, `volatility_annualized()` (czysty Python, bez numpy — ta sama
+zasada co `returns.py` z 0.9.0). Trzy nowe kafelki, z jawnym zastrzeżeniem że metryki ryzyka dla
+pojedynczej spółki pracowniczej są z natury gorsze niż dla zdywersyfikowanego portfela. Zero
+migracji. Zobacz `docs/PLAN_KROK_32_ryzyko.md` i `CHANGELOG.md` [0.16.0].
 
 **0.17.0 — Asystent proaktywny (co-pilot).** Nowy dzienny scheduler job spina już policzone gdzie
 indziej warunki (zbliżający się vesting, niewykorzystana strata + zysk w bieżącym roku, zbliżająca

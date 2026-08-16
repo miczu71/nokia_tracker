@@ -57,6 +57,8 @@ SETTINGS_TYPES: dict[str, type] = {
     # --- doradca planu pracowniczego (krok 26, 0.10.0) ---
     "other_net_worth_pln": float,
     "concentration_alert_pct": float,
+    # --- ryzyko portfela (krok 32, 0.16.0) ---
+    "risk_free_rate_pct": float,
 }
 
 # Klucze API i hasła MQTT NIE żyją w tabeli settings — zostają wyłącznie w
@@ -104,6 +106,7 @@ DEFAULTS: dict[str, object] = {
     "tax_year": 0,
     "other_net_worth_pln": 0.0,
     "concentration_alert_pct": 25.0,
+    "risk_free_rate_pct": 3.0,
 }
 
 

@@ -27,6 +27,7 @@ from . import settings as settingsm
 from .analytics import attribution as analytics_attribution
 from .analytics import benchmark as analytics_benchmark
 from .analytics import returns as analytics_returns
+from .analytics import risk as analytics_risk
 from .importers import computershare_pdf
 from .providers import fx_nbp
 from .tax import dividends as taxdiv
@@ -873,6 +874,7 @@ def create_app(db_path: str) -> Flask:
         conn = _conn()
         try:
             ids = _ids(conn)
+            cfg = settingsm.get_settings(conn)
             price_row = quotes.latest_quote(conn, ids["primary"], granularity="daily")
             eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
             price_eur = price_row["close"] if price_row else None
@@ -892,7 +894,17 @@ def create_app(db_path: str) -> Flask:
 
             xirr_pct = twr_pct = attribution = None
             benchmark_today_eur = benchmark_today_pln = None
+            sharpe = volatility_pct = None
             xirr_flows: list[tuple[str, float]] = []
+
+            # Krok 32: `daily_values` budowane bezwarunkowo (nie potrzebuje
+            # dzisiejszej ceny/kursu) — `max_drawdown()` działa nawet, gdy
+            # dzisiejszy poll jeszcze się nie wykonał, tak jak krzywa wartości
+            # i tabela rok-po-roku niżej w tej samej funkcji.
+            daily_values = [(r["date"], r["market_value_eur"]) for r in history_rows
+                            if r["market_value_eur"] is not None]
+            max_dd_result = analytics_risk.max_drawdown(daily_values)
+            max_dd_pct = max_dd_result * 100 if max_dd_result is not None else None
 
             # Krzywa wartości i tabela rok-po-roku wyłącznie z `portfolio_history`
             # (przeliczana nocnym jobem) — NIEZALEŻNE od dzisiejszej ceny/kursu,
@@ -926,11 +938,13 @@ def create_app(db_path: str) -> Flask:
                 xirr_result = analytics_returns.xirr(xirr_flows)
                 xirr_pct = xirr_result * 100 if xirr_result is not None else None
 
-                daily_values = [(r["date"], r["market_value_eur"]) for r in history_rows
-                                if r["market_value_eur"] is not None]
                 twr_flows = analytics_returns.build_twr_cashflows(conn)
                 twr_result = analytics_returns.twr(daily_values, twr_flows)
                 twr_pct = twr_result * 100 if twr_result is not None else None
+
+                sharpe = analytics_risk.sharpe_ratio(daily_values, cfg["risk_free_rate_pct"])
+                volatility_result = analytics_risk.volatility_annualized(daily_values)
+                volatility_pct = volatility_result * 100 if volatility_result is not None else None
 
                 attribution = analytics_attribution.decompose(conn, price_eur, eurpln_rate)
 
@@ -959,6 +973,7 @@ def create_app(db_path: str) -> Flask:
                 "results.html", active="wyniki", version=__version__,
                 xirr_pct=xirr_pct, twr_pct=twr_pct, attribution=attribution,
                 benchmark_today_pln=benchmark_today_pln, benchmark_today_eur=benchmark_today_eur,
+                sharpe=sharpe, volatility_pct=volatility_pct, max_dd_pct=max_dd_pct,
                 chart_points=chart_points,
                 yearly_returns=yearly_returns, has_history=bool(history_rows),
                 print_mode=request.args.get("print") == "1")

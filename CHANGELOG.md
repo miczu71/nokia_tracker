@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.16.0] - 2026-08-16
+
+Krok 32 (`docs/PLAN_KROK_32_ryzyko.md`), trzecia fala z Roadmapy v2 — metryki ryzyka
+portfela na `/wyniki`. Zero migracji, jedno nowe ustawienie (`risk_free_rate_pct`),
+zero nowych sensorów MQTT.
+
+### Dodano
+- **Nowy `analytics/risk.py`** — `sharpe_ratio()`, `max_drawdown()`,
+  `volatility_annualized()`, czysty Python (bez numpy — ta sama zasada co
+  `analytics/returns.py` z 0.9.0, powód: musl/armv7). Wejście: seria
+  `market_value_eur` z już zmaterializowanej `portfolio_history`. Annualizacja
+  stałą `sqrt(252)` (dni sesyjne) — spójna z tym, że tabela jest budowana
+  wyłącznie z dni notowania, nie osobne założenie.
+- **Nowa karta „Ryzyko portfela”** na `/wyniki`: Sharpe ratio, zmienność
+  annualizowana, maksymalny spadek (drawdown), z zastrzeżeniem, że metryki dla
+  pojedynczej spółki pracowniczej są z natury gorsze (brak dywersyfikacji) niż
+  dla zdywersyfikowanego portfela.
+- Nowe ustawienie `risk_free_rate_pct` (statyczna wartość, domyślnie `3.0`, nie
+  live-fetch — jawna decyzja z `ROADMAP.md`).
+
+### Zweryfikowano
+- TDD: `tests/test_analytics_risk.py` napisane przed `analytics/risk.py`,
+  obserwowane w stanie RED (ImportError) przed implementacją.
+- 996 testów (986 → 996, +10 `test_analytics_risk.py`), bez regresji.
+
 ## [0.15.0] - 2026-08-16
 
 Krok 31 (`docs/PLAN_KROK_31_koncentracja_v2.md`), druga fala z Roadmapy v2 — ryzyko

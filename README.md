@@ -10,23 +10,42 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.14.0** — pierwsza fala Roadmapy v2 z [`docs/ROADMAP.md`](docs/ROADMAP.md):
-kalendarz i prognoza dywidend. Rozpoznanie na realnych danych produkcyjnych obaliło pierwotne
-założenie roadmapy „Nokia płaci raz w roku” — realny rytm jest **kwartalny** — i pokazało, że
-stan posiadania właśnie skoczył kilkudziesięciokrotnie przez vesting, więc najbliższa wypłata
-będzie wielokrotnie większa od ostatniej, a dotąd nic w aplikacji tego nie sygnalizowało. Nowe
-karty na **Dywidendach**: **Kalendarz** (zdarzenia potwierdzone/zapowiedziane z ogłoszonego
-harmonogramu WZA + zdarzenia szacowane z historii, nigdy oba naraz dla tego samego kwartału),
-**Ogłoszony harmonogram** (formularz na całą roczną uchwałę WZA — do 4 rat naraz, z historią
-ogłoszeń i automatycznym dopasowaniem do realnej wypłaty po jej zaimportowaniu), **Założenia
-prognozy** (stawka na akcję z pasmem niepewności, liczba wypłat rocznie, ile realnych wypłat
-użyto, ile szacunkowych wykluczono). Stawka na akcję liczona **wyłącznie z realnych wypłat
-transakcyjnych** — wiersze odtworzone z „Vested Dividend Shares” (lata bez sekcji transakcyjnej
-wyciągu) mają w polu ilości liczbę akcji kupionych z reinwestycji, nie bazę uprawnioną, więc
-naiwne liczenie dałoby stawkę ~150× za wysoką; przy mniej niż 4 realnych wypłatach kalendarz
-uczciwie nie zgaduje (pokazuje tylko potwierdzony harmonogram + jawny powód). Podatek liczony
-istniejącym łańcuchem sekcji G PIT-38, zero nowej matematyki. 3 nowe sensory MQTT
-(`next_dividend_date` + atrybuty, `dividend_next_12m_gross_eur`, `dividend_next_12m_net_pln`).
+**Status:** wydanie **0.16.0** — trzecia fala Roadmapy v2 z [`docs/ROADMAP.md`](docs/ROADMAP.md):
+metryki ryzyka portfela na **Wynikach**. Nowa karta „Ryzyko portfela”: **Sharpe ratio**,
+**zmienność annualizowana** i **maksymalny spadek (drawdown)**, liczone czystym Pythonem (bez
+numpy — ta sama zasada co XIRR/TWR z 0.9.0, powód: musl/armv7) na już zmaterializowanej krzywej
+wartości portfela (`portfolio_history`), w EUR — ta sama waluta bazowa co TWR, żeby efekt
+walutowy EUR/PLN nie zniekształcał miary ryzyka samej pozycji. Annualizacja stałą 252 dni
+sesyjne, spójną z tym, że tabela jest budowana wyłącznie z dni notowania. Nowe ustawienie
+`risk_free_rate_pct` (statyczna wartość, domyślnie 3%, nie live-fetch). Zastrzeżenie wprost na
+karcie: metryki ryzyka dla pojedynczej spółki pracowniczej są z natury gorsze (brak
+dywersyfikacji) niż dla zdywersyfikowanego portfela. Zero migracji, zero nowych sensorów MQTT.
+
+Wcześniej (0.15.0): druga fala Roadmapy v2 — ryzyko koncentracji v2. Dwa dodatki do karty
+„Ryzyko koncentracji” na **Planie** (z 0.10.0): **benchmark branżowy 10–15%** (BofA Private
+Bank) pokazany obok własnego progu użytkownika, jako nakładka na pasku; **planer
+systematycznego wyjścia** (`advisor.exit_plan()`) — „sprzedawaj N akcji miesięcznie/kwartalnie
+przez K okresów” → symulacja FIFO rok po roku (podatek netowany realną stratą z lat ubiegłych,
+przepadek dopłaty ESPP per okres, koncentracja przed/po planie), bez zapisu do bazy, jak
+`espp_plan`/`optimize_sale_timing`. Zero migracji, zero nowych sensorów MQTT.
+
+Wcześniej (0.14.0): pierwsza fala Roadmapy v2 — kalendarz i prognoza dywidend. Rozpoznanie na
+realnych danych produkcyjnych obaliło pierwotne założenie roadmapy „Nokia płaci raz w roku” —
+realny rytm jest **kwartalny** — i pokazało, że stan posiadania właśnie skoczył
+kilkudziesięciokrotnie przez vesting, więc najbliższa wypłata będzie wielokrotnie większa od
+ostatniej, a dotąd nic w aplikacji tego nie sygnalizowało. Nowe karty na **Dywidendach**:
+**Kalendarz** (zdarzenia potwierdzone/zapowiedziane z ogłoszonego harmonogramu WZA + zdarzenia
+szacowane z historii, nigdy oba naraz dla tego samego kwartału), **Ogłoszony harmonogram**
+(formularz na całą roczną uchwałę WZA — do 4 rat naraz, z historią ogłoszeń i automatycznym
+dopasowaniem do realnej wypłaty po jej zaimportowaniu), **Założenia prognozy** (stawka na akcję
+z pasmem niepewności, liczba wypłat rocznie, ile realnych wypłat użyto, ile szacunkowych
+wykluczono). Stawka na akcję liczona **wyłącznie z realnych wypłat transakcyjnych** — wiersze
+odtworzone z „Vested Dividend Shares” (lata bez sekcji transakcyjnej wyciągu) mają w polu
+ilości liczbę akcji kupionych z reinwestycji, nie bazę uprawnioną, więc naiwne liczenie dałoby
+stawkę ~150× za wysoką; przy mniej niż 4 realnych wypłatach kalendarz uczciwie nie zgaduje
+(pokazuje tylko potwierdzony harmonogram + jawny powód). Podatek liczony istniejącym łańcuchem
+sekcji G PIT-38, zero nowej matematyki. 3 nowe sensory MQTT (`next_dividend_date` + atrybuty,
+`dividend_next_12m_gross_eur`, `dividend_next_12m_net_pln`).
 
 Wcześniej (0.13.0/0.13.1): szósta fala pierwotnej roadmapy — asystent, czat nad własnymi danymi.
 Nowa strona **Asystent** (w grupie „Portfel”, plus pole szybkiego pytania na pulpicie) odpowiada
@@ -150,7 +169,7 @@ się poziomo; wybrane tabele (Loty, Dywidendy, Newsy) sortowalne klikiem w nagł
 | **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu i formularz rejestracji sprzedaży — oba *(od 0.5.0)* z podglądem na żywo pod polami (kurs NBP, koszt/przychód/podatek PLN, plan FIFO), zanim klikniesz przycisk; odrzuca daty przyszłe; tabela wszystkich lotów z kursem NBP zamrożonym per lot, link do rozliczenia sprzedaży |
 | **Sprzedaże** | Karta „Podsumowanie" z KPI za wybrany rok (przychód/koszt/dochód/podatek/na rękę); rejestr transakcji — jeden wiersz na sprzedaż z kluczowymi kwotami i przyciskiem „Cofnij" *(od 0.5.0 widocznym od razu, nie tylko po rozwinięciu)*, klik rozwija pełne rozbicie FIFO (który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży z linkiem do tabeli, kwoty EUR/PLN) |
 | **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare, pasek kafelków *(od 0.5.0)* niezvestowane/następny vesting, status transz (oczekuje/nabyte/zaległe), **wartość dziś** (bieżąca cena/kurs) i **wartość zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży, EUR i PLN) per transza |
-| **Wyniki** *(od 0.9.0)* | XIRR na wpłatach własnych i TWR obok siebie, atrybucja zysku na 5 składników (kurs akcji / dopłata ESPP / LTI / dywidendy / efekt EUR-PLN, sumujące się co do grosza), krzywa wartości portfela na wykresie razem z kontrfaktycznym OMXH25 — **przełącznik PLN/EUR *(od 0.12.0)*** przerysowuje wykres i tabelę bez przeładowania strony, widok do druku *(od 0.12.0)*, tabela zwrotu rok po roku |
+| **Wyniki** *(od 0.9.0)* | XIRR na wpłatach własnych i TWR obok siebie, atrybucja zysku na 5 składników (kurs akcji / dopłata ESPP / LTI / dywidendy / efekt EUR-PLN, sumujące się co do grosza), krzywa wartości portfela na wykresie razem z kontrfaktycznym OMXH25 — **przełącznik PLN/EUR *(od 0.12.0)*** przerysowuje wykres i tabelę bez przeładowania strony, widok do druku *(od 0.12.0)*, tabela zwrotu rok po roku, karta ryzyka *(od 0.16.0 — Sharpe ratio, zmienność annualizowana, maksymalny drawdown)* |
 | **Plan** *(od 0.10.0)* | Widok do druku *(od 0.12.0)*. Doradca planu pracowniczego — sześć kart: „Ile tracę, sprzedając dziś" (przepadające dopasowanie ESPP proporcjonalnie do sprzedanych sztuk, z nogą podatkową dla sprzedaży całego ograniczonego pakietu), „Harmonogram vestingu" (oś czasu transz oczekujących, kafelki kwartał/rok/przyszły rok, zaległe osobno), „Planer ESPP" (wpłata × miesiące × cena → akcje własne/dopasowania/podatek, z podglądem na żywo i chipami scenariusza cenowego ±20%), „Kiedy sprzedać — dziś czy 2 stycznia" *(od 0.11.0 — różnica podatku po odliczeniu dostępnej straty vs różnica przepadku dopasowania, rekomendacja deterministyczna)*, „Ryzyko koncentracji" (udział akcji pracodawcy w majątku vs próg ostrzeżenia, **od 0.15.0 z nakładką pasma branżowego 10–15%**, BofA Private Bank), „Planer systematycznego wyjścia" *(od 0.15.0 — sprzedaż N akcji miesięcznie/kwartalnie przez K okresów: podatek rok-po-roku netowany dostępną stratą z lat ubiegłych, przepadek dopasowania per okres wygasający po znanej dacie uwolnienia transzy, koncentracja przed/po planie; symulacja bez zapisu do bazy)* |
 | **Asystent** *(od 0.13.0)* | Pytanie w naturalnym języku polskim → odpowiedź licząca istniejący silnik aplikacji (zero nowej matematyki), AI tylko rozpoznaje intencję i (opcjonalnie, wyłączalnie) ubiera policzone liczby w zdanie — nigdy odwrotnie. Chip „Zrozumiałem: …” nad odpowiedzią, link do strony ze szczegółami, historia ostatnich pytań, pasek „Stan AI” (aktywne ogniwo, ile zostało z dziennego limitu). Formularz działa bez JS (POST-redirect-GET) |
 | **Dywidendy** | Słupki „rok po roku" (brutto vs netto) *(od 0.12.0)*, formularz dodania wypłaty *(od 0.5.0 z podglądem na żywo — kurs NBP, podatek, dopłata w PL — pod polami)*, jedno źródło prawdy z kursem NBP zamrożonym na Record Date, kafelki podsumowania **w PLN** z EUR jako podlinią *(od 0.5.0 — dawniej licznik EUR na kursach bieżących nie zgadzał się z tabelą poniżej)*, historia (sortowalna *od 0.12.0*) z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji, **Kalendarz dywidend** *(od 0.14.0 — wykres + tabela zdarzeń potwierdzone/zapowiedziane/szacowane, horyzont 1/3/5 lat)*, **Ogłoszony harmonogram** *(od 0.14.0 — formularz na całą roczną uchwałę WZA, do 4 rat naraz, automatyczne dopasowanie do realnej wypłaty)*, **Założenia prognozy** *(od 0.14.0 — stawka na akcję z pasmem, liczba wypłat rocznie, ile realnych/szacunkowych wypłat użyto)* |
@@ -352,6 +371,9 @@ prefiks niezależnie od nazwy encji).
 | `sensor.nokia_tracker_twr_pct` | Time-weighted return — neutralizuje moment wpłat, jedyna miara porównywalna z indeksem wprost |
 | `sensor.nokia_tracker_fx_effect_pln` | Część zysku wynikająca WYŁĄCZNIE ze zmiany kursu EUR/PLN od dnia nabycia każdego lotu do dziś |
 | `sensor.nokia_tracker_benchmark_omxh25_counterfactual_pln` | Wartość dziś, gdyby te same wpłaty własne (co do dnia i kwoty) poszły w OMXH25 zamiast Nokii |
+
+Ryzyko portfela *(od 0.16.0)* — Sharpe ratio, zmienność annualizowana i maksymalny drawdown na
+karcie „Ryzyko portfela" na Wynikach; brak nowych sensorów MQTT dla tej fali, tylko UI.
 
 ### Doradca planu pracowniczego *(od 0.10.0)*
 

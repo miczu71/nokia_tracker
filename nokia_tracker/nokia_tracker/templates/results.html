@@ -54,6 +54,20 @@
   </p>
 </div>
 
+<div class="card">
+  <div class="card-title">Ryzyko portfela</div>
+  <div class="grid stats">
+    {{ stat('Sharpe ratio', sharpe|qty(2)) }}
+    {{ stat('Zmienność (annualizowana)', volatility_pct|pct, '%') }}
+    {{ stat('Maksymalny spadek (drawdown)', max_dd_pct|pct, '%') }}
+  </div>
+  <p class="muted">
+    Metryki ryzyka liczone dla pojedynczej spółki pracowniczej są z natury gorsze
+    (brak dywersyfikacji) niż dla zdywersyfikowanego portfela lub indeksu — punkt
+    odniesienia, nie ocena.
+  </p>
+</div>
+
 {% if attribution %}
 <div class="card">
   <div class="card-title">Atrybucja zysku</div>

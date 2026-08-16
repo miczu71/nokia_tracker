@@ -126,3 +126,29 @@ def test_add_dividend_pl_tax_due_left_null_for_krok14(conn):
         reinvested_eur=1.20, purchase_price_eur=6.3015, purchased_shares=0.19028)
     row = conn.execute("SELECT * FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
     assert row["pl_tax_due_pln"] is None
+
+
+# --- is_estimated(): krok 30 (0.14.0) - jedyny sygnał "ten wiersz to szacunek
+# odtworzony z Vested Dividend Shares", współdzielony z tax/pit38.py::_section_g ---
+
+def test_is_estimated_true_for_row_with_notes(conn):
+    dividend_id = taxdiv.add_dividend(
+        conn, record_date="2023-02-20", entitled_quantity=0.04,
+        gross_eur=0.14, taxes_eur=0.049, fees_eur=0.0,
+        notes="SZACUNEK: 35% u źródła założone")
+    row = conn.execute("SELECT * FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    assert taxdiv.is_estimated(row) is True
+
+
+def test_is_estimated_false_for_row_without_notes(conn):
+    dividend_id = taxdiv.add_dividend(
+        conn, record_date="2026-01-30", entitled_quantity=61.4916,
+        gross_eur=1.84, taxes_eur=0.64, fees_eur=0.0)
+    row = conn.execute("SELECT * FROM dividends WHERE id = ?", (dividend_id,)).fetchone()
+    assert taxdiv.is_estimated(row) is False
+
+
+def test_is_estimated_accepts_plain_dict_too():
+    assert taxdiv.is_estimated({"notes": "SZACUNEK"}) is True
+    assert taxdiv.is_estimated({"notes": None}) is False
+    assert taxdiv.is_estimated({"notes": ""}) is False

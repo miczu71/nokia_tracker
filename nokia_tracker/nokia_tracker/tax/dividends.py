@@ -126,6 +126,16 @@ def backfill_missing_dividend_rates(conn: sqlite3.Connection) -> int:
     return filled
 
 
+def is_estimated(row) -> bool:
+    """CZYSTA: `row` (sqlite3.Row lub dict) jest wierszem odtworzonym z "Vested
+    Dividend Shares" (brutto/podatek u źródła policzone z założenia
+    `finnish_withholding_pct`, nie zmierzone z wyciągu — patrz
+    importers/computershare_pdf.py:589-625) wtedy i tylko wtedy, gdy `notes` jest
+    niepuste. Ten sam sygnał, którego już używa `tax/pit38.py::_section_g` — jedna
+    definicja "to szacunek", nie dwie rozjeżdżające się z czasem (krok 30, 0.14.0)."""
+    return bool(row["notes"])
+
+
 def compute_dividend_tax(gross_eur: float, withholding_pct: float,
                          treaty_withholding_pct: float,
                          pl_capital_gains_tax_pct: float) -> dict:

@@ -63,9 +63,10 @@ def _section_g(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
     result = dict(_EMPTY_SECTION_G)
     result["dividend_count"] = len(rows)
     # Krok 20: dywidendy z odtworzonym brutto/podatkiem u źródła (Vested Dividend
-    # Shares, lata bez sekcji transakcyjnej — patrz importers/computershare_pdf.py)
-    # mają niepuste `notes` — jedyny sygnał "to szacunek", nie zmierzona wartość.
-    result["has_estimated"] = any(row["notes"] for row in rows)
+    # Shares, lata bez sekcji transakcyjnej — patrz importers/computershare_pdf.py).
+    # Krok 30: sygnał "to szacunek" wydzielony do taxdiv.is_estimated() (współdzielony
+    # z dividend_outlook.py, który go potrzebuje do tego samego rozstrzygnięcia).
+    result["has_estimated"] = any(taxdiv.is_estimated(row) for row in rows)
     for row in rows:
         result["gross_pln"] += row["gross_pln"] or 0.0
         t = taxdiv.compute_dividend_tax_pln(row, cfg)

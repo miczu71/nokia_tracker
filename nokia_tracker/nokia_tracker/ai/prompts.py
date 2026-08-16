@@ -135,19 +135,28 @@ CHAT_INTENT_SCHEMA = {
             "description": "Rozpoznana intencja pytania użytkownika o własny portfel/podatki",
             "enum": CHAT_INTENTS,
         },
+        # Krok 29 (naprawa 0.13.1, live): `"type": [X, "null"]` (nullable union)
+        # zmierzone jako niekompatybilne z Gemini structured output — HTTP 400
+        # "Proto field is not repeating, cannot start list" na DOKŁADNIE tej
+        # ścieżce (properties[1] = params -> properties[0] = quantity -> type),
+        # zarówno przez freellmapi (routing na Google) jak i bezpośrednio przez
+        # ai/gemini.py. Żaden inny schemat w tym pliku nigdy nie używał tego
+        # wzorca — wracamy do sprawdzonego: pojedynczy typ + brak w `required`
+        # (ten sam wzorzec co SCORE_NEWS_SCHEMA's opcjonalne pole), model po
+        # prostu POMIJA parametr, którego pytanie nie zawiera.
         "params": {
             "type": "object",
             "properties": {
-                "quantity": {"type": ["number", "null"],
-                            "description": "Liczba akcji, jeśli pytanie jej dotyczy, inaczej null"},
-                "year": {"type": ["integer", "null"],
-                        "description": "Rok podatkowy, jeśli pytanie go dotyczy, inaczej null"},
-                "price_eur": {"type": ["number", "null"],
-                             "description": "Cena akcji w EUR, jeśli podana w pytaniu, inaczej null"},
-                "horizon": {"type": ["string", "null"],
-                           "description": "Horyzont czasowy (np. 'rok', 'kwartał'), inaczej null"},
+                "quantity": {"type": "number",
+                            "description": "Liczba akcji, jeśli pytanie jej dotyczy"},
+                "year": {"type": "integer",
+                        "description": "Rok podatkowy, jeśli pytanie go dotyczy"},
+                "price_eur": {"type": "number",
+                             "description": "Cena akcji w EUR, jeśli podana w pytaniu"},
+                "horizon": {"type": "string",
+                           "description": "Horyzont czasowy (np. 'rok', 'kwartał'), jeśli podany"},
             },
-            "required": ["quantity", "year", "price_eur", "horizon"],
+            "required": [],
             "additionalProperties": False,
         },
         "confidence": {"type": "number", "description": "Pewność rozpoznania intencji, 0..1"},
@@ -177,8 +186,8 @@ def chat_intent_prompt(question: str, context: dict) -> str:
         "Rozpoznaj intencję pytania użytkownika o WŁASNY portfel akcji Nokia Oyj "
         "(NOKIA.HE) i polskie rozliczenie podatkowe akcji pracowniczych (ESPP/LTI). "
         "Wybierz DOKŁADNIE JEDNĄ intencję z enumeracji w schemacie i wyciągnij z "
-        "pytania parametry (ilość akcji, rok, cena, horyzont) — zostaw null, gdy "
-        "dany parametr nie pada wprost w pytaniu, NIGDY nie zgaduj wartości liczbowej.\n\n"
+        "pytania parametry (ilość akcji, rok, cena, horyzont) — POMIŃ pole w 'params', "
+        "gdy dany parametr nie pada wprost w pytaniu, NIGDY nie zgaduj wartości liczbowej.\n\n"
         f"Dziś: {context['today']}. Lata z danymi podatkowymi w systemie: {years}. "
         f"Aktywna polityka kosztu nabycia: {context.get('cost_basis_policy', 'own_only')}.\n\n"
         f"Pytanie użytkownika: {question}\n\n"

@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.13.1] - 2026-08-16
+
+Naprawa realnego błędu znalezionego na żywo, tego samego dnia co 0.13.0 — pierwsze prawdziwe
+pytanie zadane przez `/asystent` na produkcji nie rozpoznało intencji, mimo poprawnego klucza i
+działającego routera.
+
+### Naprawiono
+- **`CHAT_INTENT_SCHEMA` łamał się na Gemini structured output** — `params.*` używały wzorca
+  `"type": [X, "null"]` (nullable union) do wyrażenia opcjonalnych parametrów. Gemini (zarówno
+  bezpośrednio przez `ai/gemini.py`, jak i przez router freellmapi routing na Google) zwracał
+  HTTP 400 `"Proto field is not repeating, cannot start list"` DOKŁADNIE na tej ścieżce —
+  `response_schema` Gemini nie wspiera typu jako listy. Skutek na produkcji: `local` i `gemini`
+  padały jednakowo (ten sam schemat, ten sam backend), `anthropic` (trzecie ogniwo) też odpadał —
+  ale z zupełnie innego, niezwiązanego powodu (wyczerpane środki na koncie, nie błąd kodu) —
+  więc każde pytanie kończyło się jako `intent="inne"`.
+- Żaden inny schemat w `ai/prompts.py` nigdy nie używał nullable-union — wzorzec był unikalny dla
+  tego jednego schematu, wprowadzony w 0.13.0 bez sprawdzenia na żywym Gemini przed wydaniem.
+  Naprawione powrotem do sprawdzonego wzorca: pojedynczy typ + pominięcie z `required` (jak
+  opcjonalne pole w `SCORE_NEWS_SCHEMA`) — model po prostu pomija parametr, którego pytanie nie
+  zawiera, zamiast wpisywać `null`.
+
+904 testy (bez zmiany liczby — poprawka schematu, nie nowej funkcji).
+
 ## [0.13.0] - 2026-08-16
 
 Krok 29 (`docs/PLAN_KROK_29_asystent.md`), szósta fala z `docs/ROADMAP.md` — Asystent: czat nad

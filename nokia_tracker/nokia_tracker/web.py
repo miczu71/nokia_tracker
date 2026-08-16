@@ -1340,20 +1340,6 @@ def create_app(db_path: str) -> Flask:
                               if row["sale_nbp_rate_date"] else None),
         }
 
-    def _years_with_data(conn) -> list[int]:
-        """Lata mające jakiekolwiek zdarzenie podatkowe (sprzedaż LUB dywidenda)
-        — krok 16 (§8.3): selektor roku na `/pit38` ma pokazywać lata, w
-        których jest co przeglądać, zamiast gołego pola liczbowego, w które
-        łatwo wpisać rok bez żadnych danych i patrzeć na same zera. Bieżący
-        rok jest zawsze w liście, nawet bez zdarzeń — użytkownik oczekuje go
-        jako domyślnej opcji."""
-        rows = conn.execute(
-            "SELECT strftime('%Y', sale_date) AS y FROM sales "
-            "UNION SELECT strftime('%Y', pay_date) AS y FROM dividends").fetchall()
-        years = {int(r["y"]) for r in rows if r["y"]}
-        years.add(datetime.now().year)
-        return sorted(years, reverse=True)
-
     @app.context_processor
     def _inject_nav_tax_year():
         """Krok 28.3 (docs/PLAN_KROK_28_ux_mobile.md §3): jeden selektor roku w
@@ -1369,7 +1355,7 @@ def create_app(db_path: str) -> Flask:
         `cfg['tax_year']` albo rok bieżący)."""
         conn = _conn()
         try:
-            return {"nav_tax_years": _years_with_data(conn),
+            return {"nav_tax_years": taxpit38.years_with_data(conn),
                     "nav_selected_year": request.args.get("year", type=int)}
         finally:
             conn.close()

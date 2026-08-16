@@ -19,10 +19,27 @@ NIE po dacie nabycia lotu, bo lot mógł być kupiony w innym roku niż sprzedan
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime
 
 from . import dividends as taxdiv
 from . import losses as taxlosses
 from . import policy as taxpolicy
+
+
+def years_with_data(conn: sqlite3.Connection) -> list[int]:
+    """Lata mające jakiekolwiek zdarzenie podatkowe (sprzedaż LUB dywidenda)
+    — krok 16 (§8.3): selektor roku na `/pit38` ma pokazywać lata, w
+    których jest co przeglądać, zamiast gołego pola liczbowego, w które
+    łatwo wpisać rok bez żadnych danych i patrzeć na same zera. Bieżący
+    rok jest zawsze w liście, nawet bez zdarzeń — użytkownik oczekuje go
+    jako domyślnej opcji. Wyciągnięte z web.py w kroku 29 — ai/chat.py
+    (rozpoznawanie roku z pytania) potrzebuje tej samej listy."""
+    rows = conn.execute(
+        "SELECT strftime('%Y', sale_date) AS y FROM sales "
+        "UNION SELECT strftime('%Y', pay_date) AS y FROM dividends").fetchall()
+    years = {int(r["y"]) for r in rows if r["y"]}
+    years.add(datetime.now().year)
+    return sorted(years, reverse=True)
 
 _EMPTY_SECTION_G = {
     "dividend_count": 0,

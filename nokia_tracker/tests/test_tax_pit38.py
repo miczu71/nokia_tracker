@@ -167,6 +167,20 @@ def test_annual_report_empty_year_has_zeroed_sections_not_errors(conn):
     assert report["policies"]["own_only"]["revenue_pln"] == 0.0
 
 
+def test_years_with_data_includes_current_year_even_when_empty(conn):
+    from datetime import datetime
+    assert pit38.years_with_data(conn) == [datetime.now().year]
+
+
+def test_years_with_data_includes_sale_and_dividend_years_sorted_desc(conn):
+    lots.add_lot(conn, "2020-01-10", "own", 10, 10.0)
+    lots.record_sale(conn, "2020-06-01", 5, 12.0)
+    _add_dividend(conn, "2022-03-15")
+    years = pit38.years_with_data(conn)
+    assert 2020 in years and 2022 in years
+    assert years == sorted(years, reverse=True)
+
+
 def _make_2020_loss(conn, cfg):
     # kupno 10 szt @10 EUR, sprzedaż 10 szt @5 EUR -> strata
     # (10*10 - 10*5) * kurs stub 4.0 = 200 PLN pod polityką own_only.

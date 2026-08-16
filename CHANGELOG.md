@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.13.0] - 2026-08-16
+
+Krok 29 (`docs/PLAN_KROK_29_asystent.md`), szósta fala z `docs/ROADMAP.md` — Asystent: czat nad
+własnymi danymi. Ostatnia fala funkcjonalna z pierwotnej roadmapy; 1.0.0 zostaje zarezerwowane
+(zgodnie z pierwotną decyzją) na wydanie po jednym pełnym sezonie rozliczeniowym na tym silniku.
+
+### Dodano
+- **Strona `/asystent`** + pole szybkiego pytania na pulpicie — pytanie w naturalnym języku
+  polskim, trójstopniowo: AI #1 rozpoznaje intencję (jeden z 11 tematów, `CHAT_INTENT_SCHEMA`),
+  Python liczy odpowiedź ISTNIEJĄCYM, już przetestowanym silnikiem (zero nowej matematyki), AI #2
+  (opcjonalna, `ai_chat_narration_enabled`) ubiera policzone liczby w zdanie po polsku. Liczby
+  renderuje szablon z wyniku silnika, nigdy tekst modelu — halucynacja kwoty strukturalnie
+  niemożliwa. Wymuszone przez `ai/provider.py::analyze()`, który obsługuje tylko ustrukturyzowany
+  JSON, bez pętli tool-calling.
+- **11 intencji**, każda deleguje do jednej istniejącej funkcji: podatek ze sprzedaży
+  (`tax/whatif.py::simulate_sale`), ile mogę sprzedać (`tax/lots.py`/`tax/grants.py`), vesting
+  (`tax/grants.py::vesting_timeline`), ile zarobiłem (`portfolio.py`/`tax/policy.py`), dywidendy
+  w roku i PIT za rok (`tax/pit38.py::annual_report`), koszt sprzedaży teraz i kiedy sprzedać
+  (`advisor.py`), porównanie z benchmarkiem (`sensors.py::results_values`), straty z lat
+  ubiegłych (`tax/losses.py`), koncentracja majątku (`advisor.py::overview`). Walidacja paramów
+  przed silnikiem, uczciwa porażka na `InsufficientLotsError`/`CostBasisMissingError` zamiast
+  zmyślonej liczby, nieznana intencja z modelu → „inne”, nigdy wyjątek do użytkownika.
+- **Karta „Stan AI”** na `/ustawienia` + pasek nad `/asystent` (`ai/status.py`) — domknięcie długu
+  z roadmapy 0.8.1: circuit breaker i liczniki wywołań istniały od kroku 6/7, ale nie miały
+  żadnego konsumenta w UI. Per ogniwo: wywołania/tokeny dziś, limit i ile zostało, stan obwodu,
+  ostatni błąd; plus osiągalność lokalnego routera freellmapi.
+- 3 nowe ustawienia: `ai_chat_enabled`, `ai_chat_narration_enabled`, `ai_max_calls_per_day_local`.
+- Migracja bazy v9: `chat_log` (log pytań/intencji/odpowiedzi, przycinany do ostatnich 200).
+
+### Naprawiono
+- **Dzienny limit AI był globalny, nie per ogniwo** — `ai/provider.py::analyze()` sprawdzał
+  wspólną pulę RAZ, przed całą pętlą łańcucha, więc wyczerpanie limitu płatnego `gemini`/
+  `anthropic` blokowało też darmowy lokalny router `freellmapi`, mimo osobnego klucza i osobnych
+  pieniędzy. Teraz limit sprawdzany per ogniwo, w pętli — wyczerpanie jednego pozwala przejść do
+  następnego.
+
+### Bez zmian (celowo)
+- Zero nowych sensorów MQTT i zero zmian w `tax/*.py` — czat i status AI są warstwą UI nad
+  istniejącymi silnikami i licznikami.
+- Statystyki panelu admina routera freellmapi (`/api/health`, `/api/analytics/summary`) —
+  zmierzone empirycznie: wymagają osobnej sesji e-mail+hasło, klucz Bearer używany przez
+  `/v1/chat/completions` ich nie otwiera. Kod mimo to próbuje tym kluczem i degraduje czysto do
+  braku danych, bez dokładania kolejnego sekretu do opcji dodatku.
+
+904 testy (831→904, TDD przez wszystkie 8 podkroków).
+
 ## [0.12.0] - 2026-08-16
 
 Krok 28 (`docs/PLAN_KROK_28_ux_mobile.md`), piąta fala z `docs/ROADMAP.md` — UX/mobile

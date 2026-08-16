@@ -196,7 +196,15 @@ nawigacji) — nowe statyki muszą trzymać ten sam wzorzec, zgodnie z regułą 
 
 ---
 
-### 1.0.0 (krok 29) — Asystent: czat nad własnymi danymi  · ~3–4 dni
+### ~~1.0.0~~ 0.13.0 (krok 29) — Asystent: czat nad własnymi danymi  · WYDANE 2026-08-16
+
+> **Wydane jako 0.13.0, nie 1.0.0.** Numer wersji z decyzji użytkownika przy planowaniu tego
+> kroku (`docs/PLAN_KROK_29_asystent.md`): 1.0.0 pozostaje zarezerwowane, zgodnie z pierwotną
+> decyzją tej roadmapy ("po jednym pełnym sezonie rozliczeniowym na nowym silniku"), na wydanie
+> PO tej fali, nie zamiast niej. Zakres poszerzony o 4 intencje spoza pierwotnej listy (pit_za_rok,
+> straty_z_lat_ubieglych, koncentracja_majatku, kiedy_sprzedac) oraz o naprawę realnego błędu
+> (dzienny limit AI był globalny zamiast per ogniwo — blokował darmowy `local` po wyczerpaniu puli
+> płatnych ogniw) i kartę „Stan AI” (dług z fali 0.8.1). Zobacz `CHANGELOG.md` [0.13.0].
 
 Ostatnia fala, bo ma sens dopiero gdy jest o czym rozmawiać (wyniki, plan, straty).
 

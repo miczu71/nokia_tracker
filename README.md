@@ -10,17 +10,51 @@ Assistant przez MQTT Discovery — plus pełny web UI na ingressie.
 
 Pełny projekt architektoniczny: [`docs/BLUEPRINT.md`](docs/BLUEPRINT.md).
 
-**Status:** wydanie **0.9.0** — druga fala z [`docs/ROADMAP.md`](docs/ROADMAP.md): wyniki
-(XIRR, TWR, atrybucja zysku, benchmark). Nowa strona **Wyniki** (w grupie „Portfel”) pokazuje
-**XIRR na wpłatach własnych** (stopa zwrotu z realnej gotówki wydanej na akcje — dopasowanie
-ESPP i transze LTI liczą się tylko do wartości końcowej, jako darmowy przypływ, dlatego wynik
-bywa bardzo wysoki i to jest poprawne) obok **TWR** (neutralizuje moment wpłat, jedyna miara
-uczciwie porównywalna z indeksem), **atrybucję zysku** na pięć składników — zmiana kursu akcji,
-dopłata ESPP, akcje LTI, dywidendy (gotówka + DRIP), efekt walutowy EUR/PLN — sumujących się co
-do grosza z zyskiem całkowitym, **krzywą wartości portfela** (PLN, od pierwszego lotu) na
-wykresie razem z **kontrfaktycznym OMXH25** (te same wpłaty, gdyby poszły w indeks), i tabelę
-zwrotu rok po roku. 4 nowe sensory MQTT. Krzywa wartości liczona nocnym jobem (bez sieci, z już
-zebranych danych), gęsta seria kursów NBP dociągana przyrostowo osobnym jobem.
+**Status:** wydanie **0.13.0** — szósta fala z [`docs/ROADMAP.md`](docs/ROADMAP.md): asystent,
+czat nad własnymi danymi. Nowa strona **Asystent** (w grupie „Portfel”, plus pole szybkiego
+pytania na pulpicie) odpowiada po polsku na pytania w naturalnym języku — „ile zapłacę podatku
+sprzedając 200 akcji?”, „kiedy mam najbliższy vesting?”, „ile zarobiłem?” — trójstopniowo: AI
+tylko rozpoznaje intencję pytania (jedna z 11: podatek ze sprzedaży, ile mogę sprzedać, vesting,
+ile zarobiłem, dywidendy, koszt sprzedaży teraz, porównanie z benchmarkiem, PIT za rok, straty z
+lat ubiegłych, koncentracja majątku, kiedy sprzedać), **Python liczy odpowiedź istniejącym,
+już przetestowanym silnikiem** (zero nowej matematyki), a druga AI (opcjonalna, wyłączalna)
+tylko ubiera policzone liczby w zdanie — liczby renderuje szablon, nigdy tekst modelu, więc
+halucynacja kwoty jest strukturalnie niemożliwa. Przy okazji naprawiony realny błąd: dzienny
+limit wywołań AI był liczony wspólnie dla wszystkich ogniw, więc wyczerpanie limitu płatnego
+`gemini`/`anthropic` blokowało też darmowy lokalny router `freellmapi` — teraz każde ogniwo ma
+własną pulę, widoczną (razem ze stanem obwodu każdego ogniwa) na nowej karcie „Stan AI” na
+Ustawieniach. Zero nowych sensorów MQTT i zero zmian w silniku podatkowym w tej fali. 1.0.0
+zarezerwowane, zgodnie z pierwotną decyzją z roadmapy, na wydanie po jednym pełnym sezonie
+rozliczeniowym na tym silniku — nie od razu po tej fali.
+
+Wcześniej (0.12.0): piąta fala — UX/mobile + wykresy. Globalny przełącznik waluty PLN/EUR w
+nagłówku, tabele zamieniające się w karty poniżej 430px, globalny selektor roku podatkowego
+(zastąpił trzy zdublowane kopie), trzy nowe wykresy Chart.js (donut portfela, słupki dywidend
+rok po roku, waterfall Poz. C na PIT-38), sekcja „Dziś warto wiedzieć” na pulpicie (deterministy­
+czna, bez AI). Przy okazji znaleziony i naprawiony realny błąd: kontrfaktyczny benchmark OMXH25
+liczył się w EUR, ale podpisywał i publikował jako PLN (zawyżenie/zaniżenie ~4x) od kroku 25.
+
+Wcześniej (0.11.0): czwarta fala — straty z lat ubiegłych (art. 9 ust. 3-3a ustawy o PIT, silnik
+per rok per polityka kosztu, 5-letnie okno odliczeń) i kreator rozliczenia rocznego
+(`/pit38/kreator` — checklista samosprawdzająca się z bazy, zamknięcie/odblokowanie roku z
+migawką kwoty do zapłaty) oraz optymalizator momentu sprzedaży na `/plan` („dziś czy 2 stycznia”).
+
+Wcześniej (0.10.0): trzecia fala — doradca planu pracowniczego. Nowa strona **Plan**: ile tracę
+sprzedając dziś (przepadek dopasowania ESPP z kwotą, nie tylko ostrzeżeniem), harmonogram
+vestingu na osi czasu, planer ESPP (wpłata × miesiące × cena → akcje/podatek), ryzyko koncentracji
+majątku w akcjach pracodawcy.
+
+Wcześniej (0.9.0): druga fala z roadmapy — wyniki (XIRR, TWR, atrybucja zysku, benchmark). Nowa
+strona **Wyniki** (w grupie „Portfel”) pokazuje **XIRR na wpłatach własnych** (stopa zwrotu z
+realnej gotówki wydanej na akcje — dopasowanie ESPP i transze LTI liczą się tylko do wartości
+końcowej, jako darmowy przypływ, dlatego wynik bywa bardzo wysoki i to jest poprawne) obok
+**TWR** (neutralizuje moment wpłat, jedyna miara uczciwie porównywalna z indeksem), **atrybucję
+zysku** na pięć składników — zmiana kursu akcji, dopłata ESPP, akcje LTI, dywidendy (gotówka +
+DRIP), efekt walutowy EUR/PLN — sumujących się co do grosza z zyskiem całkowitym, **krzywą
+wartości portfela** (PLN, od pierwszego lotu) na wykresie razem z **kontrfaktycznym OMXH25**
+(te same wpłaty, gdyby poszły w indeks), i tabelę zwrotu rok po roku. 4 nowe sensory MQTT.
+Krzywa wartości liczona nocnym jobem (bez sieci, z już zebranych danych), gęsta seria kursów
+NBP dociągana przyrostowo osobnym jobem.
 
 Wcześniej (0.8.1): pierwsza fala z roadmapy — kopia zapasowa i przywracanie danych. Strona
 **Kopia zapasowa** (w grupie „Dane”) eksportuje pełny zrzut bazy (loty, sprzedaże, granty,
@@ -92,20 +126,21 @@ się poziomo; wybrane tabele (Loty, Dywidendy, Newsy) sortowalne klikiem w nagł
 
 | Strona | Zawartość |
 |---|---|
-| **Pulpit** | Sticky pasek *(od 0.12.0)* z ceną i wartością portfela widoczny cały czas przy przewijaniu; sekcja „Dziś warto wiedzieć” *(od 0.12.0, deterministyczna — bez AI)* — zmiana kursu dziś, najbliższy vesting, sygnał podatkowy (tylko gdy jest i dostępna strata z lat ubiegłych, i zysk w bieżącym roku); kurs (EUR, **od 0.5.0** z linią `≈ X zł` po kursie bieżącym), zmiana dzienna, sesja, trend, RSI, wykres cenowy z konfigurowalnym zakresem (1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany), karta portfela **(od 0.8.0 jako kafelki: hero „Wartość całkowita” na górze [PLN duże, EUR jako druga linia] nad trzema kubełkami — „Wolne” (można sprzedać), „Z ograniczeniem” (widoczny tylko gdy dotyczy), „Zablokowane” (nienabyte dopasowania ESPP/transze LTI, z najbliższą datą dostępności) — plus pasek wyniku (koszt bazowy/P&L/całkowity zwrot/dywidendy netto) i ostrzeżenie o zaległych transzach; liczby z separatorem tysięcy i ilości skrócone do 2 miejsc)**, donut trzech kubełków portfela *(od 0.12.0)*, każda kwota EUR z linią PLN i jawnym rozgraniczeniem od kursu NBP podatkowego, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz” |
+| **Pulpit** | Sticky pasek *(od 0.12.0)* z ceną i wartością portfela widoczny cały czas przy przewijaniu; sekcja „Dziś warto wiedzieć” *(od 0.12.0, deterministyczna — bez AI)* — zmiana kursu dziś, najbliższy vesting, sygnał podatkowy (tylko gdy jest i dostępna strata z lat ubiegłych, i zysk w bieżącym roku); kurs (EUR, **od 0.5.0** z linią `≈ X zł` po kursie bieżącym), zmiana dzienna, sesja, trend, RSI, wykres cenowy z konfigurowalnym zakresem (1D/1W/1M/3M/6M/1R/3L/5L/MAX, wybór zapamiętany), karta portfela **(od 0.8.0 jako kafelki: hero „Wartość całkowita” na górze [PLN duże, EUR jako druga linia] nad trzema kubełkami — „Wolne” (można sprzedać), „Z ograniczeniem” (widoczny tylko gdy dotyczy), „Zablokowane” (nienabyte dopasowania ESPP/transze LTI, z najbliższą datą dostępności) — plus pasek wyniku (koszt bazowy/P&L/całkowity zwrot/dywidendy netto) i ostrzeżenie o zaległych transzach; liczby z separatorem tysięcy i ilości skrócone do 2 miejsc)**, donut trzech kubełków portfela *(od 0.12.0)*, każda kwota EUR z linią PLN i jawnym rozgraniczeniem od kursu NBP podatkowego, sentyment i briefing AI, rekomendacja AI, prognozy 1w/1m/12m, ostatnie alerty, przycisk „Przeanalizuj teraz”, pole szybkiego pytania do **Asystenta** *(od 0.13.0)* |
 | **Portfel** | Stan posiadania — automatycznie z lotów, gdy istnieją (FIFO), z liniami PLN; formularz ręczny zwinięty do `<details>` jako fallback, gdy loty istnieją |
 | **Loty** | Trzy polityki kosztu obok siebie z podstawą prawną, formularz dodania lotu i formularz rejestracji sprzedaży — oba *(od 0.5.0)* z podglądem na żywo pod polami (kurs NBP, koszt/przychód/podatek PLN, plan FIFO), zanim klikniesz przycisk; odrzuca daty przyszłe; tabela wszystkich lotów z kursem NBP zamrożonym per lot, link do rozliczenia sprzedaży |
 | **Sprzedaże** | Karta „Podsumowanie" z KPI za wybrany rok (przychód/koszt/dochód/podatek/na rękę); rejestr transakcji — jeden wiersz na sprzedaż z kluczowymi kwotami i przyciskiem „Cofnij" *(od 0.5.0 widocznym od razu, nie tylko po rozwinięciu)*, klik rozwija pełne rozbicie FIFO (który lot, ile z niego wzięto, wyprowadzenie kursu NBP nabycia i sprzedaży z linkiem do tabeli, kwoty EUR/PLN) |
 | **Granty** | Harmonogram ESPP (Matching Shares) i LTI (RS AWARD, transze pogrupowane per grant) z wyciągów Computershare, pasek kafelków *(od 0.5.0)* niezvestowane/następny vesting, status transz (oczekuje/nabyte/zaległe), **wartość dziś** (bieżąca cena/kurs) i **wartość zrealizowana** (cena i kurs NBP z dnia faktycznej sprzedaży, EUR i PLN) per transza |
 | **Wyniki** *(od 0.9.0)* | XIRR na wpłatach własnych i TWR obok siebie, atrybucja zysku na 5 składników (kurs akcji / dopłata ESPP / LTI / dywidendy / efekt EUR-PLN, sumujące się co do grosza), krzywa wartości portfela na wykresie razem z kontrfaktycznym OMXH25 — **przełącznik PLN/EUR *(od 0.12.0)*** przerysowuje wykres i tabelę bez przeładowania strony, widok do druku *(od 0.12.0)*, tabela zwrotu rok po roku |
 | **Plan** *(od 0.10.0)* | Widok do druku *(od 0.12.0)*. Doradca planu pracowniczego — cztery karty: „Ile tracę, sprzedając dziś" (przepadające dopasowanie ESPP proporcjonalnie do sprzedanych sztuk, z nogą podatkową dla sprzedaży całego ograniczonego pakietu), „Harmonogram vestingu" (oś czasu transz oczekujących, kafelki kwartał/rok/przyszły rok, zaległe osobno), „Planer ESPP" (wpłata × miesiące × cena → akcje własne/dopasowania/podatek, z podglądem na żywo i chipami scenariusza cenowego ±20%), „Ryzyko koncentracji" (udział akcji pracodawcy w majątku vs próg ostrzeżenia), „Kiedy sprzedać — dziś czy 2 stycznia" *(od 0.11.0 — różnica podatku po odliczeniu dostępnej straty vs różnica przepadku dopasowania, rekomendacja deterministyczna)* |
+| **Asystent** *(od 0.13.0)* | Pytanie w naturalnym języku polskim → odpowiedź licząca istniejący silnik aplikacji (zero nowej matematyki), AI tylko rozpoznaje intencję i (opcjonalnie, wyłączalnie) ubiera policzone liczby w zdanie — nigdy odwrotnie. Chip „Zrozumiałem: …” nad odpowiedzią, link do strony ze szczegółami, historia ostatnich pytań, pasek „Stan AI” (aktywne ogniwo, ile zostało z dziennego limitu). Formularz działa bez JS (POST-redirect-GET) |
 | **Dywidendy** | Słupki „rok po roku" (brutto vs netto) *(od 0.12.0)*, formularz dodania wypłaty *(od 0.5.0 z podglądem na żywo — kurs NBP, podatek, dopłata w PL — pod polami)*, jedno źródło prawdy z kursem NBP zamrożonym na Record Date, kafelki podsumowania **w PLN** z EUR jako podlinią *(od 0.5.0 — dawniej licznik EUR na kursach bieżących nie zgadzał się z tabelą poniżej)*, historia (sortowalna *od 0.12.0*) z kwotami EUR **i** PLN, numerem tabeli NBP i kolumną reinwestycji |
 | **Importy** | Upload wyciągu Computershare (PDF), kolejka konfliktów (rozbieżności vs poprzedni import, w tym potwierdzenie realnej sprzedaży Withhold-to-Cover), historia importów |
 | **PIT-38** | Karta „Do wpisania w deklarację" (poz. C + sekcja G + kafelek RAZEM DO ZAPŁATY) jako pierwszy ekran; waterfall Poz. C *(od 0.12.0 — przychód→koszt→dochód→strata odliczona (informacyjnie)→podatek→na rękę)*; niżej: 3 kafelki polityk kosztu (podstawa prawna w zwiniętym rozbiciu), sekcja G scalona z PIT/ZG (schowana, gdy brak dywidend w roku), symulacja „co jeśli sprzedam teraz" *(od 0.5.0 z wynikiem na żywo bez przeładowania strony)*, ślad obliczeń per lot pogrupowany po dacie sprzedaży, eksport CSV/XLSX (kwoty EUR + numery tabel) / widok do druku, kreator rozliczenia rocznego *(od 0.11.0 — `/pit38/kreator`, checklista samosprawdzająca się z bazy)*, karta strat z lat ubiegłych z linkiem do kreatora |
 | **Newsy** | Lista zebranych newsów z ocenami AI (sentyment, wpływ, teza), kolumna źródła *(od 0.5.0)*, sortowanie klikiem w nagłówek i „Pokaż więcej" *(od 0.12.0 — pierwsze 20 z 200)* |
 | **Prognozy** | Kafelek trafności historycznej (MAPE) *(od 0.5.0)*, historia prognoz 1w/1m/12m vs zrealizowana cena (EUR) |
 | **Kopia zapasowa** *(od 0.8.1)* | Eksport pełnego zrzutu bazy (ZIP: `nokia.db` + manifest + CSV lotów/sprzedaży/grantów/transz/dywidend), przywracanie z podglądem różnicy per tabela przed zapisem (nigdy nie nadpisuje w ciemno), informacja o ostatniej kopii nocnej i liczbie nierozstrzygniętych konfliktów importu |
-| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia, **stawki podatkowe** *(od 0.5.0 — podatek u źródła Finlandia, stawka traktatowa, Belka, domyślny rok podatkowy; dawniej tylko do odczytu)*, **doradca planu pracowniczego** *(od 0.10.0 — reszta majątku poza akcjami pracodawcy w PLN i próg ostrzeżenia o koncentracji, dla karty „Ryzyko koncentracji" na Plan)* |
+| **Ustawienia** | Łańcuch AI (primary/fallback, wybór modelu z listy pobranej z routera), progi alertów, usługa powiadomień, polityka kosztu nabycia, **stawki podatkowe** *(od 0.5.0 — podatek u źródła Finlandia, stawka traktatowa, Belka, domyślny rok podatkowy; dawniej tylko do odczytu)*, **doradca planu pracowniczego** *(od 0.10.0 — reszta majątku poza akcjami pracodawcy w PLN i próg ostrzeżenia o koncentracji, dla karty „Ryzyko koncentracji" na Plan)*, **asystent** *(od 0.13.0 — włącz/wyłącz, włącz/wyłącz narrację AI [1 zamiast 2 wywołań na pytanie], osobny dzienny limit dla darmowego lokalnego routera)*, karta **„Stan AI”** *(od 0.13.0 — per ogniwo: wywołania/tokeny dziś, ile zostało z limitu, stan obwodu, ostatni błąd; osiągalność lokalnego routera freellmapi)* |
 
 ## Odporność na niestabilne źródła
 
@@ -118,6 +153,11 @@ Newsy i AI ciągną z zewnętrznych usług, których dostępność nie jest gwar
 - **Łańcuch AI** (`ai/provider.py`): każde ogniwo (`local`/`gemini`/`anthropic`) ma circuit breaker
   — po 3 kolejnych porażkach z rzędu jest pomijane przez 30 minut zamiast wywoływane (i ponawiane)
   w każdym cyklu ocen newsów. Po 30 minutach obwód sam się zamyka i ogniwo dostaje kolejną szansę.
+- **Dzienny limit AI per ogniwo** *(od 0.13.0)* — wcześniej jeden wspólny licznik oznaczał, że
+  wyczerpanie limitu płatnego `gemini`/`anthropic` blokowało też darmowy lokalny router
+  `freellmapi`, mimo osobnego klucza i osobnych pieniędzy. Teraz `local` ma własną pulę
+  (`ai_max_calls_per_day_local` na Ustawieniach), a wyczerpanie limitu jednego ogniwa pozwala
+  łańcuchowi przejść do następnego zamiast rzucać błąd od razu.
 
 ## Silnik podatkowy PIT-38
 

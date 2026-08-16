@@ -50,6 +50,12 @@ def test_dashboard_shows_analyze_button(client):
     assert b"analyze-now" in resp.data
 
 
+def test_dashboard_shows_quick_question_field_submitting_to_asystent(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'action="/asystent"' in html
+    assert 'name="q"' in html
+
+
 # --- wykres pulpitu z konfigurowalnym zakresem (krok 16) ---
 
 def test_dashboard_shows_chart_range_buttons(client):

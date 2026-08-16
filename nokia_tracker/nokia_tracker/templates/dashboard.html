@@ -82,6 +82,20 @@
 </div>
 {% endif %}
 
+{#- Krok 29.7: skrót do asystenta — GET z ?q= (chat.py/web.py::assistant_get
+    liczy pytanie i przekierowuje do CZYSTEGO /asystent, więc odświeżenie
+    pulpitu po kliknięciu z powrotem nie powtarza wywołania AI). #}
+<div class="card no-print">
+  <form class="form" method="get" action="{{ url_for('assistant_get') }}">
+    <label>Zapytaj asystenta
+      <input type="text" name="q" placeholder="np. ile zapłacę podatku sprzedając 200 akcji?">
+    </label>
+    <div class="form-actions">
+      <button class="btn" type="submit">Zapytaj</button>
+    </div>
+  </form>
+</div>
+
 <div class="card">
   <div class="card-title">Portfel</div>
   {% set dividends_net_pln = (dividends.dividends_net_eur * fx_info.rate)

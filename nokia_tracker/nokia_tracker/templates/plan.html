@@ -1,10 +1,13 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, tax_disclaimer %}
+{% from "_macros.html" import stat, tax_disclaimer, empty_state %}
 {% block title %}Plan — Nokia Tracker{% endblock %}
 {% block content %}
 
 <div class="page-head">
   <h1>Plan</h1>
+  <div class="form-actions no-print">
+    <a class="btn" href="{{ url_for('plan_get', print=1) }}" target="_blank">Widok do druku</a>
+  </div>
 </div>
 
 <p class="disclaimer">
@@ -71,7 +74,7 @@
 <div class="card">
   <div class="card-title">Harmonogram vestingu</div>
   {% if not has_timeline %}
-  <p class="muted">Brak oczekujących transz — wszystko już zvestowało.</p>
+  {{ empty_state('Brak oczekujących transz — wszystko już zvestowało.') }}
   {% else %}
   <div class="grid stats">
     {{ stat('W tym kwartale', timeline.buckets.this_quarter.qty|qty, 'szt.',

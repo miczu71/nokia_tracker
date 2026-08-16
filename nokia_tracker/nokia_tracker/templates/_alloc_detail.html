@@ -8,7 +8,7 @@
    etykiety importowane BEZPOŚREDNIO tutaj (nie przez niejawny kontrakt na to, że
    wołający je wcześniej zdefiniował), żeby ten partial dało się włączyć z każdej
    strony bez ryzyka `UndefinedError`. #}
-{% from "_macros.html" import LOT_TYPE_LABELS, POLICY_LABELS %}
+{% from "_macros.html" import LOT_TYPE_LABELS, POLICY_LABELS, empty_state %}
 
 {% if detail.allocations %}
 <p class="fx-line">
@@ -90,5 +90,5 @@
   {% endif %}
 </p>
 {% else %}
-<p class="muted">Brak alokacji do pokazania.</p>
+{{ empty_state('Brak alokacji do pokazania.') }}
 {% endif %}

@@ -9,6 +9,12 @@ window.NT = (function () {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   }
 
+  function clearSkeleton(canvasEl) {
+    // Krok 28.6: zdejmuje .chart-skeleton z rodzica po narysowaniu wykresu.
+    const wrap = canvasEl.closest(".chart-wrap");
+    if (wrap) wrap.classList.remove("chart-skeleton");
+  }
+
   function formatLabel(ts, granularity) {
     const d = new Date(ts);
     if (granularity === "intraday") {
@@ -70,6 +76,7 @@ window.NT = (function () {
           },
         },
       });
+      clearSkeleton(el);
     }
 
     function load() {
@@ -313,6 +320,7 @@ window.NT = (function () {
         },
       },
     });
+    clearSkeleton(el);
 
     document.addEventListener("nt:currency-change", (ev) => {
       const next = ev.detail && ev.detail.currency;
@@ -382,6 +390,7 @@ window.NT = (function () {
         },
       },
     });
+    clearSkeleton(el);
   }
 
   function initWaterfallChart(canvasId, w) {
@@ -414,6 +423,81 @@ window.NT = (function () {
         },
       },
     });
+    clearSkeleton(el);
+  }
+
+  // Krok 28.6: wysokość <nav> zmienia się (flex-wrap: wrap na wąskich ekranach
+  // -> 2 rzędy) — sticky pasek pod nią (.sticky-summary na dashboard.html)
+  // potrzebuje dokładnego offsetu, nie stałej wartości. Ustawiane jako custom
+  // property na <html>, żeby CSS mógł go użyć w `top:` bez duplikowania w JS.
+  function initStickyNavOffset() {
+    const nav = document.querySelector(".nav");
+    if (!nav) return;
+    function update() {
+      document.documentElement.style.setProperty("--nav-h", nav.offsetHeight + "px");
+    }
+    update();
+    window.addEventListener("resize", update);
+  }
+
+  // Krok 28.6: "Pokaż więcej" (news.html) — wiersze poza pierwszymi N są
+  // renderowane server-side z `hidden` (SEO/no-JS: cały LIMIT jest w DOM,
+  // tylko klik go ujawnia; bez JS przycisk nic nie robi, ale nic się nie
+  // psuje — reszta strony działa). Klik ujawnia kolejną paczkę po `chunk`,
+  // chowa przycisk gdy nic już nie zostało.
+  function initShowMore(buttonId, containerId, extraClass, chunk) {
+    const btn = document.getElementById(buttonId);
+    const container = document.getElementById(containerId);
+    if (!btn || !container) return;
+    btn.addEventListener("click", () => {
+      const hidden = Array.from(container.querySelectorAll("." + extraClass + "[hidden]"));
+      hidden.slice(0, chunk).forEach((el) => el.removeAttribute("hidden"));
+      if (hidden.length <= chunk) btn.hidden = true;
+    });
+  }
+
+  // Krok 28.6: sortowanie kolumn klikiem w <th data-sort="text|num|date">.
+  // Zakres celowo węższy niż wszystkie tabele — POMIJA tabele z wierszami
+  // .row-detail/[colspan] (sales.html, grants.html: sortowanie przesunęłoby
+  // wiersz-rodzic od jego rozwiniętego szczegółu, bo oba to osobne <tr>).
+  // "num" wyciąga PIERWSZĄ liczbę z tekstu komórki (obsługuje np. "4,6899
+  // (2023-05-31)" -> 4.6899), przecinek jako separator dziesiętny (PL).
+  function initSortableTable(tableId) {
+    const table = document.getElementById(tableId);
+    if (!table) return;
+    const headers = Array.from(table.querySelectorAll("thead th[data-sort]"));
+    if (!headers.length) return;
+    const tbody = table.querySelector("tbody");
+
+    function cellValue(row, idx, type) {
+      const cell = row.children[idx];
+      const text = cell ? cell.textContent.trim() : "";
+      if (type === "num") {
+        const normalized = text.replace(/\u00a0/g, " ");
+        const m = normalized.match(/-?[\d ]+(?:[.,]\d+)?/);
+        if (!m) return -Infinity;
+        return parseFloat(m[0].replace(/ /g, "").replace(",", "."));
+      }
+      return text.toLowerCase();
+    }
+
+    headers.forEach((th, idx) => {
+      th.style.cursor = "pointer";
+      th.addEventListener("click", () => {
+        const type = th.dataset.sort;
+        const asc = th.dataset.sortDir !== "asc";
+        headers.forEach((h) => delete h.dataset.sortDir);
+        th.dataset.sortDir = asc ? "asc" : "desc";
+        const rows = Array.from(tbody.children);
+        rows.sort((a, b) => {
+          const va = cellValue(a, idx, type), vb = cellValue(b, idx, type);
+          if (va < vb) return asc ? -1 : 1;
+          if (va > vb) return asc ? 1 : -1;
+          return 0;
+        });
+        rows.forEach((r) => tbody.appendChild(r));
+      });
+    });
   }
 
   // Krok 28.1 (docs/PLAN_KROK_28_ux_mobile.md): globalny przełącznik waluty.
@@ -441,5 +525,6 @@ window.NT = (function () {
   return {
     initPriceChart, initRowToggles, initFormPreview, initNavGroups, initValueChart,
     initCurrencyToggle, initBucketDonut, initDividendBarChart, initWaterfallChart,
+    initShowMore, initSortableTable, initStickyNavOffset,
   };
 })();

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, tax_disclaimer, LOT_TYPE_LABELS, POLICY_LABELS %}
+{% from "_macros.html" import stat, tax_disclaimer, empty_state, LOT_TYPE_LABELS, POLICY_LABELS %}
 {% block title %}PIT-38 — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -35,7 +35,7 @@
 {% if waterfall_pit38.revenue %}
 <div class="card">
   <div class="card-title">Waterfall — Poz. C (wg aktywnej polityki)</div>
-  <div class="chart-wrap" style="height:280px">
+  <div class="chart-wrap chart-skeleton" style="height:280px">
     <canvas id="pit38-waterfall"></canvas>
   </div>
   <p class="muted">
@@ -98,8 +98,8 @@
   </div>
   <a class="btn no-print" href="{{ url_for('pit38_wizard_get', year=year) }}">Kreator rozliczenia →</a>
   {% else %}
-  <p class="muted">Brak dostępnych strat z ostatnich 5 lat w polityce
-    {{ policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }}.</p>
+  {{ empty_state('Brak dostępnych strat z ostatnich 5 lat w polityce ' ~
+                 policy_labels.get(cfg.cost_basis_policy, cfg.cost_basis_policy) ~ '.') }}
   {% endif %}
 </div>
 
@@ -124,7 +124,7 @@
     podatek zapłacony za granicą = pobrane u źródła powyżej — te same kwoty).
   </p>
   {% else %}
-  <p class="muted">Brak dywidend w {{ year }} roku — brak pozycji PIT/ZG do wpisania.</p>
+  {{ empty_state('Brak dywidend w ' ~ year ~ ' roku — brak pozycji PIT/ZG do wpisania.') }}
   {% endif %}
 </div>
 
@@ -211,7 +211,7 @@
     </table>
   </div>
   {% else %}
-  <p class="muted">Brak sprzedaży w {{ year }} roku.</p>
+  {{ empty_state('Brak sprzedaży w ' ~ year ~ ' roku.') }}
   {% endif %}
 </div>
 

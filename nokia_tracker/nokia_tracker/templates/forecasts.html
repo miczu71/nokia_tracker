@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat %}
+{% from "_macros.html" import stat, empty_state %}
 {% block title %}Prognozy — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -41,7 +41,7 @@
   </table>
 </div>
 {% else %}
-<p class="muted">Brak jeszcze żadnych prognoz.</p>
+{{ empty_state('Brak jeszcze żadnych prognoz.') }}
 {% endif %}
 
 {% endblock %}

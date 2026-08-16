@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, tax_disclaimer %}
+{% from "_macros.html" import stat, tax_disclaimer, empty_state %}
 {% block title %}Dywidendy — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -37,7 +37,7 @@
 {% if yearly_dividends %}
 <div class="card">
   <div class="card-title">Dywidendy rok po roku</div>
-  <div class="chart-wrap" style="height:220px">
+  <div class="chart-wrap chart-skeleton" style="height:220px">
     <canvas id="dividend-bar-chart"></canvas>
   </div>
 </div>
@@ -90,13 +90,15 @@
   <div class="card-title">Historia</div>
   {% if items %}
   <div class="table-wrap">
-    <table class="table">
+    <table class="table" id="dividends-table">
       <thead>
         <tr>
-          <th>Data</th><th>Waluta</th><th class="num">Brutto EUR</th>
-          <th class="num">Brutto PLN</th><th>Kurs NBP</th>
-          <th class="num">U źródła %</th><th class="num">Dopłata PL (PLN)</th>
-          <th class="num">Do odzyskania (PLN)</th><th>Reinwestycja</th>
+          <th data-sort="date">Data</th><th data-sort="text">Waluta</th>
+          <th class="num" data-sort="num">Brutto EUR</th>
+          <th class="num" data-sort="num">Brutto PLN</th><th>Kurs NBP</th>
+          <th class="num" data-sort="num">U źródła %</th>
+          <th class="num" data-sort="num">Dopłata PL (PLN)</th>
+          <th class="num" data-sort="num">Do odzyskania (PLN)</th><th>Reinwestycja</th>
         </tr>
       </thead>
       <tbody>
@@ -134,7 +136,7 @@
     </table>
   </div>
   {% else %}
-  <p class="muted">Brak zarejestrowanych dywidend.</p>
+  {{ empty_state('Brak zarejestrowanych dywidend.') }}
   {% endif %}
 </div>
 
@@ -155,5 +157,6 @@ NT.initFormPreview({
 {% if yearly_dividends %}
 NT.initDividendBarChart("dividend-bar-chart", {{ yearly_dividends|tojson }});
 {% endif %}
+NT.initSortableTable("dividends-table");
 </script>
 {% endblock %}

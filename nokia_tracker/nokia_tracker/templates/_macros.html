@@ -96,6 +96,18 @@
   bez jednostki — ta sama semantyka co dawne `pf_money()`, patrz
   test_dashboard_omits_pln_when_no_fx_rate).
 #}
+{#
+  empty_state(message)
+
+  Krok 28.6 (docs/PLAN_KROK_28_ux_mobile.md §6): jeden wygląd dla stanów
+  pustych zamiast ad hoc `<p class="muted">Brak ...</p>` powtarzanego na
+  każdej stronie osobno. Treść komunikatu BEZ ZMIAN (pinowana testami per
+  strona) — makro tylko ujednolica znacznik/klasę wokół niej.
+#}
+{% macro empty_state(message) -%}
+<p class="muted empty-state">{{ message }}</p>
+{%- endmacro %}
+
 {% macro cur_block(pln, eur, pln_unit='zł', eur_unit='EUR', cls='') -%}
 <div class="cur-wrap{% if cls %} {{ cls }}{% endif %}">
   <div class="cur-block cur-primary-pln">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, tax_disclaimer %}
+{% from "_macros.html" import stat, tax_disclaimer, empty_state %}
 {% block title %}Kreator rozliczenia — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -49,7 +49,7 @@
   </form>
   {% endfor %}
   {% else %}
-  <p class="muted">Brak dostępnych strat z lat ubiegłych do odliczenia w {{ year }}.</p>
+  {{ empty_state('Brak dostępnych strat z lat ubiegłych do odliczenia w ' ~ year ~ '.') }}
   {% endif %}
 </div>
 

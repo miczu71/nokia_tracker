@@ -125,11 +125,37 @@ body {
 
 .chart-wrap { position: relative; height: 260px; }
 
+/* Krok 28.6: szkielet ładowania — usuwany klasą JS po narysowaniu wykresu
+   (NT._clearSkeleton w app.js, wołane na końcu każdego initXxxChart). */
+.chart-wrap.chart-skeleton canvas { visibility: hidden; }
+.chart-wrap.chart-skeleton::before {
+  content: ""; position: absolute; inset: 0; border-radius: 8px;
+  background: linear-gradient(90deg, var(--page) 25%, var(--grid) 50%, var(--page) 75%);
+  background-size: 200% 100%;
+  animation: chart-skeleton-pulse 1.4s ease-in-out infinite;
+}
+@keyframes chart-skeleton-pulse {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
 .page-head {
   display: flex; align-items: center; justify-content: space-between;
   margin: 4px 0 14px; gap: 10px; flex-wrap: wrap;
 }
 .page-head h1 { font-size: 20px; margin: 0; }
+
+/* Krok 28.6: pasek sticky pod nagłówkiem (cena + wartość portfela) na
+   pulpicie — `--nav-h` ustawiane w app.js::initStickyNavOffset(), bo
+   wysokość .nav zmienia się (flex-wrap na wąskich ekranach). */
+.sticky-summary {
+  position: sticky; top: var(--nav-h, 52px); z-index: 9;
+  display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 14px; margin-bottom: 14px; font-size: 13px;
+}
+.sticky-summary strong { font-size: 15px; }
+.sticky-summary .muted { font-size: 12px; }
 
 .table-wrap { overflow-x: auto; }
 .table { border-collapse: collapse; width: 100%; font-size: 14px; table-layout: auto; }
@@ -139,6 +165,9 @@ body {
   white-space: normal;
 }
 .table th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.table th[data-sort]:hover { color: var(--ink); }
+.table th[data-sort-dir="asc"]::after { content: " ▲"; font-size: 9px; }
+.table th[data-sort-dir="desc"]::after { content: " ▼"; font-size: 9px; }
 .table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .table .nowrap { white-space: nowrap; }
 .table tr:hover td { background: var(--page); }
@@ -176,6 +205,11 @@ body {
     display: block; text-align: left; padding: 8px 0 0;
   }
   .table-wrap table.table tr.row-detail { border: none; padding: 0; margin: 0 0 8px; }
+  /* Krok 28.6: [hidden] (np. .news-extra przed "Pokaż więcej") musi zostać
+     ukryty — bez tego `tr { display:block }` powyżej nadpisuje domyślne
+     `[hidden]{display:none}` z arkusza przeglądarki (reguła autora zawsze
+     bije UA, niezależnie od specyficzności). */
+  .table-wrap table.table tr[hidden] { display: none; }
 }
 
 .form label { display: block; margin-bottom: 12px; font-size: 13px; color: var(--ink-2); }

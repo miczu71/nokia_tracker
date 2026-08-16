@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import empty_state %}
 {% block title %}Kopia zapasowa — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -28,7 +29,7 @@
     {{ last_snapshot.mtime }})
   </p>
   {% else %}
-  <p class="muted">Brak jeszcze automatycznej kopii nocnej — pierwsza powstanie dziś o 4:00.</p>
+  {{ empty_state('Brak jeszcze automatycznej kopii nocnej — pierwsza powstanie dziś o 4:00.') }}
   {% endif %}
 </div>
 

@@ -83,7 +83,7 @@
 </main>
 <script src="{{ url_for('static', filename='chart.umd.min.js') }}?v={{ version }}"></script>
 <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
-<script>NT.initNavGroups(); NT.initCurrencyToggle("currency-toggle");</script>
+<script>NT.initNavGroups(); NT.initCurrencyToggle("currency-toggle"); NT.initStickyNavOffset();</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

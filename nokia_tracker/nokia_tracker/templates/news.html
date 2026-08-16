@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import empty_state %}
 {% block title %}Newsy — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -8,13 +9,14 @@
 <p class="muted">Wpływ: ●=niski, ●●=średni, ●●●=wysoki.
   Sentyment 24h i tezę dnia zobacz na <a href="{{ url_for('dashboard') }}">pulpicie</a>.</p>
 <div class="table-wrap">
-  <table class="table">
+  <table class="table" id="news-table">
     <thead>
-      <tr><th>Data</th><th>Sentyment</th><th>Wpływ</th><th>Źródło</th><th>Tytuł</th><th>Teza</th></tr>
+      <tr><th data-sort="date">Data</th><th data-sort="num">Sentyment</th>
+        <th data-sort="text">Wpływ</th><th data-sort="text">Źródło</th><th>Tytuł</th><th>Teza</th></tr>
     </thead>
-    <tbody>
+    <tbody id="news-tbody">
       {% for n in items %}
-      <tr>
+      <tr{% if loop.index > 20 %} class="news-extra" hidden{% endif %}>
         <td class="nowrap" data-label="Data">{{ n.published_at[:10] if n.published_at else '—' }}</td>
         <td data-label="Sentyment">
           {% if n.sentiment is not none %}
@@ -36,8 +38,17 @@
     </tbody>
   </table>
 </div>
+{% if items|length > 20 %}
+<p class="no-print"><button class="btn small" type="button" id="news-show-more">Pokaż więcej</button></p>
+{% endif %}
 {% else %}
-<p class="muted">Brak newsów.</p>
+{{ empty_state('Brak newsów.') }}
 {% endif %}
 
+{% endblock %}
+{% block scripts %}
+<script>
+NT.initShowMore("news-show-more", "news-tbody", "news-extra", 20);
+NT.initSortableTable("news-table");
+</script>
 {% endblock %}

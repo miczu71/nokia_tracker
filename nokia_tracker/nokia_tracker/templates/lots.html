@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import empty_state %}
 {% block title %}Loty — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -128,12 +129,13 @@
   <div class="card-title">Loty</div>
   {% if lots %}
   <div class="table-wrap">
-    <table class="table">
+    <table class="table" id="lots-table">
       <thead>
         <tr>
-          <th>Data nabycia</th><th>Typ</th><th class="num">Ilość</th>
-          <th class="num">Pozostało</th><th class="num">Cena EUR</th>
-          <th class="num">Kurs NBP</th><th class="num">Koszt PLN</th><th>Źródło</th>
+          <th data-sort="date">Data nabycia</th><th data-sort="text">Typ</th>
+          <th class="num" data-sort="num">Ilość</th>
+          <th class="num" data-sort="num">Pozostało</th><th class="num" data-sort="num">Cena EUR</th>
+          <th class="num">Kurs NBP</th><th class="num" data-sort="num">Koszt PLN</th><th>Źródło</th>
         </tr>
       </thead>
       <tbody>
@@ -161,7 +163,7 @@
     </table>
   </div>
   {% else %}
-  <p class="muted">Brak lotów — dodaj pierwszy powyżej.</p>
+  {{ empty_state('Brak lotów — dodaj pierwszy powyżej.') }}
   {% endif %}
 </div>
 
@@ -186,5 +188,6 @@ NT.initFormPreview({
     ["sale_price_eur", "price_eur"], ["sale_fee_eur", "fee_eur"],
   ],
 });
+NT.initSortableTable("lots-table");
 </script>
 {% endblock %}

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, cur_block %}
+{% from "_macros.html" import stat, cur_block, empty_state %}
 {% block title %}Pulpit — Nokia Tracker{% endblock %}
 
 {% block content %}
@@ -12,6 +12,25 @@
   <form method="post" action="{{ url_for('analyze_now') }}">
     <button class="btn primary" type="submit">🔄 Przeanalizuj teraz</button>
   </form>
+</div>
+
+{#- Krok 28.6: sticky pasek z ceną i wartością portfela — widoczny cały
+    czas przy przewijaniu długiego pulpitu, nie tylko na górze. #}
+<div class="sticky-summary no-print">
+  <span>NOKIA.HE
+    {%- if values.price_eur is not none %}
+    <strong>{{ '%.3f'|format(values.price_eur) }}</strong> <span class="muted">EUR</span>
+    {%- else %}
+    <strong>—</strong>
+    {%- endif %}
+  </span>
+  <span>Portfel
+    {%- if buckets.total.value_pln is not none %}
+    <strong>{{ buckets.total.value_pln|money }}</strong> <span class="muted">zł</span>
+    {%- else %}
+    <strong>—</strong>
+    {%- endif %}
+  </span>
 </div>
 
 <div class="card">
@@ -49,7 +68,7 @@
             {% if r == default_chart_range %}class="active"{% endif %}>{{ r }}</button>
     {% endfor %}
   </div>
-  <div class="chart-wrap"><canvas id="price-chart"></canvas></div>
+  <div class="chart-wrap chart-skeleton"><canvas id="price-chart"></canvas></div>
 </div>
 
 {% if insights %}
@@ -184,7 +203,7 @@
       </p>
     {% endif %}
   {% else %}
-    <p class="muted">Brak jeszcze wygenerowanego briefingu — kliknij „Przeanalizuj teraz” powyżej.</p>
+    {{ empty_state('Brak jeszcze wygenerowanego briefingu — kliknij „Przeanalizuj teraz” powyżej.') }}
   {% endif %}
 </div>
 
@@ -197,7 +216,7 @@
     </p>
     <p class="disclaimer">⚠️ {{ values.ai_recommendation_attrs.disclaimer }}</p>
   {% else %}
-    <p class="muted">Brak jeszcze rekomendacji.</p>
+    {{ empty_state('Brak jeszcze rekomendacji.') }}
   {% endif %}
 </div>
 

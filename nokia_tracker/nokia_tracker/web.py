@@ -887,7 +887,8 @@ def create_app(db_path: str) -> Flask:
                 xirr_pct=xirr_pct, twr_pct=twr_pct, attribution=attribution,
                 benchmark_today_pln=benchmark_today_pln, benchmark_today_eur=benchmark_today_eur,
                 chart_points=chart_points,
-                yearly_returns=yearly_returns, has_history=bool(history_rows))
+                yearly_returns=yearly_returns, has_history=bool(history_rows),
+                print_mode=request.args.get("print") == "1")
         finally:
             conn.close()
 
@@ -947,7 +948,8 @@ def create_app(db_path: str) -> Flask:
                 espp_scenarios=espp_scenarios,
                 timing_result=timing_result, timing_qty=timing_qty_raw, timing_price=timing_price_raw,
                 has_restricted=bool(plan_overview["forfeit"]["items"]),
-                has_timeline=bool(plan_overview["timeline"]["tranches"]))
+                has_timeline=bool(plan_overview["timeline"]["tranches"]),
+                print_mode=request.args.get("print") == "1")
         finally:
             conn.close()
 
@@ -1216,7 +1218,12 @@ def create_app(db_path: str) -> Flask:
                 "SELECT n.*, s.sentiment, s.impact, s.thesis_pl, ns.kind AS source_kind "
                 "FROM news n LEFT JOIN news_scores s ON s.news_id = n.id "
                 "LEFT JOIN news_sources ns ON ns.id = n.source_id "
-                "ORDER BY n.published_at DESC LIMIT 50"
+                # Krok 28.6: 50 -> 200 — limit istniał wyłącznie żeby nie
+                # renderować bez końca; teraz "Pokaż więcej" (news.html/app.js)
+                # ujawnia po 20 client-side, więc wyższy limit ma sens dopiero
+                # z paginacją po stronie serwera. 200 to wciąż jedno zapytanie
+                # SQLite po indeksowanej kolumnie, bez odczuwalnego kosztu.
+                "ORDER BY n.published_at DESC LIMIT 200"
             ).fetchall()
             items = [dict(r) for r in rows]
             return render_template("news.html", active="news", version=__version__, items=items)

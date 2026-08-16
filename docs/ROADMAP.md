@@ -259,11 +259,23 @@ odpowiedzią, jak wszędzie indziej.
 
 ### Fale
 
-**0.14.0 — Kalendarz i prognoza dywidend.** Domyka backlogowy punkt niżej. Kalendarz ex-dywidendy
-(rozróżniający "szacowana z historii" od "potwierdzona" — Nokia płaci raz w roku, data niepewna do
-ogłoszenia na WZA), prognoza forward deterministyczna (nie AI) 1/3/5 lat naprzód, netto po
-łańcuchu podatkowym z sekcji G. Nowa funkcja w `tax/dividends.py` (`forecast()`), rozszerzenie
-`templates/dividends.html`. Zero nowej tabeli.
+**0.14.0 — Kalendarz i prognoza dywidend.** Domyka backlogowy punkt niżej.
+
+> **Poprawka przesłanek, zweryfikowana na realnych danych produkcyjnych przy planowaniu (docs/
+> PLAN_KROK_30_dywidendy.md):** Nokia płaci **kwartalnie, nie raz w roku** — realne record date w
+> bazie: 2023-02-20/05-15/08-14/11-13, 2024-02-19/05-03/08-01/10-31, 2025-05-01/07-25/10-24,
+> 2026-01-30/04-24. WZA uchwala kwotę roczną z upoważnieniem zarządu do decyzji o dacie każdej z 4
+> rat osobno — stąd trzy poziomy pewności (potwierdzona/zapowiedziana/szacowana), nie dwa.
+
+Kalendarz ex-dywidendy (rozróżniający "szacowana z historii" od "potwierdzona"/"zapowiedziana" z
+ogłoszonego harmonogramu), prognoza forward deterministyczna (nie AI) 1/3/5 lat naprzód, netto po
+łańcuchu podatkowym z sekcji G. **Nowy moduł `dividend_outlook.py`** (nie `tax/dividends.py::
+forecast()` — kolizja nazwy z istniejącymi prognozami CENOWYMI, tabela `forecasts`/`forecasts.py`/
+`sensors.forecast_values`/encje `forecast_1w_eur`; `tax/dividends.py` to księga + łańcuch
+podatkowy, projekcja czytająca `vests`/`lots`/kurs bieżący tam nie należy). **Nowa tabela**
+`dividend_schedule` (migracja v10) na ogłoszony harmonogram z formularzem — decyzja użytkownika
+przy planowaniu, żeby dało się wpisać cały roczny harmonogram naraz, z historią ogłoszeń — nie
+"zero nowej tabeli", jak pierwotnie zakładano tutaj. Rozszerzenie `templates/dividends.html`.
 
 **0.15.0 — Ryzyko koncentracji v2: benchmark + planer systematycznego wyjścia.** Dwa dodatki do
 karty z 0.10.0: (a) punkt odniesienia 10-15% obok własnego progu użytkownika, z linkiem do źródła;

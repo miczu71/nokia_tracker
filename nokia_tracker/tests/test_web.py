@@ -30,7 +30,7 @@ def client(tmp_path):
 
 @pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/sales", "/dividends", "/grants",
                                   "/imports", "/news", "/forecasts", "/settings", "/pit38",
-                                  "/dane", "/wyniki", "/plan", "/pit38/kreator"])
+                                  "/dane", "/wyniki", "/plan", "/pit38/kreator", "/asystent"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -2031,3 +2031,156 @@ def test_dashboard_restricted_note_shows_forfeit_amount(tmp_path, monkeypatch):
 def test_nav_contains_plan_link(client):
     html = client.get("/").get_data(as_text=True)
     assert 'href="/plan"' in html
+
+
+# --- /asystent (krok 29): zero żywego AI, ai_chat.ask() mockowane ---
+
+def test_nav_contains_asystent_link(client):
+    html = client.get("/").get_data(as_text=True)
+    assert 'href="/asystent"' in html
+
+
+def test_assistant_get_shows_empty_history(client):
+    resp = client.get("/asystent")
+    assert resp.status_code == 200
+    assert "Asystent" in resp.get_data(as_text=True)
+
+
+def test_assistant_post_calls_ask_and_redirects_without_question_in_url(client, monkeypatch):
+    from nokia_tracker.ai import chat as ai_chat
+    calls = []
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: (calls.append(q), {
+        "ok": True, "intent": "ile_moge_sprzedac", "params": {}, "title": "Ile mogę sprzedać",
+        "lines": [], "detail_url": "/plan", "error": None, "answer_pl": "Możesz sprzedać 0 akcji.",
+    })[1])
+    resp = client.post("/asystent", data={"question": "Ile mogę sprzedać?"})
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/asystent"  # bez ?question= — odświeżenie nie powtarza pytania
+    assert calls == ["Ile mogę sprzedać?"]
+
+
+def test_assistant_post_with_empty_question_does_not_call_ask(client, monkeypatch):
+    from nokia_tracker.ai import chat as ai_chat
+    calls = []
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: calls.append(q))
+    resp = client.post("/asystent", data={"question": "   "})
+    assert resp.status_code == 302
+    assert calls == []
+
+
+def test_assistant_get_with_q_param_asks_then_redirects_to_plain_url(client, monkeypatch):
+    # ?q= (pole szybkiego pytania na pulpicie, krok 29.7) MUSI przekierować do
+    # czystego /asystent po odpowiedzi — inaczej odświeżenie strony powtarzałoby
+    # zapytanie AI (ten sam powód co POST-redirect-GET dla formularza).
+    from nokia_tracker.ai import chat as ai_chat
+    calls = []
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: (calls.append(q), {
+        "ok": True, "intent": "inne", "params": {}, "title": "x", "lines": [],
+        "detail_url": None, "error": None, "answer_pl": "x",
+    })[1])
+    resp = client.get("/asystent?q=Ile+zarobi%C5%82em%3F")
+    assert resp.status_code == 302
+    assert resp.headers["Location"] == "/asystent"
+    assert calls == ["Ile zarobiłem?"]
+
+
+def test_assistant_get_without_q_does_not_call_ask(client, monkeypatch):
+    from nokia_tracker.ai import chat as ai_chat
+    calls = []
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: calls.append(q))
+    client.get("/asystent")
+    assert calls == []
+
+
+def _insert_chat_log_row(tmp_path, db_name, **overrides):
+    db_path = str(tmp_path / db_name)
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    row = {
+        "question": "Ile mogę sprzedać?", "intent": "ile_moge_sprzedac",
+        "params_json": "{}", "result_json": "{}",
+        "answer_pl": "Możesz sprzedać 0 akcji bez ograniczeń.",
+        "provider": "local", "ok": 1, "error": None,
+    }
+    row.update(overrides)
+    conn.execute(
+        "INSERT INTO chat_log (question, intent, params_json, result_json, answer_pl, "
+        "provider, ok, error) VALUES (:question, :intent, :params_json, :result_json, "
+        ":answer_pl, :provider, :ok, :error)", row)
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def test_assistant_get_renders_history(tmp_path):
+    db_path = _insert_chat_log_row(tmp_path, "history.db")
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/asystent").get_data(as_text=True)
+    assert "Ile mogę sprzedać?" in html
+    assert "Możesz sprzedać 0 akcji bez ograniczeń." in html
+
+
+def test_assistant_disabled_skips_ask_and_shows_message(client, monkeypatch):
+    from nokia_tracker.ai import chat as ai_chat
+    calls = []
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: calls.append(q))
+    client.post("/settings", data={})  # brak pola = odznaczony checkbox = wyłączony
+    resp = client.post("/asystent", data={"question": "Ile zarobiłem?"})
+    assert resp.status_code == 302
+    assert calls == []
+    html = client.get("/asystent").get_data(as_text=True)
+    assert "wyłączony" in html.lower()
+
+
+def test_assistant_answer_text_is_escaped_not_raw_html(tmp_path):
+    db_path = _insert_chat_log_row(
+        tmp_path, "xss.db", question="test", intent="inne",
+        answer_pl="<script>alert(1)</script>")
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/asystent").get_data(as_text=True)
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_api_assistant_get_returns_json(client, monkeypatch):
+    from nokia_tracker.ai import chat as ai_chat
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: {
+        "ok": True, "intent": "ile_moge_sprzedac", "params": {}, "title": "Ile mogę sprzedać",
+        "lines": [{"label": "Wolne", "value": 10, "unit": "szt."}], "detail_url": "/plan",
+        "error": None, "answer_pl": "Możesz sprzedać 10 akcji.",
+    })
+    resp = client.get("/api/asystent?q=Ile+mog%C4%99+sprzeda%C4%87%3F")
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["ok"] is True
+    assert data["answer_pl"] == "Możesz sprzedać 10 akcji."
+
+
+def test_api_assistant_post_accepts_json_body(client, monkeypatch):
+    from nokia_tracker.ai import chat as ai_chat
+    calls = []
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: (calls.append(q), {
+        "ok": True, "intent": "inne", "params": {}, "title": "x", "lines": [],
+        "detail_url": None, "error": None, "answer_pl": "x",
+    })[1])
+    resp = client.post("/api/asystent", json={"question": "Kiedy mam vesting?"})
+    assert resp.status_code == 200
+    assert calls == ["Kiedy mam vesting?"]
+
+
+def test_api_assistant_disabled_returns_ok_false_without_calling_ask(client, monkeypatch):
+    from nokia_tracker.ai import chat as ai_chat
+    calls = []
+    monkeypatch.setattr(ai_chat, "ask", lambda conn, cfg, q: calls.append(q))
+    client.post("/settings", data={})
+    resp = client.get("/api/asystent?q=test")
+    data = resp.get_json()
+    assert data["ok"] is False
+    assert calls == []
+
+
+def test_assistant_page_shows_ai_status_bar(client):
+    html = client.get("/asystent").get_data(as_text=True)
+    assert "local (freellmapi)" in html

@@ -36,6 +36,7 @@ from .tax import pit38 as taxpit38
 from .tax import policy as taxpolicy
 from .tax import trace as taxtrace
 from .tax import whatif as taxwhatif
+from .ai import chat as ai_chat
 from .ai import openai_compat
 from .ai import status as ai_status
 
@@ -1023,6 +1024,65 @@ def create_app(db_path: str) -> Flask:
                  "value": result["delta_total_pln"], "unit": "PLN", "emphasis": True},
             ]
             return {"ok": True, "lines": lines}
+        finally:
+            conn.close()
+
+    def _assistant_ask_and_redirect(question: str):
+        """Wspólna ścieżka dla POST /asystent i GET /asystent?q= (pole
+        szybkiego pytania na pulpicie, krok 29.7) — OBIE kończą się
+        przekierowaniem do CZYSTEGO /asystent, żeby odświeżenie strony po
+        odpowiedzi nie powtórzyło pytania (to samo uzasadnienie co
+        POST-redirect-GET gdzie indziej w aplikacji). Odpowiedź trafia do
+        chat_log i pojawia się jako pierwszy wiersz historii na kolejnym GET."""
+        conn = _conn()
+        try:
+            cfg = dict(settingsm.get_settings(conn), **_ai_keys())
+            if question and cfg.get("ai_chat_enabled", 1):
+                ai_chat.ask(conn, cfg, question)
+            return redirect(url_for("assistant_get"))
+        finally:
+            conn.close()
+
+    @app.get("/asystent")
+    def assistant_get():
+        q = request.args.get("q", "").strip()
+        if q:
+            return _assistant_ask_and_redirect(q)
+        conn = _conn()
+        try:
+            cfg = dict(settingsm.get_settings(conn), **_ai_keys())
+            return render_template(
+                "assistant.html", active="assistant", version=__version__,
+                chat_enabled=bool(cfg.get("ai_chat_enabled", 1)),
+                history=ai_chat.history(conn, limit=20),
+                ai_status=ai_status.snapshot(conn, cfg))
+        finally:
+            conn.close()
+
+    @app.post("/asystent")
+    def assistant_post():
+        return _assistant_ask_and_redirect(request.form.get("question", "").strip())
+
+    @app.route("/api/asystent", methods=["GET", "POST"])
+    def assistant_api():
+        """JSON dla ewentualnej przyszłej wersji z JS — CELOWO bez auto-fire
+        na wpisywanie (initFormPreview() debounce'uje na 'input', co dla
+        pytań w naturalnym języku wołałoby AI na każde naciśnięcie klawisza;
+        ten endpoint wymaga jawnego wywołania, nie jest dziś podpięty pod
+        żaden formularz z debounce)."""
+        conn = _conn()
+        try:
+            cfg = dict(settingsm.get_settings(conn), **_ai_keys())
+            if request.method == "POST":
+                body = request.get_json(silent=True) or {}
+                question = (body.get("question") or request.form.get("question", "")).strip()
+            else:
+                question = request.args.get("q", "").strip()
+            if not cfg.get("ai_chat_enabled", 1):
+                return {"ok": False, "intent": None, "params": {}, "title": None,
+                       "lines": [], "detail_url": None,
+                       "error": "Asystent jest wyłączony w Ustawieniach.", "answer_pl": None}
+            return ai_chat.ask(conn, cfg, question)
         finally:
             conn.close()
 

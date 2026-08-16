@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% from "_macros.html" import empty_state, tax_disclaimer %}
+{% block title %}Asystent — Nokia Tracker{% endblock %}
+{% block content %}
+
+{% set PROVIDER_LABELS = {"local": "local (freellmapi)", "gemini": "gemini", "anthropic": "anthropic"} %}
+
+<div class="page-head">
+  <h1>Asystent</h1>
+</div>
+
+<p class="muted">
+  Zadaj pytanie o własny portfel lub podatek od akcji pracowniczych — np. „ile zapłacę
+  podatku sprzedając 200 akcji?”, „kiedy mam najbliższy vesting?”, „ile zarobiłem?”.
+  Odpowiedź zawsze liczy silnik aplikacji (te same dane co na pozostałych stronach) —
+  AI tylko rozpoznaje pytanie i ubiera policzone liczby w zdanie po polsku.
+</p>
+
+<div class="card">
+  <div class="card-title">Stan AI</div>
+  <p class="muted">
+    Aktywne ogniwo: <strong>{{ PROVIDER_LABELS.get(ai_status.active_provider, ai_status.active_provider) }}</strong>.
+    {% for p in ai_status.providers %}
+    <span class="badge circuit-{{ p.circuit_status }}">
+      {{ PROVIDER_LABELS.get(p.name, p.name) }}:
+      {{ p.remaining_today if p.remaining_today is not none else "∞" }} zostało dziś
+    </span>
+    {% endfor %}
+  </p>
+</div>
+
+{% if not chat_enabled %}
+<p class="disclaimer error">
+  ⚠️ Asystent jest wyłączony w <a href="{{ url_for('settings_get') }}">Ustawieniach</a>.
+</p>
+{% else %}
+<div class="card">
+  <form class="form" method="post" action="{{ url_for('assistant_post') }}">
+    <label>Pytanie
+      <input type="text" name="question" placeholder="np. ile zapłacę podatku sprzedając 200 akcji?" autofocus>
+    </label>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Zapytaj</button>
+    </div>
+  </form>
+</div>
+{{ tax_disclaimer('assistant') }}
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Historia</div>
+  {% if not history %}
+  {{ empty_state("Jeszcze żadnych pytań — zadaj pierwsze powyżej.") }}
+  {% else %}
+  {% for h in history %}
+  <div class="subcard">
+    <p class="subcard-title">{{ h.question }}</p>
+    {% if h.intent %}
+    <p class="muted">Zrozumiałem: {{ h.intent }}</p>
+    {% endif %}
+    <div class="preview-box{% if not h.ok %} error{% endif %}">
+      <p class="preview-line">{{ h.answer_pl or h.error or "—" }}</p>
+    </div>
+    <p class="muted">{{ h.created_at }}</p>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+
+{% endblock %}

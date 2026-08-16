@@ -205,6 +205,7 @@
   {% else %}
   <div class="conc-bar-wrap">
     <div class="conc-bar{% if conc.over_threshold %} over{% endif %}" style="--conc-pct: {{ conc.pct }}%"></div>
+    <div class="conc-bar-benchmark" style="--bm-low: {{ conc.benchmark_low_pct }}%; --bm-high: {{ conc.benchmark_high_pct }}%"></div>
   </div>
   <div class="grid stats">
     {{ stat('Akcje pracodawcy', conc.employer_value_pln|money, 'zł') }}
@@ -217,6 +218,79 @@
     pracodawca — spadek kursu i utrata dochodu przychodzą tym samym kanałem.
   </p>
   {% endif %}
+  <p class="muted">
+    Standard branżowy: {{ conc.benchmark_low_pct|qty(0) }}–{{ conc.benchmark_high_pct|qty(0) }}%
+    majątku w jednej spółce (<a href="https://www.privatebank.bankofamerica.com/articles/concentrated-stock-positions.html" target="_blank" rel="noopener">BofA Private Bank</a>) —
+    punkt odniesienia obok Twojego progu, nie zamiast niego.
+  </p>
+  {% endif %}
+</div>
+
+<div class="card no-print">
+  <div class="card-title">Planer systematycznego wyjścia</div>
+  <form class="inline-form" id="exit-form" method="get" action="{{ url_for('plan_get') }}">
+    <label>Akcji na okres
+      <input type="number" step="0.0001" name="exit_qty" value="{{ exit_qty or '' }}" required>
+    </label>
+    <label>Częstotliwość
+      <select name="exit_freq" required>
+        <option value="monthly" {% if exit_freq == 'monthly' or not exit_freq %}selected{% endif %}>miesięcznie</option>
+        <option value="quarterly" {% if exit_freq == 'quarterly' %}selected{% endif %}>kwartalnie</option>
+      </select>
+    </label>
+    <label>Liczba okresów
+      <input type="number" step="1" name="exit_periods" value="{{ exit_periods or '' }}" required>
+    </label>
+    <button class="btn primary" type="submit">Policz</button>
+  </form>
+  <div class="preview-box" id="exit-preview" hidden></div>
+
+  {% if exit_error %}
+  <p class="disclaimer error">⚠️ {{ exit_error }}</p>
+  {% endif %}
+
+  {% if exit_result %}
+  <div class="grid stats">
+    {{ stat('Sprzedanych akcji łącznie', exit_result.totals.shares_sold|qty, 'szt.') }}
+    {% if exit_result.totals.tax_pln is not none %}
+    {{ stat('Podatek łącznie', exit_result.totals.tax_pln|money, 'zł') }}
+    {{ stat('Na rękę', exit_result.totals.net_proceeds_pln|money, 'zł', cls='highlight') }}
+    {% endif %}
+    {% if exit_result.totals.forfeit_qty %}
+    {{ stat('Przepadające dopasowanie łącznie', exit_result.totals.forfeit_qty|qty, 'szt.') }}
+    {% endif %}
+  </div>
+
+  {% if exit_result.years %}
+  <table class="table">
+    <thead><tr><th>Rok</th><th>Dochód</th><th>Wykorzystana strata</th><th>Podatek</th></tr></thead>
+    <tbody>
+      {% for y in exit_result.years %}
+      <tr>
+        <td>{{ y.year }}</td>
+        <td>{{ y.income_pln|money }} zł</td>
+        <td>{{ y.usable_loss_pln|money }} zł</td>
+        <td>{{ y.tax_pln|money }} zł</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if exit_result.concentration_before and exit_result.concentration_after %}
+  <div class="grid stats">
+    {{ stat('Koncentracja przed', exit_result.concentration_before.pct|pct(1, false), '%') }}
+    {{ stat('Koncentracja po planie', exit_result.concentration_after.pct|pct(1, false), '%', cls='highlight') }}
+  </div>
+  {% endif %}
+
+  <p class="muted">
+    Cena i kurs EUR/PLN płaskie na całym horyzoncie planu. Strata z lat ubiegłych liczona
+    WYŁĄCZNIE z realnej dostępnej puli na dany rok — bez interakcji między latami tego
+    samego planu (patrz zastrzeżenie przy karcie „Kiedy sprzedać" wyżej). Nic nie zapisuje
+    się do bazy.
+  </p>
+  {{ tax_disclaimer() }}
   {% endif %}
 </div>
 
@@ -235,6 +309,12 @@ NT.initFormPreview({
   url: {{ url_for('preview_sale_timing')|tojson }},
   requiredFields: ["timing_qty", "timing_price"],
   fields: [["timing_qty", "timing_qty"], ["timing_price", "timing_price"]],
+});
+NT.initFormPreview({
+  formId: "exit-form", boxId: "exit-preview",
+  url: {{ url_for('preview_exit_plan')|tojson }},
+  requiredFields: ["exit_qty", "exit_freq", "exit_periods"],
+  fields: [["exit_qty", "exit_qty"], ["exit_freq", "exit_freq"], ["exit_periods", "exit_periods"]],
 });
 </script>
 {% endblock %}

@@ -452,9 +452,19 @@ html[data-currency="eur"] .cur-primary-eur { display: block; }
 .conc-bar-wrap {
   width: 100%; height: 14px; border-radius: 7px; background: var(--page);
   border: 1px solid var(--grid); overflow: hidden; margin-bottom: 12px;
+  position: relative;
 }
 .conc-bar { height: 100%; width: var(--conc-pct); background: var(--series-1); }
 .conc-bar.over { background: var(--bad); }
+/* Krok 31: znacznik pasma branżowego (10-15%) nałożony NA pasek koncentracji,
+   nie zamiast niego — nakładka nie przechwytuje kliknięć/nie zmienia layoutu. */
+.conc-bar-benchmark {
+  position: absolute; top: 0; height: 100%;
+  left: var(--bm-low); width: calc(var(--bm-high) - var(--bm-low));
+  background: color-mix(in srgb, var(--ink-2) 35%, transparent);
+  border-left: 1px dashed var(--ink-2); border-right: 1px dashed var(--ink-2);
+  pointer-events: none;
+}
 
 @media print {
   .nav, .no-print, .form-actions { display: none !important; }

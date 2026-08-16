@@ -101,11 +101,23 @@ uzasadnić abstrakcję; jeśli pojawi się trzeci konsument, wydzielić wtedy).
 
 ### B.5 Przepadek dopłaty ESPP per okres
 
-Per okres: `rates_by_lot_id = {item["lot_id"]: item["match_rate"] for item in
-grantsm.restricted_own_lots(conn, today=sale_date)}` (realne, znane z góry daty
-vestingu — to legalne źródło faktu, bo lokalna symulacja NIE zmienia rzeczywistej
-tabeli `lots`) → `forfeit_for_allocations(plan, rates_by_lot_id)` — ten sam hak z
-kroku 26, zero nowej matematyki przepadku.
+**Doprecyzowanie znalezione przy pisaniu testów (`grants.py:300-321`):**
+`restricted_own_lots(conn, today=...)` filtruje `today` WYŁĄCZNIE przez
+`open_lots(conn, as_of=today)` (który lot już istnieje) — sama restrykcja opiera się
+na `vests.status='pending'` w bazie, **nie** na porównaniu `today` z datą uwolnienia.
+Wywołanie jej osobno dla każdego przyszłego `sale_date` zwróciłoby więc ZA KAŻDYM
+RAZEM ten sam wynik (status w bazie się nie zmienia w trakcie symulacji) — to nie
+zamodelowałoby uwalniania się dopasowania w czasie, wbrew intencji tej sekcji.
+
+Poprawny mechanizm: `restricted = grantsm.restricted_own_lots(conn, today=start_date)`
+wołane RAZ na początku (`rates_by_lot_id`, `free_until_by_lot_id`). Dla każdego okresu
+`i`: `effective_rate(lot_id) = rates_by_lot_id[lot_id] if sale_date_i <
+free_until_by_lot_id[lot_id] else 0.0` (porównanie stringów ISO działa) — po dacie
+uwolnienia znanej już DZIŚ z `available_from`/`vest_date` transzy, dopasowanie na tym
+locie przestaje być zagrożone, mimo że `vests.status` w bazie realnie zmieni się
+dopiero przy przyszłym imporcie. Dopiero z tak przeliczonymi stawkami:
+`forfeit_for_allocations(plan, effective_rates)` — ten sam hak z kroku 26, zero nowej
+matematyki przepadku, tylko poprawne naniesienie go na oś czasu.
 
 ### B.6 Koncentracja przed/po
 

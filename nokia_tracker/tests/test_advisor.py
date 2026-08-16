@@ -368,3 +368,178 @@ def test_optimize_sale_timing_uses_available_loss_to_reduce_tax(conn):
 
     assert r["today"]["usable_loss_pln"] > 0
     assert r["today"]["tax_with_max_loss_pln"] < r["today"]["tax_without_loss_pln"]
+
+
+# --- concentration() benchmark branżowy (krok 31) ---
+
+def test_concentration_always_reports_industry_benchmark():
+    c = advisor.concentration(100_000.0, 300_000.0, threshold_pct=25.0)
+
+    assert c["benchmark_low_pct"] == pytest.approx(10.0)
+    assert c["benchmark_high_pct"] == pytest.approx(15.0)
+
+
+# --- exit_plan() (krok 31, docs/PLAN_KROK_31_koncentracja_v2.md) ---
+
+def test_exit_plan_periods_dated_monthly_from_start_date(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 20.0, 5.0, source="manual")
+
+    r = advisor.exit_plan(
+        conn, _base_cfg(), shares_per_period=5.0, frequency="monthly", num_periods=2,
+        price_eur=8.0, eurpln_rate=None, start_date="2026-01-15")
+
+    assert [p["sale_date"] for p in r["periods"]] == ["2026-02-15", "2026-03-15"]
+    assert [p["quantity"] for p in r["periods"]] == pytest.approx([5.0, 5.0])
+    assert r["totals"]["shares_sold"] == pytest.approx(10.0)
+
+
+def test_exit_plan_without_fx_rate_leaves_pln_fields_none(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 20.0, 5.0, source="manual")
+
+    r = advisor.exit_plan(
+        conn, _base_cfg(), shares_per_period=5.0, frequency="monthly", num_periods=2,
+        price_eur=8.0, eurpln_rate=None, start_date="2026-01-15")
+
+    assert all(p["revenue_pln"] is None for p in r["periods"])
+    assert r["totals"]["revenue_pln"] is None
+    assert r["totals"]["tax_pln"] is None
+    assert r["concentration_after"] is None
+
+
+def test_exit_plan_quarterly_spacing_is_three_months(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 20.0, 5.0, source="manual")
+
+    r = advisor.exit_plan(
+        conn, _base_cfg(), shares_per_period=5.0, frequency="quarterly", num_periods=2,
+        price_eur=8.0, eurpln_rate=None, start_date="2026-01-31")
+
+    # relativedelta przycina koniec miesiąca (31 stycznia + 3/6 mies. -> kwiecień/lipiec
+    # mają odpowiednio 30/31 dni) — zachowanie biblioteki, nie ręczna arytmetyka.
+    assert [p["sale_date"] for p in r["periods"]] == ["2026-04-30", "2026-07-31"]
+
+
+def test_exit_plan_insufficient_lots_raises_before_any_mutation(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 20.0, 5.0, source="manual")
+    before = conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
+
+    with pytest.raises(taxlots.InsufficientLotsError):
+        advisor.exit_plan(
+            conn, _base_cfg(), shares_per_period=10.0, frequency="monthly", num_periods=5,
+            price_eur=8.0, eurpln_rate=None, start_date="2026-01-15")
+
+    after = conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
+    assert after == before
+    remaining = conn.execute(
+        "SELECT qty_remaining FROM lots WHERE acquired_date='2020-01-01'").fetchone()[0]
+    assert remaining == pytest.approx(20.0)
+
+
+def test_exit_plan_invalid_frequency_raises_value_error(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 20.0, 5.0, source="manual")
+
+    with pytest.raises(ValueError):
+        advisor.exit_plan(
+            conn, _base_cfg(), shares_per_period=5.0, frequency="weekly", num_periods=1,
+            price_eur=8.0, start_date="2026-01-15")
+
+
+@pytest.mark.parametrize("kwargs", [
+    {"shares_per_period": 0.0}, {"num_periods": 0}, {"price_eur": 0.0},
+])
+def test_exit_plan_rejects_non_positive_inputs(conn, kwargs):
+    taxlots.add_lot(conn, "2020-01-01", "own", 20.0, 5.0, source="manual")
+    base = {"shares_per_period": 5.0, "frequency": "monthly", "num_periods": 1,
+            "price_eur": 8.0, "start_date": "2026-01-15"}
+    base.update(kwargs)
+
+    with pytest.raises(ValueError):
+        advisor.exit_plan(conn, _base_cfg(), **base)
+
+
+def test_exit_plan_never_writes_to_database(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 20.0, 5.0, source="manual")
+    lots_before = conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0]
+    sales_before = conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+
+    advisor.exit_plan(
+        conn, _base_cfg(), shares_per_period=5.0, frequency="monthly", num_periods=2,
+        price_eur=8.0, eurpln_rate=4.0, start_date="2026-01-15")
+
+    assert conn.execute("SELECT COUNT(*) FROM lots").fetchone()[0] == lots_before
+    assert conn.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == sales_before
+    remaining = conn.execute(
+        "SELECT qty_remaining FROM lots WHERE acquired_date='2020-01-01'").fetchone()[0]
+    assert remaining == pytest.approx(20.0)
+
+
+def test_exit_plan_uses_available_loss_carryforward_within_year(conn):
+    cfg = _base_cfg()
+    # Strata w 2024, ten sam wzorzec co test_optimize_sale_timing_uses_available_loss_*:
+    # kupno 10 szt @10 EUR, sprzedaż @5 EUR, kurs 4.0 -> strata 200 PLN.
+    taxlots.add_lot(conn, "2024-01-10", "own", 10.0, 10.0, source="manual")
+    taxlots.record_sale(conn, "2024-06-01", 10.0, 5.0)
+    losses.rebuild(conn, cfg)
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
+
+    r = advisor.exit_plan(
+        conn, cfg, shares_per_period=10.0, frequency="monthly", num_periods=1,
+        price_eur=8.0, eurpln_rate=4.0, start_date="2026-01-15")
+
+    assert len(r["years"]) == 1
+    year = r["years"][0]
+    assert year["year"] == 2026
+    assert year["income_pln"] == pytest.approx(200.0)
+    assert year["usable_loss_pln"] == pytest.approx(200.0)
+    assert year["tax_pln"] == pytest.approx(0.0)
+    assert r["totals"]["revenue_pln"] == pytest.approx(320.0)
+    assert r["totals"]["tax_pln"] == pytest.approx(0.0)
+    assert r["totals"]["net_proceeds_pln"] == pytest.approx(320.0)
+
+
+def test_exit_plan_groups_periods_crossing_calendar_year(conn):
+    taxlots.add_lot(conn, "2020-01-01", "own", 15.0, 5.0, source="manual")
+
+    r = advisor.exit_plan(
+        conn, _base_cfg(), shares_per_period=5.0, frequency="monthly", num_periods=3,
+        price_eur=8.0, eurpln_rate=4.0, start_date="2025-11-15")
+
+    years = sorted(y["year"] for y in r["years"])
+    assert years == [2025, 2026]
+
+
+def test_exit_plan_forfeit_stops_after_known_free_date(conn):
+    # Wzorzec z test_forfeit_full_bucket_equals_pending_vest_qty: lot 'own' ograniczony
+    # transzą espp pending, wolny od 2026-08-27.
+    taxlots.add_lot(conn, "2025-10-27", "own", 58.49, 5.41, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+
+    r = advisor.exit_plan(
+        conn, _base_cfg(), shares_per_period=29.245, frequency="monthly", num_periods=2,
+        price_eur=8.0, eurpln_rate=None, start_date="2026-07-01")
+
+    # Okres 1: sprzedaż 2026-08-01, PRZED datą uwolnienia 2026-08-27 -> dopasowanie
+    # nadal zagrożone. Okres 2: sprzedaż 2026-09-01, PO dacie uwolnienia -> zero przepadku,
+    # mimo że `vests.status` w bazie wciąż jest 'pending' (nikt jeszcze nie zaimportował
+    # potwierdzenia) — patrz doprecyzowanie w docs/PLAN_KROK_31_koncentracja_v2.md §B.5.
+    assert r["periods"][0]["sale_date"] == "2026-08-01"
+    assert r["periods"][0]["forfeit_qty"] > 0
+    assert r["periods"][1]["sale_date"] == "2026-09-01"
+    assert r["periods"][1]["forfeit_qty"] == pytest.approx(0.0)
+
+
+def test_exit_plan_concentration_after_is_lower_than_before(conn):
+    cfg = _base_cfg(other_net_worth_pln=300_000.0)
+    taxlots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
+
+    r = advisor.exit_plan(
+        conn, cfg, shares_per_period=10.0, frequency="monthly", num_periods=2,
+        price_eur=8.0, eurpln_rate=4.0, start_date="2026-01-15")
+
+    assert r["concentration_before"]["configured"] is True
+    assert r["concentration_after"]["configured"] is True
+    assert r["concentration_after"]["employer_value_pln"] < (
+        r["concentration_before"]["employer_value_pln"])
+    assert r["concentration_after"]["pct"] < r["concentration_before"]["pct"]

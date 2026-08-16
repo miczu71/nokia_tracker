@@ -13,12 +13,23 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
+from dateutil.relativedelta import relativedelta
+
 from . import portfolio as portfoliom
 from .tax import grants as grantsm
 from .tax import losses as taxlosses
 from .tax import lots as taxlots
 from .tax import policy as taxpolicy
 from .tax import whatif as taxwhatif
+
+# Krok 31: standard branżowy dla ryzyka koncentracji (BofA Private Bank,
+# https://www.privatebank.bankofamerica.com/articles/concentrated-stock-positions.html) —
+# stała referencyjna pokazywana OBOK progu użytkownika (`concentration_alert_pct`), nie
+# zamiast niego.
+CONCENTRATION_BENCHMARK_LOW_PCT = 10.0
+CONCENTRATION_BENCHMARK_HIGH_PCT = 15.0
+
+_FREQUENCY_MONTHS = {"monthly": 1, "quarterly": 3}
 
 
 def forfeit_for_allocations(allocations: list[dict], rates_by_lot_id: dict[int, float]) -> dict:
@@ -238,6 +249,8 @@ def concentration(employer_value_pln: float, other_net_worth_pln: float,
         "threshold_pct": threshold_pct,
         "over_threshold": over_threshold,
         "configured": configured,
+        "benchmark_low_pct": CONCENTRATION_BENCHMARK_LOW_PCT,
+        "benchmark_high_pct": CONCENTRATION_BENCHMARK_HIGH_PCT,
     }
 
 
@@ -377,4 +390,157 @@ def optimize_sale_timing(conn: sqlite3.Connection, cfg: dict, quantity: float,
         "delta_forfeit_pln": delta_forfeit_pln,
         "delta_total_pln": delta_total_pln,
         "recommendation_pl": recommendation_pl,
+    }
+
+
+def _period_date(start_date: str, period: int, frequency: str) -> str:
+    """`period`-ty krok planu od `start_date` (1-indeksowany — okres 1 to PIERWSZA
+    sprzedaż, o jeden interwał PO dacie startu, nie w dniu startu). Miesiące dodawane
+    przez `dateutil.relativedelta` — biblioteka sama przycina do ostatniego dnia
+    miesiąca docelowego (np. 31 stycznia + 3 mies. -> 30 kwietnia), nie reimplementujemy
+    tego ręcznie."""
+    months = _FREQUENCY_MONTHS[frequency] * period
+    dt = datetime.strptime(start_date, "%Y-%m-%d") + relativedelta(months=months)
+    return dt.strftime("%Y-%m-%d")
+
+
+def exit_plan(conn: sqlite3.Connection, cfg: dict, shares_per_period: float,
+              frequency: str, num_periods: int, price_eur: float,
+              eurpln_rate: float | None = None, start_date: str | None = None) -> dict:
+    """„Sprzedawaj N akcji miesięcznie/kwartalnie przez K okresów" (krok 31,
+    docs/PLAN_KROK_31_koncentracja_v2.md) — CZYSTA wobec bazy: symuluje FIFO na
+    LOKALNEJ kopii `open_lots()`, nigdy nie zapisuje (`conn` służy wyłącznie do
+    odczytu, jak `optimize_sale_timing`/`espp_plan`). Cena i kurs EUR/PLN płaskie na
+    całym horyzoncie — ten sam, uczciwie udokumentowany kompromis co reszta modułu.
+
+    Strata z lat ubiegłych liczona per rok WYŁĄCZNIE z realnej
+    `tax/losses.py::available_for_year()` — świadomie NIE licząc strat generowanych
+    wewnątrz samego planu między jego własnymi latami (ten sam kompromis co
+    `optimize_sale_timing`)."""
+    if frequency not in _FREQUENCY_MONTHS:
+        raise ValueError(
+            f"Nieznana częstotliwość: {frequency!r} (oczekiwano 'monthly' lub 'quarterly')")
+    if shares_per_period <= 0:
+        raise ValueError("Ilość akcji na okres musi być dodatnia")
+    if num_periods <= 0:
+        raise ValueError("Liczba okresów musi być dodatnia")
+    if price_eur <= 0:
+        raise ValueError("Cena musi być dodatnia")
+    if start_date is None:
+        start_date = datetime.now().strftime("%Y-%m-%d")
+
+    candidates = taxlots.open_lots(conn, as_of=start_date)
+    total_available = sum(c["qty_remaining"] for c in candidates)
+    if shares_per_period * num_periods - total_available > taxlots._EPS:
+        raise taxlots.InsufficientLotsError(
+            f"Brak pokrycia: plan wymaga {shares_per_period * num_periods}, "
+            f"dostępne {total_available}")
+
+    # Realne, znane z góry daty uwolnienia — patrz doprecyzowanie w §B.5 planu:
+    # `restricted_own_lots(today=...)` NIE zmienia wyniku z przyszłą datą (opiera się
+    # na `vests.status` w bazie, nie na porównaniu dat), więc pobieramy raz i sami
+    # naliczamy cutoff po `free_until` per okres.
+    restricted = grantsm.restricted_own_lots(conn, today=start_date)
+    rates_by_lot_id = {item["lot_id"]: item["match_rate"] for item in restricted}
+    free_until_by_lot_id = {item["lot_id"]: item["free_until"] for item in restricted}
+
+    active_policy = cfg.get("cost_basis_policy", "own_only")
+    allowed_types = taxpolicy.POLICIES[active_policy]
+    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
+
+    periods: list[dict] = []
+    income_by_year: dict[int, float] = {}
+    for i in range(1, num_periods + 1):
+        sale_date = _period_date(start_date, i, frequency)
+        year = int(sale_date[:4])
+
+        plan = taxlots._plan_fifo(
+            candidates, shares_per_period, price_eur, 0.0, eurpln_rate or 0.0)
+        taken_by_lot = {a["lot_id"]: a["quantity"] for a in plan}
+        for c in candidates:
+            if c["id"] in taken_by_lot:
+                c["qty_remaining"] -= taken_by_lot[c["id"]]
+
+        revenue_pln = None
+        if eurpln_rate is not None:
+            revenue_pln = sum(a["revenue_pln"] for a in plan)
+            cost_pln = sum(a["cost_pln"] for a in plan if a["lot_type"] in allowed_types)
+            income_by_year[year] = income_by_year.get(year, 0.0) + (revenue_pln - cost_pln)
+
+        effective_rates = {
+            lot_id: (rate if sale_date < free_until_by_lot_id.get(lot_id, "0000-00-00") else 0.0)
+            for lot_id, rate in rates_by_lot_id.items()
+        }
+        forfeit = forfeit_for_allocations(plan, effective_rates)
+        _, forfeit_value_pln = grantsm._value(forfeit["forfeit_qty"], price_eur, eurpln_rate)
+
+        periods.append({
+            "period": i,
+            "sale_date": sale_date,
+            "year": year,
+            "quantity": shares_per_period,
+            "revenue_pln": round(revenue_pln, 2) if revenue_pln is not None else None,
+            "forfeit_qty": forfeit["forfeit_qty"],
+            "forfeit_value_pln": forfeit_value_pln,
+        })
+
+    years: list[dict] = []
+    for year in sorted(income_by_year):
+        base_income_pln = taxpolicy.compute_all_policies(
+            conn, cfg, year=year)[active_policy]["income_pln"]
+        combined_income_pln = base_income_pln + income_by_year[year]
+        loss_avail = taxlosses.available_for_year(conn, cfg, year, policy=active_policy)
+        usable_loss_pln = min(loss_avail["total_remaining_pln"], max(0.0, combined_income_pln))
+        income_after_loss_pln = max(0.0, combined_income_pln - usable_loss_pln)
+        years.append({
+            "year": year,
+            "income_pln": round(combined_income_pln, 2),
+            "usable_loss_pln": round(usable_loss_pln, 2),
+            "tax_pln": round(income_after_loss_pln * tax_rate, 2),
+        })
+
+    total_forfeit_qty = sum(p["forfeit_qty"] for p in periods)
+    _, total_forfeit_value_pln = grantsm._value(total_forfeit_qty, price_eur, eurpln_rate)
+    totals = {
+        "shares_sold": shares_per_period * num_periods,
+        "revenue_pln": (
+            round(sum(p["revenue_pln"] for p in periods), 2) if eurpln_rate is not None else None),
+        "tax_pln": round(sum(y["tax_pln"] for y in years), 2) if eurpln_rate is not None else None,
+        "forfeit_qty": total_forfeit_qty,
+        "forfeit_value_pln": total_forfeit_value_pln,
+        "net_proceeds_pln": None,
+    }
+    if totals["revenue_pln"] is not None and totals["tax_pln"] is not None:
+        totals["net_proceeds_pln"] = round(totals["revenue_pln"] - totals["tax_pln"], 2)
+
+    position = portfoliom.position_values_auto(conn, cfg, price_eur, eurpln_rate)
+    unvested = grantsm.unvested_summary(conn, price_eur, eurpln_rate, today=start_date)
+    restricted_summary = grantsm.restricted_own_summary(conn, price_eur, eurpln_rate, today=start_date)
+    buckets = portfoliom.dashboard_buckets(position, restricted_summary, unvested)
+    employer_value_pln_before = buckets["total"]["value_pln"]
+
+    concentration_before = None
+    concentration_after = None
+    if employer_value_pln_before is not None:
+        concentration_before = concentration(
+            employer_value_pln_before, cfg.get("other_net_worth_pln", 0.0),
+            cfg.get("concentration_alert_pct", 25.0))
+        if eurpln_rate is not None:
+            sold_value_pln = totals["shares_sold"] * price_eur * eurpln_rate
+            employer_value_pln_after = (
+                employer_value_pln_before - sold_value_pln - (total_forfeit_value_pln or 0.0))
+            concentration_after = concentration(
+                employer_value_pln_after, cfg.get("other_net_worth_pln", 0.0),
+                cfg.get("concentration_alert_pct", 25.0))
+
+    return {
+        "frequency": frequency,
+        "shares_per_period": shares_per_period,
+        "num_periods": num_periods,
+        "start_date": start_date,
+        "periods": periods,
+        "years": years,
+        "totals": totals,
+        "concentration_before": concentration_before,
+        "concentration_after": concentration_after,
     }

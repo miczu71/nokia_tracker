@@ -1013,6 +1013,20 @@ def create_app(db_path: str) -> Flask:
                     conn, cfg, float(timing_qty_raw), float(timing_price_raw),
                     eurpln_rate=eurpln_rate)
 
+            exit_result = None
+            exit_error = None
+            exit_qty_raw = request.args.get("exit_qty")
+            exit_freq_raw = request.args.get("exit_freq")
+            exit_periods_raw = request.args.get("exit_periods")
+            if exit_qty_raw and exit_freq_raw and exit_periods_raw:
+                try:
+                    exit_result = advisorm.exit_plan(
+                        conn, cfg, float(exit_qty_raw), exit_freq_raw,
+                        int(float(exit_periods_raw)), price_eur or 0.0,
+                        eurpln_rate=eurpln_rate)
+                except (ValueError, taxlots.InsufficientLotsError) as e:
+                    exit_error = str(e)
+
             return render_template(
                 "plan.html", active="plan", version=__version__,
                 overview=plan_overview, cfg=cfg, price_eur=price_eur,
@@ -1020,6 +1034,8 @@ def create_app(db_path: str) -> Flask:
                 espp_monthly=monthly_raw, espp_months=months_raw, espp_price=price_raw,
                 espp_scenarios=espp_scenarios,
                 timing_result=timing_result, timing_qty=timing_qty_raw, timing_price=timing_price_raw,
+                exit_result=exit_result, exit_error=exit_error,
+                exit_qty=exit_qty_raw, exit_freq=exit_freq_raw, exit_periods=exit_periods_raw,
                 has_restricted=bool(plan_overview["forfeit"]["items"]),
                 has_timeline=bool(plan_overview["timeline"]["tranches"]),
                 print_mode=request.args.get("print") == "1")
@@ -1094,6 +1110,44 @@ def create_app(db_path: str) -> Flask:
                 {"label": "Różnica netto (podatek + przepadek)",
                  "value": result["delta_total_pln"], "unit": "PLN", "emphasis": True},
             ]
+            return {"ok": True, "lines": lines}
+        finally:
+            conn.close()
+
+    @app.get("/api/preview/exit-plan")
+    def preview_exit_plan():
+        conn = _conn()
+        try:
+            try:
+                shares_per_period = float(request.args.get("exit_qty") or 0)
+                frequency = request.args.get("exit_freq") or ""
+                num_periods = int(float(request.args.get("exit_periods") or 0))
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+
+            cfg = settingsm.get_settings(conn)
+            ids = _ids(conn)
+            price_row = quotes.latest_quote(conn, ids["primary"], granularity="daily")
+            eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+            price_eur = price_row["close"] if price_row else None
+            eurpln_rate = eurpln_row["close"] if eurpln_row else None
+
+            try:
+                result = advisorm.exit_plan(
+                    conn, cfg, shares_per_period, frequency, num_periods,
+                    price_eur or 0.0, eurpln_rate=eurpln_rate)
+            except (ValueError, taxlots.InsufficientLotsError) as e:
+                return {"ok": False, "error": str(e)}
+
+            lines = [
+                {"label": "Łącznie sprzedanych akcji",
+                 "value": result["totals"]["shares_sold"], "unit": "szt."},
+            ]
+            if result["totals"]["tax_pln"] is not None:
+                lines.append({"label": "Podatek łącznie",
+                              "value": result["totals"]["tax_pln"], "unit": "PLN"})
+                lines.append({"label": "Na rękę", "value": result["totals"]["net_proceeds_pln"],
+                              "unit": "PLN", "emphasis": True})
             return {"ok": True, "lines": lines}
         finally:
             conn.close()

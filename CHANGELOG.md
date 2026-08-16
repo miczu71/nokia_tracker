@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.15.0] - 2026-08-16
+
+Krok 31 (`docs/PLAN_KROK_31_koncentracja_v2.md`), druga fala z Roadmapy v2 — ryzyko
+koncentracji v2: benchmark branżowy i planer systematycznego wyjścia. Zero migracji,
+zero nowych ustawień (`other_net_worth_pln`/`concentration_alert_pct` już istniały od
+kroku 26), zero nowych sensorów MQTT.
+
+### Dodano
+- **Benchmark branżowy 10–15%** na karcie „Ryzyko koncentracji" (`/plan`) — punkt
+  odniesienia (BofA Private Bank) pokazany jako nakładka na pasku, OBOK progu
+  użytkownika (`concentration_alert_pct`), nie zamiast niego. `advisor.concentration()`
+  zwraca teraz też `benchmark_low_pct`/`benchmark_high_pct` (stałe modułowe).
+- **Planer systematycznego wyjścia** — nowa `advisor.exit_plan()`: „sprzedawaj N akcji
+  miesięcznie/kwartalnie przez K okresów", symulacja FIFO na lokalnej kopii lotów (zero
+  zapisu do bazy, jak `espp_plan`/`optimize_sale_timing`), z podatkiem rok-po-roku
+  (netowanym realną stratą z lat ubiegłych, bez interakcji między latami samego planu —
+  udokumentowany kompromis), przepadkiem dopłaty ESPP per okres (dopasowanie przestaje
+  być zagrożone po znanej z góry dacie uwolnienia transzy, nawet jeśli `vests.status` w
+  bazie jeszcze się nie zaktualizował) i porównaniem koncentracji przed/po planie.
+  Piąta karta na `/plan`, nowy `GET /api/preview/exit-plan`.
+- Daty okresów planu liczone przez `dateutil.relativedelta` (już przypięty w
+  `requirements.txt`, dotąd nieużywany) — precyzyjne przycinanie końca miesiąca.
+
+### Zweryfikowano
+- 986 testów (964 → 986, +22: 14 `test_advisor.py`, 8 `test_web.py`).
+- Cała suita bez regresji po dodaniu dwóch kluczy do `concentration()`.
+
 ## [0.14.0] - 2026-08-16
 
 Krok 30 (`docs/PLAN_KROK_30_dywidendy.md`), pierwsza fala z Roadmapy v2

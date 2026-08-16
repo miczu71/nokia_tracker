@@ -55,6 +55,19 @@
       <input type="checkbox" name="ai_recommendations_enabled" {{ "checked" if cfg.ai_recommendations_enabled }}>
       Dzienna analiza (prognozy + rekomendacja) włączona
     </label>
+    <label class="check">
+      <input type="checkbox" name="ai_chat_enabled" {{ "checked" if cfg.ai_chat_enabled }}>
+      Asystent (/asystent) włączony
+    </label>
+    <label class="check">
+      <input type="checkbox" name="ai_chat_narration_enabled" {{ "checked" if cfg.ai_chat_narration_enabled }}>
+      Narracja AI w odpowiedziach asystenta (wyłącz, żeby zejść z 2 do 1 wywołania AI na pytanie —
+      liczby i tak zawsze pochodzą z silnika, nie z modelu)
+    </label>
+    <label>Dzienny limit wywołań AI — lokalny router freellmapi (darmowy, osobna pula od Gemini/Anthropic)
+      <input type="number" step="1" min="0" name="ai_max_calls_per_day_local" value="{{ cfg.ai_max_calls_per_day_local }}">
+      <span class="muted">0 = bez limitu.</span>
+    </label>
   </div>
 
   <div class="card">

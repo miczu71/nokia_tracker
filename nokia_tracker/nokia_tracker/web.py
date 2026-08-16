@@ -1273,6 +1273,10 @@ def create_app(db_path: str) -> Flask:
                 "gemini_model": request.form.get("gemini_model", ""),
                 "anthropic_model": request.form.get("anthropic_model", ""),
                 "ai_recommendations_enabled": 1 if request.form.get("ai_recommendations_enabled") else 0,
+                "ai_chat_enabled": 1 if request.form.get("ai_chat_enabled") else 0,
+                "ai_chat_narration_enabled": 1 if request.form.get("ai_chat_narration_enabled") else 0,
+                "ai_max_calls_per_day_local": int(
+                    request.form.get("ai_max_calls_per_day_local") or 500),
                 "alert_sentiment_drop": float(request.form.get("alert_sentiment_drop") or 0.5),
                 "alert_price_move_pct": float(request.form.get("alert_price_move_pct") or 3.0),
                 "alert_on_forecast_break": 1 if request.form.get("alert_on_forecast_break") else 0,

@@ -288,6 +288,26 @@ _MIGRATIONS = [
         total_due_pln_snapshot REAL NOT NULL
     );
     """,
+    # v9 — krok 29: asystent czatu nad własnymi danymi (docs/PLAN_KROK_29_asystent.md).
+    # Log trzyma zarówno rozpoznaną intencję/paramy, jak i policzony wynik silnika
+    # (result_json) — do debugowania błędnych rozpoznań i jako dowód, że odpowiedź
+    # faktycznie pochodzi z Pythona, nie z halucynacji modelu. `ok`=0 dla porażek
+    # (InsufficientLotsError itd.) — trzymane w logu razem z `error`, nie odrzucane.
+    """
+    CREATE TABLE chat_log (
+        id INTEGER PRIMARY KEY,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        question TEXT NOT NULL,
+        intent TEXT,
+        params_json TEXT,
+        result_json TEXT,
+        answer_pl TEXT,
+        provider TEXT,
+        ok INTEGER NOT NULL DEFAULT 1,
+        error TEXT
+    );
+    CREATE INDEX idx_chat_log_created ON chat_log(created_at);
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

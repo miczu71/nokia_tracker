@@ -30,6 +30,9 @@ export AI_MAX_CALLS_PER_DAY=$(jq -r '.ai_max_calls_per_day // "40"' "$CONFIG")
 export AI_NEWS_BATCH_SIZE=$(jq -r '.ai_news_batch_size // "15"' "$CONFIG")
 export AI_RECOMMENDATIONS_ENABLED=$(jq -r '.ai_recommendations_enabled // "true"' "$CONFIG")
 export ANALYSIS_TIME=$(jq -r '.analysis_time // "19:00"' "$CONFIG")
+export AI_CHAT_ENABLED=$(jq -r '.ai_chat_enabled // "true"' "$CONFIG")
+export AI_CHAT_NARRATION_ENABLED=$(jq -r '.ai_chat_narration_enabled // "true"' "$CONFIG")
+export AI_MAX_CALLS_PER_DAY_LOCAL=$(jq -r '.ai_max_calls_per_day_local // "500"' "$CONFIG")
 
 # --- alerty ---
 export NOTIFY_SERVICE=$(jq -r '.notify_service // ""' "$CONFIG")

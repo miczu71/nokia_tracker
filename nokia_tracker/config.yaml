@@ -47,6 +47,10 @@ options:
   ai_news_batch_size: 15
   ai_recommendations_enabled: true
   analysis_time: "19:00"
+  # --- asystent czatu (krok 29, 0.13.0) ---
+  ai_chat_enabled: true
+  ai_chat_narration_enabled: true
+  ai_max_calls_per_day_local: 500
   # --- alerty ---
   notify_service: ""
   alert_sentiment_drop: 0.5
@@ -103,6 +107,9 @@ schema:
   ai_news_batch_size: int
   ai_recommendations_enabled: bool
   analysis_time: str
+  ai_chat_enabled: bool
+  ai_chat_narration_enabled: bool
+  ai_max_calls_per_day_local: int
   notify_service: str?
   alert_sentiment_drop: float
   alert_price_move_pct: float

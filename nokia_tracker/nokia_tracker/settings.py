@@ -27,6 +27,10 @@ SETTINGS_TYPES: dict[str, type] = {
     "ai_news_batch_size": int,
     "ai_recommendations_enabled": int,
     "analysis_time": str,
+    # --- asystent czatu (krok 29, 0.13.0) ---
+    "ai_chat_enabled": int,
+    "ai_chat_narration_enabled": int,
+    "ai_max_calls_per_day_local": int,
     # --- alerty ---
     "notify_service": str,
     "alert_sentiment_drop": float,
@@ -76,6 +80,9 @@ DEFAULTS: dict[str, object] = {
     "ai_news_batch_size": 15,
     "ai_recommendations_enabled": 1,
     "analysis_time": "19:00",
+    "ai_chat_enabled": 1,
+    "ai_chat_narration_enabled": 1,
+    "ai_max_calls_per_day_local": 500,
     "notify_service": "",
     "alert_sentiment_drop": 0.5,
     "alert_price_move_pct": 3.0,

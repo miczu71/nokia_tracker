@@ -393,6 +393,44 @@ window.NT = (function () {
     clearSkeleton(el);
   }
 
+  function initDividendOutlookChart(canvasId, events) {
+    // Krok 30 (0.14.0): kalendarz dywidend - słupek na rękę (PLN) per zdarzenie,
+    // kolor wg pewności (potwierdzona/zapowiedziana/szacowana) - `events` to
+    // dokładnie `outlook.events` z dividend_outlook.calendar(), już policzone
+    // server-side, zero arytmetyki tutaj. Brak kursu EUR/PLN -> `net_in_hand_pln`
+    // jest `null` dla każdego zdarzenia -> Chart.js po prostu nie rysuje słupków
+    // (pusty wykres, nie błąd), karta "Założenia prognozy" tłumaczy dlaczego.
+    const el = document.getElementById(canvasId);
+    if (!el || !window.Chart || !events || !events.length) return;
+    const colorFor = (certainty) => (
+      certainty === "confirmed" ? cssVar("--series-1")
+      : certainty === "announced" ? cssVar("--series-2")
+      : cssVar("--muted")
+    );
+    new Chart(el.getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: events.map((e) => e.record_date),
+        datasets: [{
+          label: "Na rękę (PLN)",
+          data: events.map((e) => e.net_in_hand_pln),
+          backgroundColor: events.map((e) => colorFor(e.certainty)),
+          borderColor: events.map((e) => colorFor(e.certainty)),
+          borderWidth: 1, maxBarThickness: 48,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: { color: cssVar("--muted") }, grid: { display: false } },
+          y: { ticks: { color: cssVar("--muted") }, grid: { color: cssVar("--grid") } },
+        },
+      },
+    });
+    clearSkeleton(el);
+  }
+
   function initWaterfallChart(canvasId, w) {
     // Krok 28.4: waterfall Poz. C PIT-38 — przychód/koszt/dochód/strata
     // odliczona (informacyjna)/podatek/na rękę. Chart.js `bar` obsługuje
@@ -524,7 +562,7 @@ window.NT = (function () {
 
   return {
     initPriceChart, initRowToggles, initFormPreview, initNavGroups, initValueChart,
-    initCurrencyToggle, initBucketDonut, initDividendBarChart, initWaterfallChart,
-    initShowMore, initSortableTable, initStickyNavOffset,
+    initCurrencyToggle, initBucketDonut, initDividendBarChart, initDividendOutlookChart,
+    initWaterfallChart, initShowMore, initSortableTable, initStickyNavOffset,
   };
 })();

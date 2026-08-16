@@ -888,6 +888,148 @@ def test_dividends_page_shows_disclaimer(client):
     assert "nie doradztwo podatkowe" in html
 
 
+# --- kalendarz i harmonogram dywidend (krok 30, 0.14.0) ---
+
+def _seed_four_real_dividends(client, monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    for pay_date in ["2025-02-20", "2025-05-15", "2025-08-14", "2025-11-13"]:
+        client.post("/dividends", data={
+            "pay_date": pay_date, "gross_eur": "4.0", "quantity": "100.0",
+            "withholding_pct": "35.0",
+        })
+
+
+def test_dividends_page_shows_calendar_and_schedule_cards(client, monkeypatch):
+    _seed_four_real_dividends(client, monkeypatch)
+    html = client.get("/dividends").get_data(as_text=True)
+    assert "Kalendarz dywidend" in html
+    assert "Ogłoszony harmonogram" in html
+    assert "Założenia prognozy" in html
+
+
+def test_dividends_empty_db_calendar_shows_reason_not_crash(client):
+    resp = client.get("/dividends")
+    assert resp.status_code == 200
+    html = resp.get_data(as_text=True)
+    assert "Za mało realnych wypłat" in html
+
+
+def test_dividend_schedule_post_inserts_multiple_instalments(client):
+    resp = client.post("/dividends/harmonogram", data={
+        "fiscal_year": "2026",
+        "record_date_1": "2026-02-18", "per_share_1": "0.04",
+        "record_date_2": "2026-05-15", "per_share_2": "0.04",
+    })
+    assert resp.status_code == 302
+    html = client.get("/dividends").get_data(as_text=True)
+    assert "2026-02-18" in html
+    assert "2026-05-15" in html
+
+
+def test_dividend_schedule_post_skips_blank_instalments(client):
+    client.post("/dividends/harmonogram", data={
+        "fiscal_year": "2026",
+        "record_date_1": "2026-02-18", "per_share_1": "0.04",
+        "record_date_2": "", "per_share_2": "",
+    })
+    html = client.get("/dividends").get_data(as_text=True)
+    assert html.count("2026-02-18") >= 1
+
+
+def test_dividend_schedule_post_rejects_missing_fiscal_year(client):
+    resp = client.post("/dividends/harmonogram", data={
+        "record_date_1": "2026-02-18", "per_share_1": "0.04",
+    })
+    assert resp.status_code == 302
+    resp2 = client.get(resp.headers["Location"])
+    assert "rok obrotowy" in resp2.get_data(as_text=True).lower()
+
+
+def test_dividend_schedule_post_rejects_all_blank_instalments(client):
+    resp = client.post("/dividends/harmonogram", data={"fiscal_year": "2026"})
+    assert resp.status_code == 302
+    resp2 = client.get(resp.headers["Location"])
+    assert "co najmniej jedną ratę" in resp2.get_data(as_text=True).lower()
+
+
+def test_dividend_schedule_post_future_dates_are_accepted(client):
+    """_is_future_date świadomie NIE stosuje się do harmonogramu — daty przyszłe
+    są całym sensem tej tabeli."""
+    resp = client.post("/dividends/harmonogram", data={
+        "fiscal_year": "2030",
+        "record_date_1": "2030-01-01", "per_share_1": "0.05",
+    })
+    assert resp.status_code == 302
+    html = client.get("/dividends").get_data(as_text=True)
+    assert "error" not in resp.headers.get("Location", "").lower()
+    assert "2030-01-01" in html
+
+
+def test_dividend_schedule_post_upserts_same_instalment(client):
+    client.post("/dividends/harmonogram", data={
+        "fiscal_year": "2026",
+        "record_date_1": "2026-02-18", "per_share_1": "0.04",
+    })
+    client.post("/dividends/harmonogram", data={
+        "fiscal_year": "2026",
+        "record_date_1": "2026-02-20", "per_share_1": "0.045",
+        "confirmed_1": "on",
+    })
+    html = client.get("/dividends").get_data(as_text=True)
+    assert "2026-02-18" not in html
+    assert "2026-02-20" in html
+    assert html.count("potwierdzona") >= 1
+
+
+def test_dividend_schedule_delete_removes_row(client):
+    client.post("/dividends/harmonogram", data={
+        "fiscal_year": "2026",
+        "record_date_1": "2026-02-18", "per_share_1": "0.04",
+    })
+    html = client.get("/dividends").get_data(as_text=True)
+    assert "2026-02-18" in html
+
+    schedule_id = 1  # pierwszy wiersz w świeżej bazie testowej
+    resp = client.post(f"/dividends/harmonogram/{schedule_id}/delete")
+    assert resp.status_code == 302
+    html2 = client.get("/dividends").get_data(as_text=True)
+    assert "2026-02-18" not in html2
+
+
+def test_dividends_lata_query_param_changes_horizon(client, monkeypatch):
+    _seed_four_real_dividends(client, monkeypatch)
+    html_1y = client.get("/dividends?lata=1").get_data(as_text=True)
+    html_5y = client.get("/dividends?lata=5").get_data(as_text=True)
+    assert "1 rok</strong>" in html_1y
+    assert "5 lata</strong>" in html_5y
+
+
+def test_dividends_lata_invalid_value_falls_back_to_default(client):
+    resp = client.get("/dividends?lata=99")
+    assert resp.status_code == 200
+    assert "3 lata</strong>" in resp.get_data(as_text=True)
+
+
+def test_dividends_totals_unchanged_by_schedule_rows(client, monkeypatch):
+    """A4 (docs/PLAN_KROK_30_dywidendy.md): projekcja NIGDY nie wchodzi do `totals`
+    liczonych z zaksięgowanej historii — dodanie harmonogramu nie może zmienić
+    kafelków podsumowania na górze strony."""
+    _seed_four_real_dividends(client, monkeypatch)
+    before = client.get("/dividends").get_data(as_text=True)
+    before_summary = before.split("Kalendarz dywidend")[0]
+
+    client.post("/dividends/harmonogram", data={
+        "fiscal_year": "2027",
+        "record_date_1": "2027-02-18", "per_share_1": "0.10",
+    })
+
+    after = client.get("/dividends").get_data(as_text=True)
+    after_summary = after.split("Kalendarz dywidend")[0]
+    assert before_summary == after_summary
+
+
 # --- settings ---
 
 def test_settings_post_updates_and_redirects(client):

@@ -21,6 +21,7 @@ from . import __version__, advisor as advisorm, analysis, backup as backupm, db 
 from . import dashboard_insights
 from . import format as fmt
 from . import portfolio as portfoliom
+from . import dividend_outlook as outlookm
 from . import quotes, sensors
 from . import settings as settingsm
 from .analytics import attribution as analytics_attribution
@@ -380,10 +381,80 @@ def create_app(db_path: str) -> Flask:
                 {"year": y, "gross_pln": round(v["gross_pln"], 2), "net_pln": round(v["net_pln"], 2)}
                 for y, v in sorted(yearly.items())]
 
+            # Krok 30 (docs/PLAN_KROK_30_dywidendy.md): kalendarz i prognoza dywidend.
+            # `reconcile_schedule` dotyka tylko rat jeszcze niedopasowanych (indeks na
+            # `record_date`, tania operacja) — pod WRITE_LOCK, mimo że
+            # `backfill_missing_dividend_rates` wyżej nie jest (przedkrokowy stan, nie
+            # naprawiany tutaj, ale nowy zapis dostaje właściwy kontrakt od razu).
+            with dbm.WRITE_LOCK:
+                outlookm.reconcile_schedule(conn)
+            schedule = outlookm.list_schedule(conn)
+            lata_raw = request.args.get("lata")
+            years_ahead = int(lata_raw) if lata_raw in ("1", "3", "5") else 3
+            ids = _ids(conn)
+            eurpln_row = quotes.latest_quote(conn, ids["eurpln"], granularity="daily")
+            eurpln_rate = eurpln_row["close"] if eurpln_row else None
+            outlook = outlookm.calendar(conn, cfg, years_ahead=years_ahead,
+                                        eurpln_rate=eurpln_rate)
+
             return render_template(
                 "dividends.html", active="dividends", version=__version__,
                 items=items, totals=totals, cfg=cfg, saved=request.args.get("saved") == "1",
-                error=request.args.get("error"), yearly_dividends=yearly_dividends)
+                error=request.args.get("error"), yearly_dividends=yearly_dividends,
+                schedule=schedule, outlook=outlook, years_ahead=years_ahead)
+        finally:
+            conn.close()
+
+    @app.post("/dividends/harmonogram")
+    def dividend_schedule_post():
+        """Krok 30: jedno ogłoszenie WZA = jeden formularz, do 4 rat naraz. Puste raty
+        (pola bez `record_date`/`per_share`) są pomijane, nie zapisywane jako zera —
+        WZA nie zawsze uchwala od razu wszystkie 4 daty. Świadomie BEZ
+        `_is_future_date` — daty przyszłe są całym sensem tej tabeli (harmonogram
+        dotyczy wypłat, które jeszcze się nie odbyły), a `dividend_schedule` nigdy
+        nie dotyka NBP, więc walidacja stworzona dla `/lots`/`/dividends` tu by tylko
+        po cichu wyłączyła funkcję."""
+        conn = _conn()
+        try:
+            fiscal_year_raw = request.form.get("fiscal_year")
+            try:
+                fiscal_year = int(fiscal_year_raw)
+            except (TypeError, ValueError):
+                return redirect(url_for(
+                    "dividends_get", error="Podaj rok obrotowy harmonogramu"))
+            announced_on = request.form.get("announced_on") or None
+
+            saved_any = False
+            with dbm.WRITE_LOCK:
+                for instalment in range(1, 5):
+                    record_date = request.form.get(f"record_date_{instalment}")
+                    per_share_raw = request.form.get(f"per_share_{instalment}")
+                    if not record_date or not per_share_raw:
+                        continue
+                    payment_date = request.form.get(f"payment_date_{instalment}") or None
+                    confirmed = bool(request.form.get(f"confirmed_{instalment}"))
+                    outlookm.add_instalment(
+                        conn, fiscal_year=fiscal_year, instalment=instalment,
+                        record_date=record_date, gross_per_share_eur=float(per_share_raw),
+                        payment_date=payment_date, dates_confirmed=confirmed,
+                        announced_on=announced_on)
+                    saved_any = True
+
+            if not saved_any:
+                return redirect(url_for(
+                    "dividends_get",
+                    error="Wypełnij co najmniej jedną ratę harmonogramu (data + stawka)"))
+            return redirect(url_for("dividends_get", saved="1"))
+        finally:
+            conn.close()
+
+    @app.post("/dividends/harmonogram/<int:schedule_id>/delete")
+    def dividend_schedule_delete(schedule_id: int):
+        conn = _conn()
+        try:
+            with dbm.WRITE_LOCK:
+                outlookm.delete_instalment(conn, schedule_id)
+            return redirect(url_for("dividends_get", saved="1"))
         finally:
             conn.close()
 

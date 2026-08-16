@@ -140,6 +140,171 @@
   {% endif %}
 </div>
 
+<div class="card">
+  <div class="card-title">
+    Kalendarz dywidend
+    <span class="muted" style="float:right; font-weight:normal;">
+      Horyzont:
+      {% for y in [1, 3, 5] %}
+        {%- if y == years_ahead %}<strong>{{ y }} {{ 'rok' if y == 1 else 'lata' }}</strong>
+        {%- else %}<a href="{{ url_for('dividends_get', lata=y) }}">{{ y }} {{ 'rok' if y == 1 else 'lata' }}</a>
+        {%- endif -%}
+        {{ ' · ' if not loop.last }}
+      {% endfor %}
+    </span>
+  </div>
+  {% if outlook.events %}
+  <div class="chart-wrap chart-skeleton" style="height:220px">
+    <canvas id="dividend-outlook-chart"></canvas>
+  </div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Data</th><th>Rata</th><th class="num">Stawka/akcję</th>
+          <th class="num">Akcje uprawnione</th><th class="num">Brutto</th>
+          <th class="num">Na rękę (PLN)</th><th>Pewność</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in outlook.events %}
+        <tr>
+          <td class="nowrap" data-label="Data">
+            {% if e.date_precision == 'quarter' %}~{{ e.quarter_label }}
+            {%- else %}{{ e.record_date }}{% endif %}
+          </td>
+          <td data-label="Rata">
+            {% if e.instalment %}rata {{ e.instalment }}/{{ e.fiscal_year }}{% else %}—{% endif %}
+          </td>
+          <td class="num" data-label="Stawka/akcję">{{ e.gross_per_share_eur|money(4) }} EUR</td>
+          <td class="num" data-label="Akcje uprawnione">{{ e.entitled_qty|qty }}</td>
+          <td class="num" data-label="Brutto">{{ e.gross_eur|money }} EUR</td>
+          <td class="num" data-label="Na rękę (PLN)">
+            {{ e.net_in_hand_pln|money if e.net_in_hand_pln is not none else '—' }}
+          </td>
+          <td data-label="Pewność">
+            {% set certainty_labels = {'confirmed': 'potwierdzona', 'announced': 'zapowiedziana',
+                                        'estimated': 'szacowana'} %}
+            <span class="badge {{ 'saved' if e.certainty == 'confirmed' }}">
+              {{ certainty_labels[e.certainty] }}
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state(outlook.assumptions.reason or 'Brak zaplanowanych ani szacowanych wypłat w tym horyzoncie.') }}
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Ogłoszony harmonogram (WZA)</div>
+  {% if schedule %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Rok</th><th>Rata</th><th>Data</th><th class="num">Stawka/akcję</th>
+            <th>Status</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for s in schedule %}
+        <tr>
+          <td data-label="Rok">{{ s.fiscal_year }}</td>
+          <td data-label="Rata">{{ s.instalment }}</td>
+          <td class="nowrap" data-label="Data">{{ s.record_date }}</td>
+          <td class="num" data-label="Stawka/akcję">{{ '%.4f'|format(s.gross_per_share_eur) }} EUR</td>
+          <td data-label="Status">
+            {% if s.matched_dividend_id %}
+              <span class="badge saved">dopasowana do wypłaty</span>
+            {% elif s.dates_confirmed %}
+              <span class="badge saved">potwierdzona</span>
+            {% else %}
+              <span class="badge">zapowiedziana</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" style="display:inline"
+                  action="{{ url_for('dividend_schedule_delete', schedule_id=s.id) }}">
+              <button class="btn small" type="submit"
+                      onclick="return confirm('Usunąć ratę harmonogramu?')">Usuń</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state('Brak wpisanego harmonogramu — dodaj poniżej po ogłoszeniu przez WZA.') }}
+  {% endif %}
+
+  <details style="margin-top:1rem">
+    <summary>Dodaj / zaktualizuj harmonogram</summary>
+    <form class="form" method="post" action="{{ url_for('dividend_schedule_post') }}">
+      <div class="row2">
+        <label>Rok obrotowy
+          <input type="number" name="fiscal_year" required>
+        </label>
+        <label>Data ogłoszenia (opcjonalnie)
+          <input type="date" name="announced_on">
+        </label>
+      </div>
+      {% for i in [1, 2, 3, 4] %}
+      <div class="subcard">
+        <div class="subcard-title">Rata {{ i }}</div>
+        <div class="row3">
+          <label>Record date
+            <input type="date" name="record_date_{{ i }}">
+          </label>
+          <label>Data wypłaty (opcjonalnie)
+            <input type="date" name="payment_date_{{ i }}">
+          </label>
+          <label>Stawka/akcję (EUR)
+            <input type="number" step="0.0001" name="per_share_{{ i }}">
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" name="confirmed_{{ i }}"> Data potwierdzona (nie tylko kwota z WZA)
+        </label>
+      </div>
+      {% endfor %}
+      <div class="form-actions">
+        <button class="btn primary" type="submit">Zapisz harmonogram</button>
+      </div>
+    </form>
+  </details>
+</div>
+
+<div class="card">
+  <div class="card-title">Założenia prognozy</div>
+  <div class="grid stats">
+    {{ stat('Stawka na akcję',
+            (outlook.assumptions.per_share_eur|money(4) + ' EUR')
+            if outlook.assumptions.per_share_eur is not none else '—',
+            sub=(outlook.assumptions.per_share_low_eur|money(4) + '–' +
+                 outlook.assumptions.per_share_high_eur|money(4) + ' EUR z ' +
+                 outlook.assumptions.real_payments_used|string + ' ostatnich wypłat')
+                if outlook.assumptions.per_share_eur is not none else None) }}
+    {{ stat('Wypłat rocznie',
+            outlook.assumptions.payments_per_year
+            if outlook.assumptions.payments_per_year is not none else '—') }}
+    {{ stat('Realnych wypłat wykorzystanych', outlook.assumptions.real_payments_used) }}
+    {{ stat('Szacunkowych wykluczonych', outlook.assumptions.excluded_estimated_count,
+            sub='odtworzone z Vested Dividend Shares — brutto tam to cena akcji, nie stawka dywidendy') }}
+    {{ stat('Kurs EUR/PLN użyty',
+            outlook.assumptions.eurpln_rate|money(4)
+            if outlook.assumptions.eurpln_rate is not none else '—',
+            sub='bieżący, NIE zamrożony NBP D-1 (ten drugi dopiero przy realnej wypłacie)') }}
+    {{ stat('Zaległe transze pominięte', outlook.assumptions.overdue_excluded_qty|qty,
+            sub='nie liczą się do bazy uprawnionej — mogły już wejść do lotów') }}
+  </div>
+  {% if not outlook.assumptions.sufficient_history %}
+  <p class="disclaimer">{{ outlook.assumptions.reason }}</p>
+  {% endif %}
+</div>
+
 {% endblock %}
 {% block scripts %}
 <script>
@@ -156,6 +321,9 @@ NT.initFormPreview({
 });
 {% if yearly_dividends %}
 NT.initDividendBarChart("dividend-bar-chart", {{ yearly_dividends|tojson }});
+{% endif %}
+{% if outlook.events %}
+NT.initDividendOutlookChart("dividend-outlook-chart", {{ outlook.events|tojson }});
 {% endif %}
 NT.initSortableTable("dividends-table");
 </script>

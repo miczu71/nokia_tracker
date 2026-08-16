@@ -120,6 +120,96 @@ def daily_analysis_prompt(context: dict) -> str:
     )
 
 
+CHAT_INTENTS = [
+    "podatek_ze_sprzedazy", "ile_moge_sprzedac", "kiedy_vesting", "ile_zarobilem",
+    "dywidendy_w_roku", "koszt_sprzedazy_teraz", "porownanie_z_benchmarkiem",
+    "pit_za_rok", "straty_z_lat_ubieglych", "koncentracja_majatku", "kiedy_sprzedac",
+    "inne",
+]
+
+CHAT_INTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "intent": {
+            "type": "string",
+            "description": "Rozpoznana intencja pytania użytkownika o własny portfel/podatki",
+            "enum": CHAT_INTENTS,
+        },
+        "params": {
+            "type": "object",
+            "properties": {
+                "quantity": {"type": ["number", "null"],
+                            "description": "Liczba akcji, jeśli pytanie jej dotyczy, inaczej null"},
+                "year": {"type": ["integer", "null"],
+                        "description": "Rok podatkowy, jeśli pytanie go dotyczy, inaczej null"},
+                "price_eur": {"type": ["number", "null"],
+                             "description": "Cena akcji w EUR, jeśli podana w pytaniu, inaczej null"},
+                "horizon": {"type": ["string", "null"],
+                           "description": "Horyzont czasowy (np. 'rok', 'kwartał'), inaczej null"},
+            },
+            "required": ["quantity", "year", "price_eur", "horizon"],
+            "additionalProperties": False,
+        },
+        "confidence": {"type": "number", "description": "Pewność rozpoznania intencji, 0..1"},
+    },
+    "required": ["intent", "params", "confidence"],
+    "additionalProperties": False,
+}
+
+CHAT_NARRATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "answer_pl": {"type": "string",
+                     "description": "Naturalna odpowiedź po polsku, 1-3 zdania"},
+    },
+    "required": ["answer_pl"],
+    "additionalProperties": False,
+}
+
+
+def chat_intent_prompt(question: str, context: dict) -> str:
+    """context: {'today', 'years_with_data', 'cost_basis_policy'} — CELOWO
+    bez żadnej liczby z portfela (cena, ilość akcji, wartości pieniężne):
+    rozpoznanie intencji nie jest zadaniem tego wywołania, silnik Pythona
+    liczy DOPIERO po rozpoznaniu (architektura 3-stopniowa, krok 29)."""
+    years = ", ".join(str(y) for y in context.get("years_with_data") or []) or "brak danych"
+    return (
+        "Rozpoznaj intencję pytania użytkownika o WŁASNY portfel akcji Nokia Oyj "
+        "(NOKIA.HE) i polskie rozliczenie podatkowe akcji pracowniczych (ESPP/LTI). "
+        "Wybierz DOKŁADNIE JEDNĄ intencję z enumeracji w schemacie i wyciągnij z "
+        "pytania parametry (ilość akcji, rok, cena, horyzont) — zostaw null, gdy "
+        "dany parametr nie pada wprost w pytaniu, NIGDY nie zgaduj wartości liczbowej.\n\n"
+        f"Dziś: {context['today']}. Lata z danymi podatkowymi w systemie: {years}. "
+        f"Aktywna polityka kosztu nabycia: {context.get('cost_basis_policy', 'own_only')}.\n\n"
+        f"Pytanie użytkownika: {question}\n\n"
+        "Jeśli pytanie nie pasuje do żadnej znanej intencji (inna spółka, pogawędka, "
+        "prośba o poradę niezwiązaną z danymi w systemie), zwróć intent='inne'."
+    )
+
+
+def chat_narration_prompt(question: str, title: str, lines: list[dict],
+                          facts: dict | None = None) -> str:
+    """lines: [{'label','value','unit'}, ...] — JUŻ POLICZONE przez silnik
+    Pythona. Zadanie modelu to wyłącznie narracja PL wokół tych liczb, nigdy
+    ich zmiana ani dopisanie nowych (halucynacja kwoty ma być strukturalnie
+    niemożliwa — liczby i tak renderuje Jinja z `lines`, nie ten tekst)."""
+    lines_text = "\n".join(
+        f"- {l['label']}: {l['value']} {l.get('unit', '')}".strip() for l in lines
+    ) or "(brak policzonych wartości — silnik nie miał czego policzyć)"
+    return (
+        "Użytkownik zadał pytanie o własny portfel akcji Nokia lub polski podatek od "
+        "akcji pracowniczych. Poniżej są JUŻ POLICZONE przez silnik aplikacji wartości — "
+        "Twoim jedynym zadaniem jest ubrać je w naturalną, zwięzłą odpowiedź po polsku "
+        "(1-3 zdania). NIE ZMIENIAJ ANI NIE DOPISUJ ŻADNEJ LICZBY — użyj dokładnie tych "
+        "wartości i jednostek, które są na liście poniżej, nic więcej nie licz ani nie "
+        "zgaduj.\n\n"
+        f"Pytanie: {question}\n"
+        f"Temat: {title}\n"
+        f"Policzone wartości:\n{lines_text}\n\n"
+        "Napisz odpowiedź jednym-dwoma zdaniami po polsku, bez wstępów typu 'Oto odpowiedź'."
+    )
+
+
 def score_news_prompt(articles: list[dict]) -> str:
     """articles: [{'index':int,'title':str,'summary':str|None,'source':str|None}, ...]"""
     lines = [

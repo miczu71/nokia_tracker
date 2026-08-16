@@ -1,6 +1,17 @@
 """ai/prompts.py — daily_analysis_prompt nie crashuje na typowym/pustym
-kontekście i osadza kluczowe dane (BLUEPRINT §1, krok 7)."""
-from nokia_tracker.ai.prompts import DAILY_ANALYSIS_SCHEMA, daily_analysis_prompt
+kontekście i osadza kluczowe dane (BLUEPRINT §1, krok 7). Sekcja czatu
+(krok 29) dodatkowo pilnuje dwóch rzeczy strukturalnie ważnych dla
+architektury 3-stopniowej: prompt intencji NIE dostaje żadnych liczb z
+portfela (rozpoznanie intencji to nie zadanie tego wywołania — silnik
+liczy PO rozpoznaniu), a prompt narracji jawnie zabrania zmieniania liczb."""
+from nokia_tracker.ai.prompts import (
+    CHAT_INTENT_SCHEMA,
+    CHAT_NARRATION_SCHEMA,
+    DAILY_ANALYSIS_SCHEMA,
+    chat_intent_prompt,
+    chat_narration_prompt,
+    daily_analysis_prompt,
+)
 
 _CONTEXT = {
     "price_eur": 9.0, "change_pct_day": -1.2, "sma_20": 9.1, "sma_50": 9.3, "rsi_14": 45.0,
@@ -41,3 +52,79 @@ def test_daily_analysis_schema_has_required_top_level_keys():
         "key_risks", "market_vs_company_verdict", "recommendation",
         "recommendation_reason_pl", "recommendation_confidence",
     }
+
+
+# --- czat (krok 29) ---
+
+_CHAT_INTENTS = {
+    "podatek_ze_sprzedazy", "ile_moge_sprzedac", "kiedy_vesting", "ile_zarobilem",
+    "dywidendy_w_roku", "koszt_sprzedazy_teraz", "porownanie_z_benchmarkiem",
+    "pit_za_rok", "straty_z_lat_ubieglych", "koncentracja_majatku", "kiedy_sprzedac",
+    "inne",
+}
+
+
+def test_chat_intent_schema_enumerates_all_eleven_intents_plus_inne():
+    assert set(CHAT_INTENT_SCHEMA["properties"]["intent"]["enum"]) == _CHAT_INTENTS
+
+
+def test_chat_intent_schema_top_level_required_and_strict():
+    assert set(CHAT_INTENT_SCHEMA["required"]) == {"intent", "params", "confidence"}
+    assert CHAT_INTENT_SCHEMA["additionalProperties"] is False
+    assert CHAT_INTENT_SCHEMA["properties"]["params"]["additionalProperties"] is False
+
+
+def test_chat_intent_prompt_includes_question_and_years():
+    prompt = chat_intent_prompt("Ile zapłacę podatku sprzedając 500 akcji?", {
+        "today": "2026-08-16", "years_with_data": [2025, 2023], "cost_basis_policy": "own_only",
+    })
+    assert "Ile zapłacę podatku sprzedając 500 akcji?" in prompt
+    assert "2026-08-16" in prompt
+    assert "2025" in prompt and "2023" in prompt
+
+
+def test_chat_intent_prompt_handles_no_years_with_data():
+    prompt = chat_intent_prompt("Kiedy mam najbliższy vesting?", {
+        "today": "2026-08-16", "years_with_data": [], "cost_basis_policy": "own_only",
+    })
+    assert "brak" in prompt.lower()
+
+
+def test_chat_intent_prompt_carries_no_portfolio_numbers():
+    # Architektura 3-stopniowa (docs/PLAN_KROK_29_asystent.md): rozpoznanie intencji
+    # nie ma dostępu do liczb portfela — funkcja przyjmuje TYLKO
+    # today/years_with_data/cost_basis_policy, więc structurally nie może ich osadzić.
+    import inspect
+    params = inspect.signature(chat_intent_prompt).parameters
+    assert set(params) == {"question", "context"}
+
+
+def test_chat_narration_schema_requires_answer_pl_only():
+    assert CHAT_NARRATION_SCHEMA["required"] == ["answer_pl"]
+    assert CHAT_NARRATION_SCHEMA["additionalProperties"] is False
+
+
+def test_chat_narration_prompt_forbids_changing_numbers():
+    prompt = chat_narration_prompt(
+        "Ile zapłacę podatku?", "Podatek ze sprzedaży",
+        [{"label": "Podatek", "value": 1234.56, "unit": "PLN"}])
+    assert "nie zmieniaj" in prompt.lower()
+    assert "1234.56" in prompt
+    assert "PLN" in prompt
+
+
+def test_chat_narration_prompt_includes_all_lines():
+    prompt = chat_narration_prompt(
+        "Ile zarobiłem?", "Wynik", [
+            {"label": "Wartość rynkowa", "value": 10000.0, "unit": "PLN"},
+            {"label": "Zysk", "value": 500.0, "unit": "PLN", "emphasis": True},
+        ])
+    assert "Wartość rynkowa" in prompt
+    assert "10000.0" in prompt
+    assert "Zysk" in prompt
+    assert "500.0" in prompt
+
+
+def test_chat_narration_prompt_handles_empty_lines_without_crash():
+    prompt = chat_narration_prompt("Coś tam?", "Temat", [])
+    assert "brak" in prompt.lower()

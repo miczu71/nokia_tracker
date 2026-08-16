@@ -8,6 +8,62 @@
   {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
 </div>
 
+{% set PROVIDER_LABELS = {"local": "local (freellmapi)", "gemini": "gemini", "anthropic": "anthropic"} %}
+<div class="card">
+  <div class="card-title">Stan AI</div>
+  <p class="muted">
+    Aktywne ogniwo: <strong>{{ PROVIDER_LABELS.get(ai_status.active_provider, ai_status.active_provider) }}</strong>.
+    Limit dzienny liczony OSOBNO dla każdego ogniwa — wyczerpanie jednego nie blokuje pozostałych.
+  </p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Ogniwo</th><th>Klucz</th><th>Dziś</th><th>Limit</th><th>Zostało</th><th>Obwód</th></tr>
+      </thead>
+      <tbody>
+        {% for p in ai_status.providers %}
+        <tr>
+          <td>{{ PROVIDER_LABELS.get(p.name, p.name) }}</td>
+          <td>{{ "✓" if p.key_present else "—" }}</td>
+          <td class="num">{{ p.calls_today }} ({{ p.tokens_today }} tok.)</td>
+          <td class="num">{{ p.max_per_day if p.max_per_day > 0 else "bez limitu" }}</td>
+          <td class="num">{{ p.remaining_today if p.remaining_today is not none else "—" }}</td>
+          <td>
+            <span class="badge circuit-{{ p.circuit_status }}">{{ p.circuit_status }}</span>
+            {% if p.cooldown_remaining_seconds %}
+            <span class="muted">(cooldown {{ (p.cooldown_remaining_seconds / 60) | round(1) }} min)</span>
+            {% endif %}
+            {% if p.last_error %}
+            <div class="muted">{{ p.last_error }}</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted">
+    Router freellmapi ({{ cfg.local_llm_base_url or "brak adresu" }}):
+    {% if ai_status.router is none %}
+      nieskonfigurowany.
+    {% elif not ai_status.router.reachable %}
+      nieosiągalny.
+    {% else %}
+      osiągalny, {{ ai_status.local_models_count }} modeli
+      {%- if ai_status.local_models_count and not ai_status.local_model_supported %}
+        (wybrany model „{{ cfg.local_llm_model }}” może NIE wspierać JSON schema — sprawdź listę)
+      {% endif %}.
+      {% if ai_status.router.admin_auth %}
+        Panel admina: {{ ai_status.router.summary.requests_today if ai_status.router.summary else "brak danych" }}
+        zapytań dziś (wg statystyk routera).
+      {% else %}
+        Statystyki panelu admina (/api/health, /api/analytics) wymagają osobnego logowania
+        do routera — klucz API dodatku ich nie otwiera.
+      {% endif %}
+    {% endif %}
+  </p>
+</div>
+
 <form class="form" method="post" action="{{ url_for('settings_post') }}">
 
   <div class="card">

@@ -37,6 +37,7 @@ from .tax import policy as taxpolicy
 from .tax import trace as taxtrace
 from .tax import whatif as taxwhatif
 from .ai import openai_compat
+from .ai import status as ai_status
 
 logger = logging.getLogger(__name__)
 
@@ -1258,7 +1259,8 @@ def create_app(db_path: str) -> Flask:
                             if cfg["local_llm_base_url"] else [])
             return render_template(
                 "settings.html", active="settings", version=__version__, cfg=cfg,
-                local_models=local_models, saved=request.args.get("saved") == "1")
+                local_models=local_models, saved=request.args.get("saved") == "1",
+                ai_status=ai_status.snapshot(conn, dict(cfg, **_ai_keys()), local_models))
         finally:
             conn.close()
 

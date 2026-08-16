@@ -245,6 +245,11 @@ body {
 .badge.saved { color: var(--good); border-color: var(--good); }
 .badge.rec-kup, .badge.rec-akumuluj { color: var(--good); border-color: var(--good); }
 .badge.rec-redukuj, .badge.rec-sprzedaj { color: var(--bad); border-color: var(--bad); }
+/* Krok 29: stan obwodu AI (karta "Stan AI" + pasek nad /asystent) — reużywa
+   te same tokeny co reszta aplikacji, żaden nowy kolor. */
+.badge.circuit-ok { color: var(--good); border-color: var(--good); }
+.badge.circuit-degraded { color: var(--series-3); border-color: var(--series-3); }
+.badge.circuit-down { color: var(--bad); border-color: var(--bad); }
 
 .disclaimer {
   background: var(--page); border: 1px solid var(--grid);

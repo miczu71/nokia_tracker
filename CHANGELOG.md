@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.17.1] - 2026-08-19
+
+Bugfix produkcyjny — dywidenda reinwestowana od transzy LTI (RS Award) po cichu
+znikała z importu, dając rosnący co kwartał konflikt salda (`balance`) na `/imports`.
+
+### Naprawiono
+- **`importers/computershare_pdf.py` — `_DIVIDEND_RE` gubił wiersz „Dividend
+  (Reinvested)" dla planów LTI.** Pole „Entitled Quantity" wymagało kropki
+  dziesiętnej (`_NUM`), a Computershare drukuje je dla LTI jako całą liczbę akcji
+  bez kropki (np. `2734`), w przeciwieństwie do ułamkowych ilości ESPP (np.
+  `154.663115`). Cały wiersz nie dopasowywał się do regexu i dywidenda znikała
+  bez śladu — nie trafiała ani do `dividends`, ani jako lot `dividend_drip`, i
+  bez logu błędu. Naprawa: pole „Entitled Quantity" używa teraz `_INT` (kropka
+  opcjonalna), tak jak już istniejące pola „Quantity" w Withhold-to-Cover Typ A.
+  Znalezione na produkcji przy imporcie wyciągu z 2026-08-19: brakowało dywidendy
+  z record date 2026-07-24 od 2734 akcji LTI (vesting 2026-07-05/06), brutto
+  109,36 EUR, reinwestowane 7,81916 akcji po 9,091 EUR — co dawało konflikt
+  salda `balance:2026-08-18` (luka 9,43 akcji, tolerancja 2,0).
+- Nowy regresyjny test jednostkowy na dokładnie tym wierszu z realnego wyciągu
+  (`tests/test_computershare_pdf.py`); pełny zestaw 1049 testów zielony.
+
 ## [0.17.0] - 2026-08-16
 
 Krok 33 (`docs/PLAN_KROK_33_copilot.md`), czwarta fala z Roadmapy v2 — asystent

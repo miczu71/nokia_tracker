@@ -234,8 +234,13 @@ def parse_rs_award(text: str) -> list[dict]:
 
 # --- Dividend (Reinvested): 2 daty + entitled qty + 7 wartości (Gross Dividend Payment,
 # Taxes, Fees, Dividend Reinvested, Purchase Price, Purchased shares, Residual Amount) ---
+# Entitled Quantity używa _INT (kropka opcjonalna), nie _NUM: dla transzy LTI (RS Award,
+# całe akcje) Computershare drukuje ją bez kropki dziesiętnej (np. "2734"), w
+# przeciwieństwie do ułamkowych ilości ESPP ("154.663115") - z _NUM taki wiersz w ogóle
+# nie dopasowywał się i cała dywidenda LTI po cichu znikała z importu (znalezione na
+# realnym wyciągu 2026-08-19 jako konflikt salda "balance", ~7,82 akcji luki).
 _DIVIDEND_RE = re.compile(
-    rf"^({_DATE}){_SEP}({_DATE}){_SEP}({_NUM}){_SEP}"
+    rf"^({_DATE}){_SEP}({_DATE}){_SEP}({_INT}){_SEP}"
     rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}"
     rf"({_NUM})\s*EUR{_SEP}({_NUM})\s*EUR{_SEP}({_NUM}){_SEP}({_NUM})\s*EUR\s*$"
 )

@@ -218,6 +218,33 @@ def test_parse_dividends_extracts_all_ten_fields():
     assert r["residual_amount_eur"] == 0.0
 
 
+def test_parse_dividends_entitled_quantity_without_decimal_point_lti_whole_shares():
+    # Wiersz z realnego wyciągu 2026-08-19: dywidenda reinwestowana od transzy LTI
+    # (RS Award, 2734 akcji vestowanych 2026-07-09) - "Entitled Quantity" to okrągła
+    # liczba akcji BEZ kropki dziesiętnej (w przeciwieństwie do ułamkowych ilości ESPP),
+    # więc _NUM (kropka wymagana) nie dopasowuje całego wiersza i cała dywidenda
+    # (109.36 EUR brutto, 7.81916 akcji reinwestowanych) po cichu znikała z importu -
+    # to właśnie dało konflikt salda "balance" na produkcji (~7,82 akcji luki).
+    line = (
+        "24 Jul2026                        13  Aug 2026                  2734               "
+        "109.36 EUR        38.27 EUR       0.00 EUR           71.08  EUR       9.091 EUR          "
+        "7.81916            0.00 EUR"
+    )
+    rows = cp.parse_dividends(line)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["record_date"] == "2026-07-24"
+    assert r["purchase_date"] == "2026-08-13"
+    assert r["entitled_quantity"] == 2734.0
+    assert r["gross_dividend_payment_eur"] == 109.36
+    assert r["taxes_eur"] == 38.27
+    assert r["fees_eur"] == 0.0
+    assert r["dividend_reinvested_eur"] == 71.08
+    assert r["purchase_price_eur"] == 9.091
+    assert r["purchased_shares"] == 7.81916
+    assert r["residual_amount_eur"] == 0.0
+
+
 # --- krok 19: kontrola krzyżowa salda (BLUEPRINT §3a) — "Shares" na stronie 1 wyciągu
 # (sekcja "Assets by type") vs SUM(qty_remaining) w bazie.
 

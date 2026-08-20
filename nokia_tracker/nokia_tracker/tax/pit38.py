@@ -61,7 +61,10 @@ def _section_g(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
         return dict(_EMPTY_SECTION_G)
 
     result = dict(_EMPTY_SECTION_G)
-    result["dividend_count"] = len(rows)
+    # Krok 0.17.3: liczba WYPŁAT, nie wierszy `dividends` — Computershare drukuje osobny
+    # wiersz na każdy koszyk planu (ESPP, LTI) tej samej wypłaty (patrz
+    # `taxdiv.payouts()` docstring), więc `len(rows)` liczyłoby np. 5 dywidend zamiast 4.
+    result["dividend_count"] = len(taxdiv.payouts(conn, year=year))
     # Krok 20: dywidendy z odtworzonym brutto/podatkiem u źródła (Vested Dividend
     # Shares, lata bez sekcji transakcyjnej — patrz importers/computershare_pdf.py).
     # Krok 30: sygnał "to szacunek" wydzielony do taxdiv.is_estimated() (współdzielony

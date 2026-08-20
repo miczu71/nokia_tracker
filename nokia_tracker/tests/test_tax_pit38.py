@@ -89,6 +89,32 @@ def test_annual_report_section_g_has_estimated_true_when_any_dividend_estimated(
     assert report["section_g"]["has_estimated"] is True
 
 
+# --- krok 0.17.3: regresja produkcyjna po 0.17.2 - Computershare drukuje osobny wiersz
+# `dividends` na każdy koszyk planu (ESPP, LTI) tej samej wypłaty (patrz `taxdiv.payouts()`
+# docstring), więc `dividend_count` liczony jako `len(rows)` raportował 5 dywidend zamiast
+# 4 dla 2026. Musi liczyć WYPŁATY (`taxdiv.payouts()`), nie wiersze.
+
+def test_annual_report_section_g_dividend_count_counts_payouts_not_rows(conn):
+    _add_dividend(conn, "2024-01-30", gross_eur=100.0, taxes_eur=35.0)
+    _add_dividend(conn, "2024-04-24", gross_eur=50.0, taxes_eur=17.5)
+    # Ta sama wypłata (2024-07-24), dwa koszyki planu - jeden logiczny payout, dwa wiersze.
+    taxdiv.add_dividend(
+        conn, record_date="2024-07-24", entitled_quantity=2734.0,
+        gross_eur=109.36, taxes_eur=38.27, fees_eur=0.0,
+        natural_key="dividend:2024-07-24:lti")
+    taxdiv.add_dividend(
+        conn, record_date="2024-07-24", entitled_quantity=154.663115,
+        gross_eur=6.18, taxes_eur=2.16, fees_eur=0.0,
+        natural_key="dividend:2024-07-24:espp")
+
+    report = pit38.annual_report(conn, _base_cfg(), year=2024)
+
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM dividends WHERE strftime('%Y', pay_date) = '2024'"
+    ).fetchone()["c"] == 4
+    assert report["section_g"]["dividend_count"] == 3
+
+
 def test_annual_report_section_g_filters_by_year(conn):
     _add_dividend(conn, "2023-03-15", gross_eur=100.0, taxes_eur=35.0)
     _add_dividend(conn, "2024-03-15", gross_eur=50.0, taxes_eur=17.5)

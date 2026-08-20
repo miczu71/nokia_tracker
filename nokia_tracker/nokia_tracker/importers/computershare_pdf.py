@@ -275,22 +275,28 @@ def parse_dividends(text: str) -> list[dict]:
 # CAŁĄ rodzinę "wygląda jak wiersz dywidendy, nic nie dopasowało" zamiast pojedynczej
 # kolumny: DOKŁADNIE dwie kolumny dat na początku (odróżnia od Withhold-to-Cover Typ B,
 # które ma jedną, i od ESPP Purchase Confirmation, które ma cztery — negative lookahead
-# pilnuje, że trzecia kolumna NIE jest kolejną datą) + co najmniej 5 wystąpień "EUR"
-# (odróżnia od RS AWARD, które ma trzy daty ale zero "EUR", tylko "PLN").
-_DIVIDEND_SHAPE_RE = re.compile(rf"^{_DATE}{_SEP}{_DATE}{_SEP}(?!\s*{_DATE})")
+# pilnuje, że trzecia kolumna NIE jest kolejną datą; RS AWARD odpada już na samym `^`-owym
+# `_DATE`, bo zaczyna się od roku "2025 RS AWARD ...", nie od daty) + co najmniej 5
+# wystąpień "EUR" (RS AWARD i tak ma tylko "PLN", ale to druga, niezależna bariera).
+_DIVIDEND_SHAPE_RE = re.compile(rf"^({_DATE}){_SEP}({_DATE}){_SEP}(?!\s*{_DATE})")
 
 
 def find_unmatched_dividend_lines(text: str) -> list[str]:
     """Linie w kształcie wiersza "Dividend (Reinvested)", które NIE dopasowały
     `_DIVIDEND_RE` — sygnał nowej odmiany kolumnowej formatu, którą regex jeszcze nie
-    obsługuje, zanim (nie: zamiast) ktoś zauważy narastający konflikt salda."""
+    obsługuje, zanim (nie: zamiast) ktoś zauważy narastający konflikt salda.
+
+    Kolejność sprawdzeń celowo tania-najpierw: `_DIVIDEND_SHAPE_RE` jest zakotwiczone na
+    dwóch pierwszych kolumnach i odrzuca większość linii dokumentu w kilka instrukcji,
+    zanim dziesięciokolumnowy `_DIVIDEND_RE` w ogóle dostanie szansę."""
     unmatched = []
     for line in text.splitlines():
         stripped = line.strip()
+        if not (_DIVIDEND_SHAPE_RE.match(stripped) and stripped.count("EUR") >= 5):
+            continue
         if _DIVIDEND_RE.match(stripped):
             continue
-        if _DIVIDEND_SHAPE_RE.match(stripped) and stripped.count("EUR") >= 5:
-            unmatched.append(stripped)
+        unmatched.append(stripped)
     return unmatched
 
 
@@ -588,7 +594,8 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         elif _record_conflict(conn, import_id, "vest", vest_nk, dict(existing_vest), row):
             rows_conflict += 1
 
-    for row in parse_dividends(text):
+    dividend_rows = parse_dividends(text)
+    for row in dividend_rows:
         _check_dividend_arithmetic(row)
         nk = f"dividend:{row['record_date']}:{row['purchase_date']}:{row['entitled_quantity']}"
         existing = conn.execute(
@@ -609,7 +616,13 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
             rows_conflict += 1
 
     for unmatched_line in find_unmatched_dividend_lines(text):
-        line_key = f"dividend_unparsed:{hashlib.sha256(unmatched_line.encode()).hexdigest()[:16]}"
+        # Klucz z pól (dwie daty, które _DIVIDEND_SHAPE_RE gwarantuje że są obecne), nie z
+        # hasha całej linii — hash łamałby idempotencję na zmianie samego paddingu kolumn
+        # między importami (pdfplumber nie gwarantuje identycznych szerokości) i byłby
+        # nieczytelny w kolejce `import_conflicts`, w przeciwieństwie do reszty kluczy
+        # w tej funkcji (`dividend:`, `wtc:`, `purchase:`, `balance:`).
+        m = _DIVIDEND_SHAPE_RE.match(unmatched_line)
+        line_key = f"dividend_unparsed:{_date_iso(m.group(1))}:{_date_iso(m.group(2))}"
         if _record_conflict(conn, import_id, "dividend_unparsed", line_key, {},
                              {"line": unmatched_line}):
             rows_conflict += 1
@@ -618,7 +631,7 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
                 "wzorca — możliwa nowa odmiana formatu, dywidenda może cicho ginąć: %s",
                 unmatched_line)
 
-    dividend_transaction_rows = parse_dividends(text)
+    dividend_transaction_rows = dividend_rows
     if not dividend_transaction_rows:
         # Wyciąg bez sekcji "Dividend (Reinvested)" transakcyjnej (2022-2024) - jedyne
         # źródło reinwestowanej dywidendy to snapshot "Vested Dividend Shares". Tworzy

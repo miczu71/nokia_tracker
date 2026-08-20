@@ -27,17 +27,15 @@ AKCJI (~kilka EUR), nie stawka dywidendy. Naiwne liczenie dałoby stawkę ~150x 
 wysoką. Odróżnia je `taxdiv.is_estimated()` (niepuste `notes`) — `per_share_history()`
 te wiersze bezwzględnie wyklucza.
 
-Trzeci fakt (krok 0.17.2, po naprawie regexu Entitled Quantity w 0.17.1): Computershare
-drukuje w sekcji "Dividend (Reinvested)" OSOBNY wiersz na każdy koszyk planu (ESPP, LTI)
-uprawniony do tej samej wypłaty — bez żadnego identyfikatora planu w kolumnach (sprawdzone
-na realnym wyciągu 2026-08-19: wypłata 2026-07-24 ma dwa wiersze, 2734 akcji LTI i
-154.663115 akcji ESPP, nierozróżnialne poza ilością). `pay_date` w `dividends` więc NIE
-jest unikalny. `per_share_history()` grupuje realne wiersze po `pay_date` PRZED liczeniem
-mediany/kadencji/okna lookback — bez tego zdublowana data wstrzykuje odstęp 0 dni do
-mediany kadencji i wypycha starszą wypłatę z okna, zawyżając prognozę (~14% na danych
-produkcyjnych, patrz CHANGELOG 0.17.2)."""
+Trzeci fakt (krok 0.17.2/0.17.3): `dividends.pay_date` NIE jest unikalny — Computershare
+drukuje osobny wiersz na każdy koszyk planu (ESPP, LTI) uprawniony do tej samej wypłaty.
+Ten moduł o tym NIE wie bezpośrednio — jedyna definicja i grupowanie po wypłacie żyje w
+`tax/dividends.py::payouts()` (patrz jej docstring dla dowodu na realnych danych i dla
+tego, co się psuje bez grupowania), a `per_share_history()`/`reconcile_schedule()` niżej
+tylko z niej czytają."""
 from __future__ import annotations
 
+import logging
 import sqlite3
 import statistics
 from datetime import datetime, timedelta
@@ -45,6 +43,8 @@ from datetime import datetime, timedelta
 from .tax import dividends as taxdiv
 from .tax import grants as grantsm
 from .tax import lots as taxlots
+
+logger = logging.getLogger(__name__)
 
 # Poniżej tylu realnych (nie-szacunkowych) wypłat kalendarz nie zgaduje daty/kwoty
 # przyszłej wypłaty — pokazuje tylko to, co jest jawnie ogłoszone w
@@ -75,33 +75,12 @@ def per_share_history(conn: sqlite3.Connection, lookback: int = 4) -> dict:
     `sufficient=False` (poniżej `_MIN_REAL_PAYMENTS`) oznacza: silnik NIE zgaduje.
     `per_share_eur`/`payments_per_year` zostają `None`, `reason` tłumaczy dlaczego —
     honesty contract, nigdy zmyślonej stawki z 1-2 punktów danych."""
-    rows = conn.execute(
-        "SELECT pay_date, gross_eur, quantity, withholding_pct, notes FROM dividends "
-        "ORDER BY pay_date ASC").fetchall()
-
-    excluded = 0
-    real_rows = []
-    for r in rows:
-        if taxdiv.is_estimated(r):
-            excluded += 1
-            continue
-        if r["quantity"] and r["quantity"] > 0:
-            real_rows.append(r)
-
-    # Grupowanie po pay_date PRZED liczeniem czegokolwiek — patrz trzeci fakt w docstringu
-    # modułu. Jedna wypłata = jeden punkt danych w medianie/kadencji/oknie, niezależnie od
-    # tego, ile wierszy-koszyków planu Computershare dla niej wydrukował.
-    payments: dict[str, dict] = {}
-    for r in real_rows:
-        p = payments.setdefault(r["pay_date"], {
-            "pay_date": r["pay_date"], "gross_eur": 0.0, "quantity": 0.0,
-            "withholding_sum": 0.0, "withholding_weight": 0.0})
-        p["gross_eur"] += r["gross_eur"]
-        p["quantity"] += r["quantity"]
-        if r["withholding_pct"] is not None:
-            p["withholding_sum"] += r["withholding_pct"] * r["gross_eur"]
-            p["withholding_weight"] += r["gross_eur"]
-    payment_list = list(payments.values())
+    # Grupowanie po pay_date (jedna wypłata = jeden punkt danych w medianie/kadencji/oknie,
+    # niezależnie od tego, ile wierszy-koszyków planu Computershare dla niej wydrukował) i
+    # wykluczenie szacunków żyją w `taxdiv.payouts()` — patrz trzeci fakt w jej docstringu.
+    all_payouts = taxdiv.payouts(conn)
+    excluded = sum(p["estimated_row_count"] for p in all_payouts)
+    payment_list = [p for p in all_payouts if p["is_real"]]
 
     if len(payment_list) < _MIN_REAL_PAYMENTS:
         return {
@@ -118,8 +97,7 @@ def per_share_history(conn: sqlite3.Connection, lookback: int = 4) -> dict:
 
     window = payment_list[-lookback:]
     rates = [p["gross_eur"] / p["quantity"] for p in window]
-    withholdings = [p["withholding_sum"] / p["withholding_weight"]
-                    for p in window if p["withholding_weight"]]
+    withholdings = [p["withholding_pct"] for p in window if p["withholding_pct"] is not None]
 
     gaps = []
     for prev, cur in zip(payment_list, payment_list[1:]):
@@ -129,8 +107,8 @@ def per_share_history(conn: sqlite3.Connection, lookback: int = 4) -> dict:
     median_gap = statistics.median(gaps) if gaps else None
 
     return {
-        "items": [{"pay_date": p["pay_date"], "per_share_eur": p["gross_eur"] / p["quantity"]}
-                  for p in window],
+        "items": [{"pay_date": p["pay_date"], "per_share_eur": rate}
+                  for p, rate in zip(window, rates)],
         "excluded_estimated_count": excluded,
         "per_share_eur": statistics.median(rates),
         "per_share_low_eur": min(rates),
@@ -248,17 +226,22 @@ def calendar(conn: sqlite3.Connection, cfg: dict, years_ahead: int = 3,
             "date_precision": "day",
         })
 
+    gap_days_fallback = None
     if per_share["sufficient"]:
         last_real = per_share["items"][-1]["pay_date"]
         last_schedule = schedule_rows[-1]["record_date"] if schedule_rows else None
         seed = max(last_real, last_schedule) if last_schedule else last_real
         gap_days = int(round(per_share["median_gap_days"]))
         if gap_days <= 0:
-            # Zabezpieczenie: per_share_history() grupuje po pay_date właśnie po to, żeby
-            # mediana nigdy nie spadła do 0 (patrz trzeci fakt w docstringu modułu), ale to
-            # jedyna bariera między błędem danych i pętlą `while True` poniżej, która bez
-            # dodatniego gap_days nigdy się nie kończy — twardy fallback na kadencję.
-            gap_days = _CADENCE_DAYS[per_share["payments_per_year"]]
+            # `taxdiv.payouts()` grupuje po pay_date właśnie po to, żeby mediana nigdy nie
+            # spadła do 0 (patrz jej docstring) — ale to jedyna bariera przed `while True`
+            # niżej, więc twardy fallback zostaje jako niezależny invariant pętli.
+            gap_days = _CADENCE_DAYS.get(per_share["payments_per_year"], 91)
+            gap_days_fallback = gap_days
+            logger.warning(
+                "calendar(): median_gap_days=%r niedodatnie, fallback na kadencję %d dni "
+                "(payments_per_year=%r) — możliwy błąd danych w dividends",
+                per_share["median_gap_days"], gap_days, per_share["payments_per_year"])
 
         cur_dt = datetime.strptime(seed, "%Y-%m-%d")
         while True:
@@ -333,6 +316,12 @@ def calendar(conn: sqlite3.Connection, cfg: dict, years_ahead: int = 3,
     assumptions["eurpln_rate"] = eurpln_rate
     assumptions["fx_basis"] = "current"
     assumptions["years_ahead"] = years_ahead
+    if gap_days_fallback is not None:
+        # Honesty contract (docstring modułu) — projekcja poniżej faktycznie kroczyła co
+        # `gap_days_fallback` dni, nie co zgłoszone przez per_share_history() zdegenerowane
+        # `median_gap_days`; assumptions ma pokazywać wartość, która NAPRAWDĘ napędziła
+        # zdarzenia, nie surowe (błędne) dane wejściowe.
+        assumptions["median_gap_days"] = gap_days_fallback
 
     return {
         "events": events,
@@ -419,33 +408,30 @@ def reconcile_schedule(conn: sqlite3.Connection, today: str | None = None) -> in
     (3) inaczej `NULL`, nigdy zgadywania.
 
     Jednoznaczność liczona jest na poziomie DATY, nie pojedynczego wiersza `dividends` —
-    Computershare drukuje osobny wiersz na każdy koszyk planu tej samej wypłaty (patrz
-    trzeci fakt w docstringu modułu), więc jedna data może mieć >1 wiersz i to wciąż jest
-    jednoznaczne dopasowanie. `matched_dividend_id` (kolumna FK na jeden wiersz) wskazuje
-    wtedy na wiersz o najniższym `id` w grupie jako deterministycznego reprezentanta całej
-    daty. Raz dopasowana data jest CAŁA wyłączona z dalszej puli kandydatów — inaczej druga
-    rata mogłaby złapać drugi wiersz tej samej wypłaty. Zwraca liczbę nowo rozwiązanych rat."""
+    `taxdiv.payouts()` grupuje po `pay_date` (patrz jej docstring: Computershare drukuje
+    osobny wiersz na każdy koszyk planu tej samej wypłaty), więc jedna data może mieć >1
+    wiersz i to wciąż jest jednoznaczne dopasowanie. `matched_dividend_id` (kolumna FK na
+    jeden wiersz) wskazuje wtedy na `payouts()["ids"][0]` — najniższy `id` w grupie — jako
+    deterministycznego reprezentanta całej daty. Raz dopasowana data jest CAŁA wyłączona z
+    dalszej puli kandydatów — inaczej druga rata mogłaby złapać drugi wiersz tej samej
+    wypłaty. Zwraca liczbę nowo rozwiązanych rat."""
     if today is None:
         today = datetime.now().strftime("%Y-%m-%d")
 
-    matched_ids = {
-        r["matched_dividend_id"] for r in conn.execute(
-            "SELECT matched_dividend_id FROM dividend_schedule "
-            "WHERE matched_dividend_id IS NOT NULL").fetchall()
+    already_matched_dates = {
+        r["pay_date"] for r in conn.execute(
+            "SELECT DISTINCT d.pay_date FROM dividend_schedule s "
+            "JOIN dividends d ON d.id = s.matched_dividend_id "
+            "WHERE s.matched_dividend_id IS NOT NULL").fetchall()
     }
-    already_matched_dates = set()
-    if matched_ids:
-        placeholders = ",".join("?" * len(matched_ids))
-        already_matched_dates = {
-            r["pay_date"] for r in conn.execute(
-                f"SELECT pay_date FROM dividends WHERE id IN ({placeholders})",
-                tuple(matched_ids)).fetchall()
-        }
 
     pending = conn.execute(
         "SELECT * FROM dividend_schedule WHERE status = 'announced' "
         "AND matched_dividend_id IS NULL AND record_date <= ? "
         "ORDER BY record_date ASC", (today,)).fetchall()
+
+    payout_ids_by_date = {p["pay_date"]: p["ids"] for p in taxdiv.payouts(conn)}
+    payout_dates = sorted(payout_ids_by_date)
 
     resolved = 0
     for row in pending:
@@ -453,25 +439,17 @@ def reconcile_schedule(conn: sqlite3.Connection, today: str | None = None) -> in
         if record_date in already_matched_dates:
             continue
 
-        exact_ids = [d["id"] for d in conn.execute(
-            "SELECT id FROM dividends WHERE pay_date = ?", (record_date,)).fetchall()]
+        lo, hi = _shift_date(record_date, -5), _shift_date(record_date, 5)
+        window_dates = {d for d in payout_dates if lo <= d <= hi} - already_matched_dates
 
-        if exact_ids:
-            candidate_ids = exact_ids
-            match_date = record_date
+        if record_date in window_dates:
+            match_date = record_date            # reguła (1): dokładne trafienie wygrywa
+        elif len(window_dates) == 1:
+            (match_date,) = window_dates        # reguła (2): jednoznaczne okno
         else:
-            window_rows = conn.execute(
-                "SELECT id, pay_date FROM dividends WHERE pay_date BETWEEN ? AND ?",
-                (_shift_date(record_date, -5), _shift_date(record_date, 5))
-            ).fetchall()
-            window_dates = {d["pay_date"] for d in window_rows
-                             if d["pay_date"] not in already_matched_dates}
-            if len(window_dates) != 1:
-                continue
-            (match_date,) = window_dates
-            candidate_ids = [d["id"] for d in window_rows if d["pay_date"] == match_date]
+            continue
 
-        matched_id = min(candidate_ids)
+        matched_id = payout_ids_by_date[match_date][0]
         conn.execute(
             "UPDATE dividend_schedule SET matched_dividend_id = ? WHERE id = ?",
             (matched_id, row["id"]))

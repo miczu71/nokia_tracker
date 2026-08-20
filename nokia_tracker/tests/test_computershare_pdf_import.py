@@ -138,10 +138,16 @@ def test_reimporting_withhold_type_b_does_not_duplicate_conflict_row(conn, _fake
 # zniknąć - dokładnie to zniknęło bez śladu w regresji naprawionej w 0.17.1, zanim ten
 # guard w ogóle istniał.
 
-_BROKEN_DIVIDEND_LINE = (
-    "30 Jan 2026                       19 Feb  2026            X                  1.84 EUR        "
-    "0.64 EUR       0.00 EUR            1.20 EUR      6.3015  EUR          0.19028           0.00 EUR\n"
-)
+# Wyprowadzona z _DIVIDEND_LINE (nie retypowana ręcznie) - popsuta kolumna Entitled
+# Quantity (litera zamiast liczby) automatycznie dziedziczy realny układ kolumn, więc nie
+# może pozostać nieaktualna, gdy _DIVIDEND_LINE zacznie śledzić inny realny wyciąg.
+_BROKEN_DIVIDEND_LINE = _DIVIDEND_LINE.replace("61.491555", "X")
+
+# Ta sama linia co _BROKEN_DIVIDEND_LINE, ale z innym paddingiem kolumn (pdfplumber nie
+# gwarantuje identycznych szerokości między wyciągami) - klucz naturalny (krok 0.17.3:
+# dwie daty, nie hash całej linii) musi wciąż zdeduplikować, mimo że bajty linii różnią się.
+_BROKEN_DIVIDEND_LINE_DIFFERENT_PADDING = _BROKEN_DIVIDEND_LINE.replace(
+    "X                  1.84", "X          1.84")
 
 
 def test_import_statement_flags_unparsed_dividend_shaped_line(conn, monkeypatch):
@@ -166,6 +172,27 @@ def test_reimporting_unparsed_dividend_line_does_not_duplicate_conflict_row(conn
         lambda pdf_bytes: text)
 
     cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+
+    conflicts = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'dividend_unparsed'").fetchall()
+    assert len(conflicts) == 1
+
+
+def test_reimporting_unparsed_dividend_line_with_different_padding_does_not_duplicate(
+        conn, monkeypatch):
+    # krok 0.17.3: klucz naturalny jest z pól (dwie daty), nie z hasha całej linii -
+    # pdfplumber nie gwarantuje identycznego paddingu kolumn między wyciągami, więc
+    # dedupe musi przetrwać różnicę w samych odstępach, nie tylko bajt-w-bajt identyczny
+    # tekst (co poprzedni hash-owy klucz po cichu zakładał).
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _BROKEN_DIVIDEND_LINE)
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _BROKEN_DIVIDEND_LINE_DIFFERENT_PADDING)
     cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
 
     conflicts = conn.execute(

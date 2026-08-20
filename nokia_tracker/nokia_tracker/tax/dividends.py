@@ -136,6 +136,70 @@ def is_estimated(row) -> bool:
     return bool(row["notes"])
 
 
+def payouts(conn: sqlite3.Connection, year: str | int | None = None) -> list[dict]:
+    """Wypłaty dywidendy, POGRUPOWANE po `pay_date` — jedna wypłata = jeden element,
+    niezależnie od tego, ile wierszy `dividends` Computershare dla niej wydrukował.
+
+    Fakt (krok 0.17.2, znaleziony na realnym wyciągu 2026-08-19): Computershare drukuje
+    w sekcji "Dividend (Reinvested)" OSOBNY wiersz na każdy koszyk planu (ESPP, LTI)
+    uprawniony do TEJ SAMEJ wypłaty — bez identyfikatora planu w kolumnach, nierozróżnialne
+    poza ilością (wypłata 2026-07-24: 2734 akcji LTI + 154.663115 akcji ESPP). `pay_date`
+    w `dividends` więc NIE jest unikalny. Ta funkcja jest JEDYNYM miejscem, które o tym
+    wie — analogicznie do `is_estimated()` powyżej ("jedna definicja, nie dwie rozjeżdżające
+    się z czasem"). Każdy konsument tabeli `dividends`, dla którego liczy się WYPŁATA a nie
+    WIERSZ (liczba dywidend, mediana stawki/kadencji, dopasowanie harmonogramu), powinien
+    czytać stąd, nie bezpośrednio z `dividends`.
+
+    Filtrowanie szacunków (`is_estimated()`) dzieje się PRZED grupowaniem, na poziomie
+    wiersza — grupa przeżywa, jeśli ma choć jeden wiersz realny; wiersze szacunkowe w niej
+    są zliczone w `estimated_row_count`, ale nie wchodzą do sum. Dwa realne koszyki tej
+    samej wypłaty nigdy nie mieszają się z wierszem szacunkowym z odtworzenia "Vested
+    Dividend Shares" (inne lata, inna semantyka `gross_eur/quantity` — patrz docstring
+    `dividend_outlook.py`).
+
+    Każdy element: `pay_date`, `ids` (id wierszy rosnąco — `ids[0]` to deterministyczny
+    reprezentant grupy, bezpieczny bo SQLite rowid tylko rośnie, więc później zaimportowany
+    koszyk nigdy nie wyprze wcześniejszego), `gross_eur`/`quantity` (sumy po wierszach
+    realnych), `withholding_pct` (średnia ważona `gross_eur` po wierszach realnych z
+    niepustym `withholding_pct`, `None` gdy żaden), `real_row_count`, `estimated_row_count`,
+    `is_real` (`real_row_count > 0`). Posortowane rosnąco po `pay_date`."""
+    query = "SELECT * FROM dividends"
+    params: tuple = ()
+    if year is not None:
+        query += " WHERE strftime('%Y', pay_date) = ?"
+        params = (str(year),)
+    query += " ORDER BY pay_date ASC, id ASC"
+    rows = conn.execute(query, params).fetchall()
+
+    grouped: dict[str, dict] = {}
+    for r in rows:
+        p = grouped.setdefault(r["pay_date"], {
+            "pay_date": r["pay_date"], "ids": [], "gross_eur": 0.0, "quantity": 0.0,
+            "withholding_sum": 0.0, "withholding_weight": 0.0,
+            "real_row_count": 0, "estimated_row_count": 0})
+        p["ids"].append(r["id"])
+        if is_estimated(r):
+            p["estimated_row_count"] += 1
+            continue
+        if not (r["quantity"] and r["quantity"] > 0):
+            continue
+        p["real_row_count"] += 1
+        p["gross_eur"] += r["gross_eur"]
+        p["quantity"] += r["quantity"]
+        if r["withholding_pct"] is not None:
+            p["withholding_sum"] += r["withholding_pct"] * r["gross_eur"]
+            p["withholding_weight"] += r["gross_eur"]
+
+    result = []
+    for p in grouped.values():
+        p["is_real"] = p["real_row_count"] > 0
+        p["withholding_pct"] = (
+            p["withholding_sum"] / p["withholding_weight"] if p["withholding_weight"] else None)
+        del p["withholding_sum"], p["withholding_weight"]
+        result.append(p)
+    return result
+
+
 def compute_dividend_tax(gross_eur: float, withholding_pct: float,
                          treaty_withholding_pct: float,
                          pl_capital_gains_tax_pct: float) -> dict:

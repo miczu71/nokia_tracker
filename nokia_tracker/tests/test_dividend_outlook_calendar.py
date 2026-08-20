@@ -256,19 +256,16 @@ def test_ntm_net_in_hand_pln_sums_events_with_fx_rate(conn):
     assert result["ntm_net_in_hand_pln"] == pytest.approx(expected)
 
 
-# --- krok 0.17.2: guard przeciw pętli nieskończonej, gdyby median_gap_days kiedyś jednak
-# spadło do 0/ujemnej wartości (per_share_history() temu zapobiega grupowaniem po
-# pay_date, ale to jedyna bariera przed `while True` w projekcji zdarzeń szacowanych) ---
+# --- krok 0.17.2/0.17.3: guard przeciw pętli nieskończonej, gdyby median_gap_days kiedyś
+# jednak spadło do 0/ujemnej wartości (`taxdiv.payouts()` temu zapobiega grupowaniem po
+# pay_date, więc ten stan jest dziś nieosiągalny przez realne dane — stąd monkeypatch, nie
+# specjalnie spreparowany import — ale to jedyna bariera przed `while True` w projekcji
+# zdarzeń szacowanych) ---
 
 def test_calendar_falls_back_to_cadence_when_median_gap_is_degenerate(conn, monkeypatch):
-    fake_per_share = {
-        "items": [{"pay_date": "2026-01-30", "per_share_eur": 0.04}],
-        "excluded_estimated_count": 0, "per_share_eur": 0.04,
-        "per_share_low_eur": 0.04, "per_share_high_eur": 0.04,
-        "last_per_share_eur": 0.04, "withholding_pct": 35.0,
-        "median_gap_days": 0, "payments_per_year": 4,
-        "sufficient": True, "reason": None,
-    }
+    _seed_four_quarterly(conn)
+    real_per_share = outlook.per_share_history(conn)
+    fake_per_share = {**real_per_share, "median_gap_days": 0}
     monkeypatch.setattr(outlook, "per_share_history", lambda conn, lookback=4: fake_per_share)
 
     result = outlook.calendar(conn, _cfg(), today="2026-01-01", years_ahead=1)
@@ -278,3 +275,6 @@ def test_calendar_falls_back_to_cadence_when_median_gap_is_degenerate(conn, monk
     assert result["events"]
     dates = [e["record_date"] for e in result["events"]]
     assert len(dates) == len(set(dates))
+    # Honesty contract: assumptions ma pokazywać wartość, która NAPRAWDĘ napędziła
+    # projekcję (fallback), nie zdegenerowane 0 z (spreparowanego) wejścia.
+    assert result["assumptions"]["median_gap_days"] == 91

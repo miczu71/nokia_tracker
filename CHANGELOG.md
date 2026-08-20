@@ -1,5 +1,48 @@
 # Changelog
 
+## [0.17.3] - 2026-08-20
+
+`/simplify` code-quality pass na diffie 0.17.2 (reuse/simplification/efficiency/altitude,
+4 agenty równolegle). Trzy z czterech kątów były czystymi porządkami bez zmiany zachowania;
+altitude znalazł prawdziwy defekt, który 0.17.2 zostawiło: fakt „`dividends.pay_date` nie
+jest unikalny" był nauczony ręcznie w trzech miejscach i nigdzie zapisany współdzielenie —
+jeden konsument nigdy się go nie nauczył.
+
+**Widoczna zmiana:** sekcja G PIT-38 (`/pit38`, eksport CSV/XLSX, asystent czatu) pokazywała
+**5 dywidend za 2026 zamiast 4** — `dividend_count` liczyło wiersze `dividends`, nie wypłaty.
+Kwoty (`gross_pln`, podatki) były poprawne, bo są addytywne/liniowe — zła była wyłącznie
+liczba. To korekta, nie regresja.
+
+### Naprawiono
+- **`tax/pit38.py::_section_g()` — `dividend_count` liczy WYPŁATY, nie wiersze
+  `dividends`.** Ta sama przyczyna co 0.17.2 (Computershare drukuje osobny wiersz na każdy
+  koszyk planu ESPP/LTI tej samej wypłaty), ale ten konsument nie przeszedł przez fix
+  0.17.2, bo czytał `dividends` bezpośrednio.
+
+### Zrefaktoryzowano (bez zmiany zachowania)
+- **Nowa `tax/dividends.py::payouts()`** — jedyna definicja grupowania po `pay_date`,
+  obok istniejącej `is_estimated()` (ta sama zasada: jedna definicja, nie kilka
+  rozjeżdżających się z czasem). `per_share_history()`, `reconcile_schedule()` i teraz
+  `_section_g()` czytają stąd zamiast każde na nowo wyprowadzać ten sam fakt.
+- **`dividend_outlook.py::reconcile_schedule()`** — jedno zapytanie zamiast dwóch rund
+  (`JOIN` zamiast ręcznie budowanego `IN (?,?,...)`), jedna ścieżka dopasowania zamiast
+  osobnej dla trafienia dokładnego i okna ±5 dni.
+- **`dividend_outlook.py::calendar()`** — fallback kadencji przy zdegenerowanym
+  `gap_days` teraz zapisuje się do `assumptions` i loguje ostrzeżenie, zamiast cicho
+  naprawiać się przy jednoczesnym pokazywaniu userowi błędnego `median_gap_days=0`
+  (honesty contract modułu).
+- **`importers/computershare_pdf.py::find_unmatched_dividend_lines()`** — tani regex
+  kształtu sprawdzany przed drogim `_DIVIDEND_RE` (kolejność testów), klucz konfliktu
+  `dividend_unparsed` zbudowany z dwóch dat zamiast hasha całej linii (hash łamał
+  idempotencję przy zmianie samego paddingu kolumn między importami — pdfplumber nie
+  gwarantuje identycznych szerokości).
+
+### Zweryfikowano
+1077 testów zielonych (1065 + 12 nowych: kontrakt `payouts()`, regresja liczby dywidend
+w sekcji G, dedupe konfliktu mimo różnego paddingu kolumn). Cleanupy w
+`per_share_history()`/`reconcile_schedule()`/detektorze nie zmieniły ani jednej istniejącej
+asercji — behavior-neutral, potwierdzone przebiegiem pełnego zestawu testów przed i po.
+
 ## [0.17.2] - 2026-08-20
 
 Naprawa skutków ubocznych 0.17.1 (`/code-review`, tego samego dnia po

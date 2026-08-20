@@ -165,3 +165,56 @@ def test_matched_row_reconciles_again_without_change(conn):
     resolved_again = outlook.reconcile_schedule(conn, today="2026-06-01")
 
     assert resolved_again == 0
+
+
+# --- krok 0.17.2: dwa wiersze `dividends` na jedną pay_date (Computershare drukuje osobny
+# wiersz na każdy koszyk planu — LTI/ESPP — tej samej wypłaty, patrz trzeci fakt w
+# docstringu dividend_outlook). Regresja produkcyjna po 0.17.1: rata na 2026-07-24 nigdy
+# się nie dopasowywała, bo `len(exact) == 2` (dwa wiersze) łamało regułę "dokładnie jeden
+# kandydat" na poziomie wiersza zamiast daty.
+
+def test_reconcile_matches_when_pay_date_has_two_plan_bucket_rows(conn):
+    outlook.add_instalment(conn, fiscal_year=2026, instalment=1,
+                           record_date="2026-07-24", gross_per_share_eur=0.04)
+    id_lti = taxdiv.add_dividend(conn, record_date="2026-07-24", entitled_quantity=2734.0,
+                                 gross_eur=109.36, taxes_eur=38.27, fees_eur=0.0)
+    id_espp = taxdiv.add_dividend(conn, record_date="2026-07-24", entitled_quantity=154.663115,
+                                  gross_eur=6.18, taxes_eur=2.16, fees_eur=0.0)
+
+    resolved = outlook.reconcile_schedule(conn, today="2026-08-01")
+
+    assert resolved == 1
+    row = outlook.list_schedule(conn)[0]
+    assert row["matched_dividend_id"] == min(id_lti, id_espp)
+
+
+def test_reconcile_second_rate_cannot_reuse_the_other_row_of_a_matched_date(conn):
+    outlook.add_instalment(conn, fiscal_year=2026, instalment=1,
+                           record_date="2026-07-24", gross_per_share_eur=0.04)
+    outlook.add_instalment(conn, fiscal_year=2026, instalment=2,
+                           record_date="2026-07-26", gross_per_share_eur=0.04)
+    taxdiv.add_dividend(conn, record_date="2026-07-24", entitled_quantity=2734.0,
+                        gross_eur=109.36, taxes_eur=38.27, fees_eur=0.0)
+    taxdiv.add_dividend(conn, record_date="2026-07-24", entitled_quantity=154.663115,
+                        gross_eur=6.18, taxes_eur=2.16, fees_eur=0.0)
+
+    resolved = outlook.reconcile_schedule(conn, today="2026-08-01")
+
+    matched = [r for r in outlook.list_schedule(conn) if r["matched_dividend_id"] is not None]
+    assert resolved == 1
+    assert len(matched) == 1
+
+
+def test_reconcile_is_idempotent_when_pay_date_has_two_rows(conn):
+    outlook.add_instalment(conn, fiscal_year=2026, instalment=1,
+                           record_date="2026-07-24", gross_per_share_eur=0.04)
+    taxdiv.add_dividend(conn, record_date="2026-07-24", entitled_quantity=2734.0,
+                        gross_eur=109.36, taxes_eur=38.27, fees_eur=0.0)
+    taxdiv.add_dividend(conn, record_date="2026-07-24", entitled_quantity=154.663115,
+                        gross_eur=6.18, taxes_eur=2.16, fees_eur=0.0)
+
+    first = outlook.reconcile_schedule(conn, today="2026-08-01")
+    second = outlook.reconcile_schedule(conn, today="2026-08-01")
+
+    assert first == 1
+    assert second == 0

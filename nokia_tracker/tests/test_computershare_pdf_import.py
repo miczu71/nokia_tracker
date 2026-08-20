@@ -133,6 +133,54 @@ def test_reimporting_withhold_type_b_does_not_duplicate_conflict_row(conn, _fake
     assert len(conflicts) == 1
 
 
+# --- krok 0.17.2: linia w kształcie wiersza dywidendy, która nie dopasowuje _DIVIDEND_RE
+# (kolejna, jeszcze nieznana odmiana formatu) musi trafić do import_conflicts zamiast cicho
+# zniknąć - dokładnie to zniknęło bez śladu w regresji naprawionej w 0.17.1, zanim ten
+# guard w ogóle istniał.
+
+_BROKEN_DIVIDEND_LINE = (
+    "30 Jan 2026                       19 Feb  2026            X                  1.84 EUR        "
+    "0.64 EUR       0.00 EUR            1.20 EUR      6.3015  EUR          0.19028           0.00 EUR\n"
+)
+
+
+def test_import_statement_flags_unparsed_dividend_shaped_line(conn, monkeypatch):
+    text = _HEADER + _BROKEN_DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    report = cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    assert conn.execute("SELECT COUNT(*) c FROM dividends").fetchone()["c"] == 0
+    conflicts = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'dividend_unparsed'").fetchall()
+    assert len(conflicts) == 1
+    assert report["rows_conflict"] >= 1
+
+
+def test_reimporting_unparsed_dividend_line_does_not_duplicate_conflict_row(conn, monkeypatch):
+    text = _HEADER + _BROKEN_DIVIDEND_LINE
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+
+    conflicts = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'dividend_unparsed'").fetchall()
+    assert len(conflicts) == 1
+
+
+def test_import_statement_no_dividend_unparsed_conflict_for_well_formed_line(conn, _fake_pdf):
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    conflicts = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'dividend_unparsed'").fetchall()
+    assert len(conflicts) == 0
+
+
 def test_import_statement_creates_matched_lot_from_vested_matching_shares_row(conn, monkeypatch):
     monkeypatch.setattr(
         "nokia_tracker.importers.computershare_pdf.extract_layout_text",

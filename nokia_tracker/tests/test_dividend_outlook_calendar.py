@@ -254,3 +254,27 @@ def test_ntm_net_in_hand_pln_sums_events_with_fx_rate(conn):
     expected = sum(e["net_in_hand_pln"] for e in result["events"]
                    if e["record_date"] <= "2026-12-01")
     assert result["ntm_net_in_hand_pln"] == pytest.approx(expected)
+
+
+# --- krok 0.17.2: guard przeciw pętli nieskończonej, gdyby median_gap_days kiedyś jednak
+# spadło do 0/ujemnej wartości (per_share_history() temu zapobiega grupowaniem po
+# pay_date, ale to jedyna bariera przed `while True` w projekcji zdarzeń szacowanych) ---
+
+def test_calendar_falls_back_to_cadence_when_median_gap_is_degenerate(conn, monkeypatch):
+    fake_per_share = {
+        "items": [{"pay_date": "2026-01-30", "per_share_eur": 0.04}],
+        "excluded_estimated_count": 0, "per_share_eur": 0.04,
+        "per_share_low_eur": 0.04, "per_share_high_eur": 0.04,
+        "last_per_share_eur": 0.04, "withholding_pct": 35.0,
+        "median_gap_days": 0, "payments_per_year": 4,
+        "sufficient": True, "reason": None,
+    }
+    monkeypatch.setattr(outlook, "per_share_history", lambda conn, lookback=4: fake_per_share)
+
+    result = outlook.calendar(conn, _cfg(), today="2026-01-01", years_ahead=1)
+
+    # Nie zawiesza się (dowód: ta asercja w ogóle się wykonuje) i generuje zdarzenia co
+    # ~91 dni (fallback _CADENCE_DAYS[4]), nie co 0 dni — bez duplikatów dat.
+    assert result["events"]
+    dates = [e["record_date"] for e in result["events"]]
+    assert len(dates) == len(set(dates))

@@ -268,6 +268,32 @@ def parse_dividends(text: str) -> list[dict]:
     return rows
 
 
+# krok 0.17.2: 0.17.1 naprawiło JEDEN format wariant (Entitled Quantity bez kropki) po tym,
+# jak cała dywidenda LTI cicho zniknęła z importu - parse_dividends() pomija niedopasowaną
+# linię gołym `continue`, bez logu, a jedyną siatką bezpieczeństwa była kontrola salda z
+# tolerancją 2,0 akcji (zadziałała tylko bo luka wynosiła 7,82 akcji). Ten detektor łapie
+# CAŁĄ rodzinę "wygląda jak wiersz dywidendy, nic nie dopasowało" zamiast pojedynczej
+# kolumny: DOKŁADNIE dwie kolumny dat na początku (odróżnia od Withhold-to-Cover Typ B,
+# które ma jedną, i od ESPP Purchase Confirmation, które ma cztery — negative lookahead
+# pilnuje, że trzecia kolumna NIE jest kolejną datą) + co najmniej 5 wystąpień "EUR"
+# (odróżnia od RS AWARD, które ma trzy daty ale zero "EUR", tylko "PLN").
+_DIVIDEND_SHAPE_RE = re.compile(rf"^{_DATE}{_SEP}{_DATE}{_SEP}(?!\s*{_DATE})")
+
+
+def find_unmatched_dividend_lines(text: str) -> list[str]:
+    """Linie w kształcie wiersza "Dividend (Reinvested)", które NIE dopasowały
+    `_DIVIDEND_RE` — sygnał nowej odmiany kolumnowej formatu, którą regex jeszcze nie
+    obsługuje, zanim (nie: zamiast) ktoś zauważy narastający konflikt salda."""
+    unmatched = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if _DIVIDEND_RE.match(stripped):
+            continue
+        if _DIVIDEND_SHAPE_RE.match(stripped) and stripped.count("EUR") >= 5:
+            unmatched.append(stripped)
+    return unmatched
+
+
 # --- Withhold-to-Cover Typ A: data + "Nokia Share" + qty + Sale Price + Taxes + Fees + Net Units
 # (zero-efektowe potwierdzenie, Net Units == Quantity) ---
 _WITHHOLD_A_RE = re.compile(
@@ -581,6 +607,16 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
             rows_unchanged += 1
         elif _record_conflict(conn, import_id, "dividend", nk, dict(existing), row):
             rows_conflict += 1
+
+    for unmatched_line in find_unmatched_dividend_lines(text):
+        line_key = f"dividend_unparsed:{hashlib.sha256(unmatched_line.encode()).hexdigest()[:16]}"
+        if _record_conflict(conn, import_id, "dividend_unparsed", line_key, {},
+                             {"line": unmatched_line}):
+            rows_conflict += 1
+            logger.warning(
+                "Wiersz w sekcji dywidend wygląda jak dane, ale nie dopasował żadnego "
+                "wzorca — możliwa nowa odmiana formatu, dywidenda może cicho ginąć: %s",
+                unmatched_line)
 
     dividend_transaction_rows = parse_dividends(text)
     if not dividend_transaction_rows:

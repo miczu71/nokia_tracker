@@ -121,6 +121,75 @@ def test_per_share_history_empty_db_is_insufficient_not_a_crash(conn):
     assert result["reason"]
 
 
+# --- krok 0.17.2: dwa wiersze na jedną pay_date (Computershare drukuje osobny wiersz na
+# każdy koszyk planu — LTI/ESPP — tej samej wypłaty, patrz trzeci fakt w docstringu
+# modułu). Regresja z realnych danych produkcyjnych po 0.17.1: 2026-07-24 dostało drugi
+# wiersz (LTI, 2734 akcji), co bez grupowania wstrzykiwało odstęp 0 dni do mediany
+# kadencji (91 -> 88) i wypychało najstarszą wypłatę z okna lookback=4 (zawyżając
+# per_share_eur o ~14%).
+
+def test_per_share_groups_two_rows_on_same_pay_date_into_one_payment(conn):
+    for pay_date, qty in [("2025-10-24", 780.0), ("2026-01-30", 61.0),
+                          ("2026-04-24", 120.0)]:
+        _real_dividend(conn, pay_date, qty, 0.04)
+    # Wypłata 2026-07-24 rozbita na dwa wiersze-koszyki (LTI + ESPP), tak jak na
+    # produkcji po 0.17.1 — razem 2888.663115 akcji, 115.54 EUR brutto.
+    _real_dividend(conn, "2026-07-24", 2734.0, 109.36 / 2734.0)
+    _real_dividend(conn, "2026-07-24", 154.663115, 6.18 / 154.663115)
+
+    result = outlook.per_share_history(conn)
+
+    assert result["sufficient"] is True
+    # 4 RÓŻNE wypłaty w oknie, nie 3 różne + 1 zdublowana.
+    assert [i["pay_date"] for i in result["items"]] == [
+        "2025-10-24", "2026-01-30", "2026-04-24", "2026-07-24"]
+
+
+def test_per_share_duplicate_pay_date_does_not_inject_zero_gap(conn):
+    # Bez grupowania: gap(2026-04-24 -> 2026-07-24 wiersz 1) = 91, gap(wiersz 1 -> wiersz
+    # 2, ta sama data) = 0 -> mediana zjeżdża. Grupowanie usuwa ten drugi, fałszywy gap.
+    for pay_date, qty in [("2025-05-01", 617.0), ("2025-07-25", 620.0),
+                          ("2025-10-24", 784.0), ("2026-01-30", 61.0),
+                          ("2026-04-24", 120.0)]:
+        _real_dividend(conn, pay_date, qty, 0.04)
+    _real_dividend(conn, "2026-07-24", 2734.0, 0.04)
+    _real_dividend(conn, "2026-07-24", 154.663115, 0.04)
+
+    result = outlook.per_share_history(conn)
+
+    assert result["median_gap_days"] == pytest.approx(91, abs=1)
+
+
+def test_per_share_duplicate_pay_date_rate_is_gross_weighted_not_per_row_median(conn):
+    for pay_date, qty in [("2025-10-24", 780.0), ("2026-01-30", 61.0),
+                          ("2026-04-24", 120.0)]:
+        _real_dividend(conn, pay_date, qty, 0.04)
+    # Dwa koszyki tej samej wypłaty, ta sama stawka per akcję (0.04) — grupowa stawka
+    # (sum(gross)/sum(quantity)) musi dać dokładnie 0.04, nie coś zniekształconego przez
+    # ważenie osobnych wierszy.
+    _real_dividend(conn, "2026-07-24", 2734.0, 0.04)
+    _real_dividend(conn, "2026-07-24", 154.663115, 0.04)
+
+    result = outlook.per_share_history(conn)
+
+    combined = next(i for i in result["items"] if i["pay_date"] == "2026-07-24")
+    assert combined["per_share_eur"] == pytest.approx(0.04, abs=0.0005)
+
+
+def test_per_share_min_payments_gate_counts_distinct_dates_not_rows(conn):
+    # 3 różne wypłaty, ale 4 wiersze (jedna wypłata rozbita na dwa koszyki) — bramka
+    # _MIN_REAL_PAYMENTS=4 NIE powinna się otworzyć na samych wierszach.
+    for pay_date, qty in [("2025-10-24", 780.0), ("2026-01-30", 61.0)]:
+        _real_dividend(conn, pay_date, qty, 0.04)
+    _real_dividend(conn, "2026-04-24", 2734.0, 0.04)
+    _real_dividend(conn, "2026-04-24", 154.663115, 0.04)
+
+    result = outlook.per_share_history(conn)
+
+    assert result["sufficient"] is False
+    assert result["reason"]
+
+
 # --- entitled_base() / qty_on(): baza uprawniona dziś + przyszłe przyrosty ---
 
 def test_entitled_base_includes_restricted_own_lots_excludes_pending_vests(conn):

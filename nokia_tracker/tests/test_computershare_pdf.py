@@ -245,6 +245,57 @@ def test_parse_dividends_entitled_quantity_without_decimal_point_lti_whole_share
     assert r["residual_amount_eur"] == 0.0
 
 
+# --- krok 0.17.2: guard przeciw cichej utracie kolejnego wariantu formatu — 0.17.1
+# naprawiło JEDEN kształt (Entitled Quantity bez kropki), ale parse_dividends() dalej
+# pomija każdą niedopasowaną linię gołym `continue`, bez logu. find_unmatched_dividend_lines
+# łapie CAŁĄ rodzinę "wygląda jak wiersz dywidendy, nic nie dopasowało".
+
+def test_find_unmatched_dividend_lines_flags_dividend_shaped_row_that_does_not_parse():
+    # Ten sam wiersz co w regresji 0.17.1, ale z celowo zepsutą kolumną Entitled Quantity
+    # (litera zamiast liczby) - symuluje KOLEJNY nieznany wariant formatu.
+    line = (
+        "24 Jul2026                        13  Aug 2026                  X               "
+        "109.36 EUR        38.27 EUR       0.00 EUR           71.08  EUR       9.091 EUR          "
+        "7.81916            0.00 EUR"
+    )
+    unmatched = cp.find_unmatched_dividend_lines(line)
+    assert unmatched == [line.strip()]
+
+
+def test_find_unmatched_dividend_lines_empty_when_line_parses_fine():
+    line = (
+        "30 Jan 2026                       19 Feb  2026            61.491555                  1.84 EUR        0.64 EUR       0.00 EUR            "
+        "1.20 EUR      6.3015  EUR          0.19028           0.00 EUR"
+    )
+    assert cp.find_unmatched_dividend_lines(line) == []
+
+
+def test_find_unmatched_dividend_lines_ignores_withhold_to_cover_type_b_one_date():
+    # Typ B ma JEDNĄ datę na początku, nie dwie — nie powinien wyglądać jak dywidenda
+    # mimo że ma >=5 wystąpień "EUR".
+    line = ("15 Jun 2026        100        9.50 EUR        950.00 EUR        0.00 EUR        "
+           "0.00 EUR        950.00 EUR")
+    assert cp.find_unmatched_dividend_lines(line) == []
+
+
+def test_find_unmatched_dividend_lines_ignores_espp_purchase_confirmation_four_dates():
+    # Wiersz ESPP Purchase Confirmation ma CZTERY kolumny dat na początku (Allocation/
+    # Contribution/Settlement/Purchase), nie dwie — realny false-positive znaleziony przy
+    # implementacji tego guarda na wyciągu 2026-08-19 zanim regex dostał negative lookahead.
+    line = (
+        "2 Feb  2026        24  Nov 2025          2Feb  2026         4 Feb  2026           "
+        "106.19  EUR           0.00 EUR           0.00 EUR          0.00 EUR           "
+        "5.48 EUR       19.36572           0.00  EUR"
+    )
+    assert cp.find_unmatched_dividend_lines(line) == []
+
+
+def test_find_unmatched_dividend_lines_ignores_rs_award_no_eur_only_pln():
+    line = ("2025 RS AWARD 07-JUL-2025    07 Jul 2025    05 Jul 2027    05 Jul 2027    "
+           "633.00    50000.00 PLN")
+    assert cp.find_unmatched_dividend_lines(line) == []
+
+
 # --- krok 19: kontrola krzyżowa salda (BLUEPRINT §3a) — "Shares" na stronie 1 wyciągu
 # (sekcja "Assets by type") vs SUM(qty_remaining) w bazie.
 

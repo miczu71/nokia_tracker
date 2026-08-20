@@ -1,5 +1,63 @@
 # Changelog
 
+## [0.17.2] - 2026-08-20
+
+Naprawa skutków ubocznych 0.17.1 (`/code-review`, tego samego dnia po
+odzyskaniu dywidendy LTI). Fix 0.17.1 był poprawny, ale odsłonił niepisany
+niezmiennik: `dividends.pay_date` przestał być unikalny — Computershare drukuje
+osobny wiersz „Dividend (Reinvested)" na każdy koszyk planu (LTI, ESPP) tej
+samej wypłaty, bez identyfikatora planu w kolumnach. Trzy konsumenty zakładały
+jeden wiersz na datę.
+
+**Widoczna zmiana:** prognoza NTM na `/dividends` (i w encji HA
+`sensor.nokia_dividend_outlook_ntm_gross_eur`, i w dziennym pushu co-pilota)
+**spadnie** z ~509 EUR na ~446 EUR. To korekta, nie regresja — zdublowany
+wiersz wypychał najstarszą z 4 realnych wypłat z okna liczącego medianę
+stawki, zawyżając ją o ~14%.
+
+### Naprawiono
+- **`dividend_outlook.py::per_share_history()` — grupowanie po `pay_date`
+  przed liczeniem mediany/kadencji/okna.** Bez tego druga wypłata na tej samej
+  dacie wstrzykiwała odstęp 0 dni do mediany kadencji (91 → 88 dni na danych
+  produkcyjnych) i wypychała najstarszą wypłatę z okna `lookback=4` (3 różne
+  wypłaty zamiast 4, `per_share_eur` zawyżone ~14%). Stawka grupy liczona jako
+  `sum(gross_eur)/sum(quantity)` (ważona, nie mediana per wiersz).
+  `_MIN_REAL_PAYMENTS` porównywane teraz z liczbą RÓŻNYCH wypłat, nie wierszy —
+  przywraca honesty contract z docstringu modułu.
+- **`dividend_outlook.py::calendar()` — twardy fallback gdy `gap_days <= 0`.**
+  Zabezpieczenie defensywne: gdyby mediana odstępów kiedyś jednak spadła do 0
+  (grupowanie wyżej temu zapobiega, ale to jedyna bariera), pętla projekcji
+  zdarzeń szacowanych (`while True: cur_dt += timedelta(days=gap_days)`)
+  nigdy by się nie skończyła. Fallback: kadencja z `payments_per_year`.
+- **`dividend_outlook.py::reconcile_schedule()` — dopasowanie na poziomie
+  DATY, nie pojedynczego wiersza `dividends`.** Rata ogłoszona na wypłatę z
+  dwoma wierszami-koszykami dawała `len(exact) == 2`, łamiąc regułę
+  „dokładnie jeden kandydat" — rata nigdy się nie dopasowywała, na zawsze
+  pokazana jako niezrealizowana na `/dividends`. `matched_dividend_id`
+  wskazuje teraz na wiersz o najniższym `id` w grupie jako reprezentanta całej
+  daty; raz dopasowana data jest wyłączona z puli kandydatów w całości.
+- **`importers/computershare_pdf.py` — nowy detektor
+  `find_unmatched_dividend_lines()`.** 0.17.1 naprawiło JEDEN wariant kolumnowy
+  (Entitled Quantity bez kropki); `parse_dividends()` dalej pomija każdą inną
+  niedopasowaną linię gołym `continue`, bez logu — jedyną siatką bezpieczeństwa
+  była kontrola salda z tolerancją 2,0 akcji (zadziałała tylko bo luka 0.17.1
+  wynosiła 7,82 akcji; ułamkowa luka ESPP zmieściłaby się pod tolerancją i
+  przepadłaby bez śladu z sekcji G PIT-38). Nowy import_statement() flaguje
+  teraz KAŻDĄ linię w kształcie wiersza dywidendy (dwie kolumny dat + ≥5 „EUR"),
+  która nie dopasowała żadnego wzorca, jako konflikt `dividend_unparsed` +
+  log ostrzeżenia — cała rodzina przyszłych wariantów formatu, nie tylko ten
+  jeden.
+
+### Zweryfikowano
+Na read-only snapshocie bazy produkcyjnej (post-0.17.1, z odzyskanym wierszem
+LTI): `per_share_history()` wraca do `median_gap_days=91`, 4 różne daty w
+oknie, `per_share_eur≈0,034971` — dokładnie wartości sprzed 0.17.1, mimo że
+baza zawiera teraz odzyskaną dywidendę LTI (109,36 EUR, 2734 akcji). Ponowny
+import realnego wyciągu z 2026-08-19 na świeżej bazie: 4 wiersze dywidend, zero
+konfliktów `dividend_unparsed`. 1065 testów zielonych (1049 + 16 nowych),
+zero fałszywych alarmów detektora na wszystkich 6 dostępnych realnych
+wyciągach Computershare.
+
 ## [0.17.1] - 2026-08-19
 
 Bugfix produkcyjny — dywidenda reinwestowana od transzy LTI (RS Award) po cichu

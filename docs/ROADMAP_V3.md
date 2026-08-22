@@ -106,6 +106,37 @@ rekomendacja naprawy per pozycja. **Bez naprawiania.**
 
 ---
 
+### E3 — Refaktor `web.py` (0.19.0) · WYDANE 2026-08-22
+
+**Wynik:** `web.py` (1814 linii, 47 tras w jednej funkcji) → pakiet `web/`
+(9 modułów tras + fabryka aplikacji) + `nokia_tracker/views/` (warstwa
+składania danych, 7 modułów) + `nokia_tracker/exports/pit38.py`
+(serializacja CSV/XLSX). `test_web.py` (2453 linie, 182 testy) → 12 plików
+`tests/test_web_*.py` + wspólna fixture `client` w `conftest.py`.
+
+Pełna deduplikacja wykonana: preambuła kursu (7 miejsc) →
+`views/market_context.py`; silnik `/plan` ↔ trzy trasy
+`/api/preview/{espp,sale-timing,exit-plan}` → `views/plan.py` (dzielone
+wyłącznie wywołanie silnika + jego obsługa błędu, walidacja/parsowanie
+zostały w trasach — realna różnica zachowania między HTML a JSON, patrz
+`views/plan.py` docstring). Po drodze znaleziony i **naprawiony przy okazji**
+hazard: `Flask(__name__)` w pakiecie liczy `root_path` inaczej niż w module —
+statyki cichoby przestały się serwować (`web/__init__.py` dostał jawny
+`template_folder`/`static_folder`).
+
+**Kryterium twarde spełnione:** `git diff --stat` nie dotyka `templates/`
+ani `static/`; 1103 testy zielono bez zmiany ani jednej asercji (1110 po
+doliczeniu 6 nowych testów rozwiązywalności `url_for` — wymóg roadmapy,
+łapią też gołe nazwy endpointów w `NAV_GROUPS` szablonu nawigacji).
+
+**Znalezisko poboczne, świadomie NIE naprawione:** `/plan?timing_qty=…` przy
+niewystarczających lotach rzuca `InsufficientLotsError` niezłapany → gołe
+500 (dotyczy dziś OBU tras, HTML i JSON — żadna nie łapie wyjątku wokół
+`optimize_sale_timing`). Naprawa zmienia zachowanie, więc łamałaby kryterium
+E3. Naturalne miejsce: E6 (kalkulator dotyka tej samej logiki).
+
+<details><summary>Plan sprzed implementacji (E3)</summary>
+
 ### E3 — Refaktor `web.py` (0.19.0) · ~2 dni
 
 `web.py` to 1810 linii, z czego 47 tras zagnieżdżonych w jednej funkcji `create_app()`
@@ -132,6 +163,8 @@ składa się z gotowych klocków zamiast duplikować logikę pulpitu.
 **Ryzyko:** cichy rozjazd nazw endpointów. Mitygacja: test rozwiązywalności `url_for` + Playwright po każdej stronie.
 
 **Checkpoint:** przeklikanie wszystkich 12 stron w Playwright, screenshot + konsola, porównanie z poprzednią wersją.
+
+</details>
 
 ---
 

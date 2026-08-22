@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.19.0] - 2026-08-22
+
+Krok E3 roadmapy v3 (`docs/ROADMAP_V3.md`) — refaktor `web.py`. **Zero zmian
+widocznych dla użytkownika** — to jest wyłącznie porządkowanie kodu, warunek
+wstępny dla E5 („Stan konta"). Każda strona, każda liczba, każdy formularz
+działa identycznie jak w 0.18.0.
+
+### Zmieniono (wewnętrznie, bez wpływu na UI/dane)
+- **`web.py` (1814 linii, 47 tras w jednej funkcji `create_app()`) → pakiet
+  `web/`** — 9 modułów tras (`routes_rynek`, `routes_portfel`,
+  `routes_dywidendy`, `routes_podatki`, `routes_plan`, `routes_dane`,
+  `routes_ai`, `routes_ustawienia`) rejestrowanych funkcjami
+  `register_*_routes(app, ctx)`. Celowo nie prawdziwe Blueprinty — zmieniłyby
+  nazwy endpointów (`dashboard` → `portfel.dashboard`), co po cichu
+  wywaliłoby nawigację (`templates/base.html` rozwiązuje nazwy endpointów
+  dynamicznie z danych, nie z literałów widocznych dla grepa).
+- **Nowa warstwa `nokia_tracker/views/`** — obliczenia wyniesione z tras
+  (`dashboard`, `wyniki`, `sales`, `dividends`, `pit38` waterfall,
+  `plan`/preview-y) do funkcji `conn → dict`, wywoływalnych spoza Flaska.
+  Największa ekstrakcja: `/wyniki` (~105 linii logiki wyniesione z trasy).
+- **Deduplikacja:** preambuła „instrumenty + ostatnia cena/kurs", powielona
+  w ośmiu miejscach w trzech różnych wariantach, → `views/market_context.py`.
+  Silnik `/plan` i trojaczek `/api/preview/{espp,sale-timing,exit-plan}` →
+  `views/plan.py` (dzielone tylko wywołanie silnika + obsługa błędu;
+  parsowanie/walidacja formularza zostały w trasach, bo się różnią między
+  HTML a JSON).
+- **Naprawiony przy okazji:** `Flask(__name__)` w pakiecie liczy inny
+  `root_path` niż w module — bez jawnego `template_folder`/`static_folder`
+  statyki (`app.css`, `app.js`) przestałyby się serwować cicho (żaden istniejący
+  test tego nie łapał).
+- **`exports/pit38.py`** — serializacja CSV/XLSX wyodrębniona z tras (czysta
+  funkcja `report → bytes`, nie „widok").
+- **`tests/test_web.py` (2453 linie, 182 testy) → 12 plików**
+  `tests/test_web_<domena>.py`, wspólna fixture `client` w `conftest.py`.
+
+### Dodano
+- **Test rozwiązywalności `url_for`** (`tests/test_web_routing.py`) — łapie
+  literały `url_for()` w szablonach *i* Pythonie, oraz gołe nazwy endpointów w
+  słowniku `NAV_GROUPS` nawigacji (niewidoczne dla grepa, pękają dopiero przy
+  renderze) przez faktyczne wyrenderowanie każdej strony.
+
+### Weryfikacja
+1103 testów sprzed refaktoru zielono **bez zmiany ani jednej asercji** (1110
+po doliczeniu 6 nowych testów rozwiązywalności endpointów). `git diff --stat`
+nie dotyka `templates/` ani `static/`. `test_tax_*.py` (beton) zielono.
+
+### Znane, świadomie nienaprawione
+`/plan?timing_qty=…` przy niewystarczających lotach rzuca
+`InsufficientLotsError` niezłapany → gołe 500 (dotyczy dziś obu tras, HTML i
+JSON — to preistniejący stan, nie regresja tego refaktoru). Naprawa zmienia
+zachowanie, więc odłożona do E6 (kalkulator wypłaty dotyka tej samej logiki).
+
 ## [0.18.0] - 2026-08-22
 
 Krok E1+E2 nowej roadmapy (`docs/ROADMAP_V3.md`) — refaktor + księga gotówki +

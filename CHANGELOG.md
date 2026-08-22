@@ -2,14 +2,20 @@
 
 ## [0.21.1] - 2026-08-22
 
-Fix produkcyjny 0.21.0, znaleziony w weryfikacji Playwright na żywo tuż po
-aktualizacji przez Supervisor: pasek nawigacji zawijał się do dwóch linii na
-390px (6 pozycji top-level zamiast dawnych 5 — „Stan konta" + „Rynek" + 3
-grupy + „Ustawienia"). Etykieta „Stan konta" skrócona do **„Konto"** —
-fallback przewidziany w planie E5, uruchomiony po realnym pomiarze, nie
-zgadywany z góry. Sama strona (`<h1>`, `<title>`) i wszystkie miejsca w
-README/CHANGELOG opisujące funkcję zostają przy pełnej nazwie „Stan konta" —
-skrócona jest wyłącznie etykieta linku w `base.html`.
+Poprawka etykiety nawigacji z 0.21.0, znaleziona w weryfikacji Playwright na
+żywo tuż po aktualizacji przez Supervisor: 6 pozycji top-level (nowe „Stan
+konta"/„Rynek" + 3 grupy + „Ustawienia", dawniej 5) na 390px zawija pasek do
+dwóch linii nawet po skróceniu etykiety do **„Konto"** — sam wzrost liczby
+pozycji, nie długość tekstu, przesuwa próg zawijania. **To NIE regresja**:
+`.nav-links` ma `flex-wrap: wrap` od kroku 28.6, a `NT.initStickyNavOffset()`
+istnieje właśnie po to, by zmierzyć realną (także zawiniętą) wysokość `.nav`
+— zweryfikowane Playwright, sticky pasek nie zachodzi na zawinięty wiersz,
+zero błędów konsoli. Twardy wymóg roadmapy („Rynek" jednym kliknięciem, nie
+schowany w grupie) jest spełniony niezależnie od liczby linii paska. Etykieta
+skrócona z „Stan konta" na „Konto" i tak zostaje (mniej tekstu = mniej
+przypadków zawijania na jeszcze węższych ekranach) — zmiana kosmetyczna, nie
+naprawa. Strona sama (`<h1>`, `<title>`) i README zostają przy pełnej nazwie
+„Stan konta".
 
 ## [0.21.0] - 2026-08-22
 

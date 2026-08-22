@@ -1,5 +1,55 @@
 # Changelog
 
+## [0.18.0] - 2026-08-22
+
+Krok E1+E2 nowej roadmapy (`docs/ROADMAP_V3.md`) — refaktor + księga gotówki +
+kalkulator wypłaty, zaplanowanej po wywiadzie z użytkownikiem, który przedefiniował
+cel projektu: nie warstwa analityczna (XIRR/Sharpe/atrybucja), tylko jedno wiarygodne
+miejsce ze stanem konta i szybki kalkulator "ile wypłacę". E1 (audyt bazy produkcyjnej,
+przez eksport ZIP + Playwright) znalazł jeden prawdziwy błąd danych, nie szum.
+
+**Widoczna zmiana:** nowa karta „Spójność danych” na `/dane` — pokazuje wynik nocnego
+kontrolera niezmienników (dotąd niewidoczny mechanizm).
+
+### Naprawiono (dane produkcyjne)
+- **Brakujący lot dopasowania ESPP z grantu 2024-10-21 (24,42 szt., vest 2025-08-01),
+  386 dni przeterminowany.** `reconcile_vesting()` (tax/grants.py) celowo nie zgaduje
+  dopasowania bez dokładnego trafienia ilością — ten lot nigdy nie został zaimportowany,
+  więc nie miał czego dopasować. Zrekonstruowany z ceny/kursu sąsiednich lotów tej samej
+  paczki vestingu (2025-08-28, 3,71 EUR, NBP 4,2639) — wzorzec potwierdzony na
+  wszystkich innych paczkach w bazie. Naprawa przelicza też FIFO jedynej zarejestrowanej
+  sprzedaży (#1, 2025-10-27) przez `_plan_fifo` (ta sama funkcja co silnik) — bez tego
+  lotu sprzedaż sięgała 1,13 akcji za dużo do droższego, późniejszego lotu.
+  **Zadeklarowany PIT-38 tej sprzedaży ma nadpisanie `reported_cost_pln`/
+  `reported_revenue_pln` (krok 20) i się nie zmienia** — naprawiony jest tylko ślad
+  audytowy w `lots`/`sale_allocations`, na którym opierają się przyszłe analizy
+  (koncentracja, plan sprzedaży, przyszły „stan konta"). `nokia_tracker/data_fixes.py`
+  — jednorazowa, idempotentna, wołana przy każdym starcie.
+
+### Dodano
+- **`integrity.py`** — 9 niezmienników spójności danych z audytu E1 (qty_remaining,
+  suma alokacji sprzedaży, referencje vestów, konflikty importu, arytmetyka dywidend,
+  kursy NBP, limity strat z lat ubiegłych) + nowy `stale_pending_vest` (transza
+  `pending` przeterminowana >60 dni bez lotu — dokładnie to, co złapało powyższy błąd;
+  oryginalna lista z E1 tego nie łapała, bo sprawdzała tylko `status='vested'`).
+- Nocny job (main.py, 6:35, po reconciliation vestingu o 6:30) — alert per znalezisko
+  przez istniejący `alerts.py::allow_fire`/`log_fired`, żeby cron nie spamował tego
+  samego powiadomienia codziennie.
+- Karta „Spójność danych" na `/dane`, obok istniejącej „Stan systemu".
+
+### Zweryfikowano
+1103 testy (1065 → 1103), zero regresji. `test_tax_*.py` zielony przed i po naprawie
+danych. Naprawa zweryfikowana na kopii eksportu produkcyjnego (dry-run, nie na żywej
+bazie) przed wydaniem: `integrity.check_all()` 1 → 0 znalezisk, suma alokacji sprzedaży
+nadal = 784 szt., `reported_cost_pln`/`reported_revenue_pln` nietknięte.
+
+**Uwaga do E7 (uzgodnienie z wyciągiem, kolejny krok roadmapy):** ta naprawa dodaje
++24,42 szt. do sumy portfela (matematyczna konieczność — nowy lot istnieje, nic innego
+się nie zmienia). Powiększa to widoczny rozjazd z wyciągiem Computershare z audytu E1
+(z -1,61 do +22,81 szt.) — nie dlatego, że ta naprawa jest błędna (sprawdzona testami
+i dry-runem), tylko dlatego, że oryginalny rozjazd #10 był większy niż widać było na
+pierwszy rzut oka. Do zbadania systematycznie w E7, nie w tym kroku.
+
 ## [0.17.3] - 2026-08-20
 
 `/simplify` code-quality pass na diffie 0.17.2 (reuse/simplification/efficiency/altitude,

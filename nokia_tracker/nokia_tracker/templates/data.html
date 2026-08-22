@@ -85,4 +85,34 @@
   </p>
 </div>
 
+<div class="card">
+  <div class="card-title">Spójność danych</div>
+  {% if integrity_findings %}
+  <p class="disclaimer error">
+    ⚠️ Kontroler niezmienników znalazł {{ integrity_findings|length }}
+    {{ 'problem' if integrity_findings|length == 1 else 'problemy' }} — sprawdzane też co noc
+    o 6:35, z powiadomieniem przy pierwszym wystąpieniu.
+  </p>
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr><th>Sprawdzenie</th><th>Waga</th><th class="num">Liczba</th><th>Opis</th></tr>
+      </thead>
+      <tbody>
+        {% for f in integrity_findings %}
+        <tr>
+          <td>{{ f.check }}</td>
+          <td>{{ f.severity }}</td>
+          <td class="num">{{ f.count }}</td>
+          <td>{{ f.message }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state('Wszystkie niezmienniki spójności przechodzą — zero znalezisk.') }}
+  {% endif %}
+</div>
+
 {% endblock %}

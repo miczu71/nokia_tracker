@@ -19,6 +19,7 @@ from flask import Flask, Response, redirect, render_template, request, url_for
 
 from . import __version__, advisor as advisorm, analysis, backup as backupm, db as dbm, fx
 from . import dashboard_insights
+from . import integrity as integritym
 from . import format as fmt
 from . import portfolio as portfoliom
 from . import dividend_outlook as outlookm
@@ -1378,6 +1379,8 @@ def create_app(db_path: str) -> Flask:
             conflicts_count = conn.execute(
                 "SELECT COUNT(*) FROM import_conflicts WHERE resolved = 0").fetchone()[0]
 
+            integrity_findings = integritym.check_all(conn)
+
             backup_dir = _backup_dir()
             last_snapshot = None
             if backup_dir.is_dir():
@@ -1394,6 +1397,7 @@ def create_app(db_path: str) -> Flask:
                 "data.html", active="data", version=__version__,
                 token=token, preview=preview, preview_error=preview_error,
                 conflicts_count=conflicts_count, last_snapshot=last_snapshot,
+                integrity_findings=integrity_findings,
                 restored=request.args.get("restored") == "1",
                 error=request.args.get("error"))
         finally:

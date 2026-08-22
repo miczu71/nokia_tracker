@@ -15,7 +15,9 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
-from . import __version__, alerts, analysis, backup as backupm, db as dbm, forecasts, fx, ha_client
+from . import __version__, alerts, analysis, backup as backupm, data_fixes, db as dbm
+from . import forecasts, fx, ha_client
+from . import integrity as integritym
 from . import news, notifier, portfolio, quotes, sensors
 from . import settings as settingsm
 from .analytics import history as analytics_history
@@ -65,6 +67,7 @@ def main() -> None:
     backup_share = _env("BACKUP_SHARE", "/share/nokia_tracker")
     conn = dbm.get_conn(db_path)
     dbm.migrate(conn)
+    data_fixes.apply_all(conn)
 
     # Opcje Supervisora zasilają tylko brakujące klucze — baza ma
     # pierwszeństwo po pierwszym starcie (wzorzec fuel_tracker/settings.py).
@@ -517,6 +520,40 @@ def main() -> None:
             finally:
                 c.close()
 
+    def integrity_check_job() -> None:
+        """Codziennie o 6:35 (PO reconciliation vestingu o 6:30, żeby nie zgłaszać
+        transz, które reconcile_vesting właśnie rozwiązał): niezmienniki spójności
+        danych (integrity.py, krok E2, docs/ROADMAP_V3.md) — audyt E1 uruchamiał
+        te same zapytania ręcznie, tu jako stały kontroler. Alert per finding (nie
+        zbiorczy), żeby tytuł/treść były konkretne; anty-spam przez allow_fire tym
+        samym mechanizmem co inne alerty — bez tego codzienny cron wysyłałby to
+        samo powiadomienie w nieskończoność, dopóki nikt nie naprawi danych."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                cfg = settingsm.get_settings(c)
+                findings = integritym.check_all(c)
+                for f in findings:
+                    if alerts.allow_fire(c, f"integrity:{f.check}", 24 * 60):
+                        alerts.log_fired(
+                            c, f"integrity:{f.check}", f.severity,
+                            f"Spójność danych: {f.check}", f.message,
+                            {"count": f.count})
+                        notify_service = cfg.get("notify_service", "")
+                        if notify_service:
+                            ha_client.notify(
+                                notify_service.replace(".", "/", 1),
+                                f"Nokia Tracker: problem ze spójnością danych ({f.count}×)",
+                                f"{f.message} — zobacz kartę „Spójność danych” na /dane.")
+                if findings:
+                    logger.warning(
+                        "Kontrola spójności: %d rodzajów problemów (%s)",
+                        len(findings), ", ".join(f.check for f in findings))
+            except Exception:
+                logger.exception("Kontrola spójności danych nieudana")
+            finally:
+                c.close()
+
     def run_daily_analysis() -> None:
         """Codziennie o analysis_time: rozlicza dojrzałe prognozy (settle_due,
         do current_price) i — jeśli ai_recommendations_enabled — generuje
@@ -607,6 +644,7 @@ def main() -> None:
                       day_of_week="mon-fri")
     scheduler.add_job(backfill_nbp_rates, "cron", hour=6, minute=15)
     scheduler.add_job(check_vest_reminders, "cron", hour=6, minute=30)
+    scheduler.add_job(integrity_check_job, "cron", hour=6, minute=35)
     scheduler.add_job(prune_intraday_job, "cron", hour=3, minute=0)
     scheduler.add_job(auto_import_pdf_share, "interval", minutes=30)
     scheduler.add_job(nightly_backup_job, "cron", hour=4, minute=0)

@@ -168,7 +168,26 @@ składa się z gotowych klocków zamiast duplikować logikę pulpitu.
 
 ---
 
-### E4 — Księga gotówki (0.20.0) · ~1.5 dnia
+### E4 — Księga gotówki (0.20.0) · WYDANE 2026-08-22
+
+**Wynik:** nowy `cash.py` (model odczytu, zero zapisu do `tax/`) + `views/cash.py`
++ strona `/gotowka` (`web/routes_podatki.py`, `templates/cash.html`) w grupie
+nawigacji „Podatki". Migracja v11 (`tax_payments`, `broker_cash`), nowy
+niezmiennik w `integrity.py`, obie tabele dopisane do `backup.py::_CSV_TABLES`.
+1146 testów zielono (+36, w tym 19 dla `cash.py` i 9 dla tras), `test_tax_*.py`
+(beton) bez zmian.
+
+**Zweryfikowane na produkcji (Playwright, 2026-08-22, po `ha_manage_updates`
+z backupem):** `/gotowka?year=2025` pokazuje wpływy ze sprzedaży
+**17 596,49 PLN / 4 154,72 EUR** — zgadza się co do grosza z jedyną sprzedażą
+w bazie (`sales.revenue_pln`). Karta dywidend pokazuje **0,00 EUR** wkładu do
+gotówki przy 3 realnych wypłatach 2025 (wszystkie DRIP). Zero błędów konsoli,
+zero regresji layoutu na 390 px i 1920 px. Saldo u brokera renderuje się jako
+„Brak danych" (nie zero) — poprawnie, bo nikt jeszcze nie wpisał odczytu; sam
+wpis wymaga realnej liczby od użytkownika, więc pozostawiony jako otwarty krok
+po stronie użytkownika, nie zasymulowany danymi testowymi na produkcji.
+
+<details><summary>Plan sprzed implementacji (E4)</summary>
 
 Nowy moduł `cash.py` — **model odczytu nad istniejącymi tabelami**, plus dwa nowe źródła.
 
@@ -213,6 +232,8 @@ kwotę potrącenia. Naprawa dotyka `tax/`, więc odłożona jako osobna pozycja 
 **Ryzyko:** mylenie „gotówki" z „przychodem podatkowym" — to dwie różne liczby (opłaty, kurs NBP, moment). Test musi to jawnie rozróżniać.
 
 **Checkpoint:** ręczne uzgodnienie wpływów ze sprzedaży z realnym wyciągiem za jeden rok.
+
+</details>
 
 ---
 

@@ -9,7 +9,7 @@ from datetime import datetime
 
 import pytest
 
-from nokia_tracker.tax import lots, whatif
+from nokia_tracker.tax import losses, lots, whatif
 
 
 @pytest.fixture(autouse=True)
@@ -136,3 +136,67 @@ def test_apply_policies_called_directly_matches_simulate_sale(conn):
 
     assert direct_policies == result["policies"]
     assert direct_active == result["active_policy"]
+
+
+# --- E6 krok 1 (docs/PLAN_E6_wyplata.md): silnik podatku rocznego wydzielony ---
+# z advisor.py::optimize_sale_timing/exit_plan, żeby solve_for_net() (krok 3)
+# miał jeden wspólny rdzeń zamiast trzeciej kopii tej samej arytmetyki.
+
+def test_annual_tax_pure_core_matches_manual_arithmetic():
+    r = whatif._annual_tax(
+        base_income_pln=1000.0, sale_income_pln=500.0,
+        loss_available_pln=200.0, tax_rate=0.19)
+
+    assert r["combined_income_pln"] == pytest.approx(1500.0)
+    assert r["tax_without_loss_pln"] == pytest.approx(285.0)
+    assert r["usable_loss_pln"] == pytest.approx(200.0)
+    assert r["income_after_loss_pln"] == pytest.approx(1300.0)
+    assert r["tax_with_max_loss_pln"] == pytest.approx(247.0)
+
+
+def test_annual_tax_pure_core_caps_usable_loss_at_available_amount():
+    # Strata dostępna (5000) przewyższa dochód (300) — zużywa się tylko tyle,
+    # ile trzeba, nie całą pulę (ta sama zasada co dzisiejszy advisor.py).
+    r = whatif._annual_tax(
+        base_income_pln=100.0, sale_income_pln=200.0,
+        loss_available_pln=5000.0, tax_rate=0.19)
+
+    assert r["usable_loss_pln"] == pytest.approx(300.0)
+    assert r["income_after_loss_pln"] == pytest.approx(0.0)
+    assert r["tax_with_max_loss_pln"] == pytest.approx(0.0)
+
+
+def test_annual_tax_pure_core_floors_negative_combined_income_at_zero():
+    r = whatif._annual_tax(
+        base_income_pln=-1000.0, sale_income_pln=200.0,
+        loss_available_pln=0.0, tax_rate=0.19)
+
+    assert r["tax_without_loss_pln"] == pytest.approx(0.0)
+    assert r["tax_with_max_loss_pln"] == pytest.approx(0.0)
+
+
+def test_annual_tax_breakdown_reads_base_income_and_loss_from_database(conn):
+    cfg = _base_cfg()
+    # Strata w 2024 (jak test_tax_losses.py::_loss_year): kupno 10 po 10 EUR,
+    # sprzedaż po 5 EUR -> strata 200 PLN przy kursie 4.0 z fixture.
+    lots.add_lot(conn, "2024-01-10", "own", 10.0, 10.0, source="manual")
+    lots.record_sale(conn, "2024-06-01", 10.0, 5.0)
+    losses.rebuild(conn, cfg)
+
+    r = whatif.annual_tax_breakdown(conn, cfg, year=2026, sale_income_pln=1000.0)
+
+    loss_avail = losses.available_for_year(conn, cfg, 2026, policy="own_only")
+    assert r["usable_loss_pln"] == pytest.approx(
+        min(loss_avail["total_remaining_pln"], 1000.0))
+    assert r["tax_with_max_loss_pln"] < r["tax_without_loss_pln"]
+
+
+def test_annual_tax_breakdown_defaults_policy_from_cfg(conn):
+    cfg = _base_cfg(cost_basis_policy="all_at_acquisition")
+    lots.add_lot(conn, "2020-01-01", "own", 10.0, 5.0, source="manual")
+
+    r = whatif.annual_tax_breakdown(conn, cfg, year=2026, sale_income_pln=100.0)
+    explicit = whatif.annual_tax_breakdown(
+        conn, cfg, year=2026, sale_income_pln=100.0, policy="all_at_acquisition")
+
+    assert r == explicit

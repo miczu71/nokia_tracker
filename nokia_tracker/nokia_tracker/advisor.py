@@ -17,7 +17,6 @@ from dateutil.relativedelta import relativedelta
 
 from . import portfolio as portfoliom
 from .tax import grants as grantsm
-from .tax import losses as taxlosses
 from .tax import lots as taxlots
 from .tax import policy as taxpolicy
 from .tax import whatif as taxwhatif
@@ -322,7 +321,6 @@ def optimize_sale_timing(conn: sqlite3.Connection, cfg: dict, quantity: float,
         today = datetime.now().strftime("%Y-%m-%d")
     next_year = int(today[:4]) + 1
     jan2 = f"{next_year}-01-02"
-    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
 
     def _scenario(sale_date: str) -> dict | None:
         try:
@@ -332,16 +330,9 @@ def optimize_sale_timing(conn: sqlite3.Connection, cfg: dict, quantity: float,
         year = int(sale_date[:4])
         active_policy = sale["active_policy"]
 
-        base_income_pln = taxpolicy.compute_all_policies(
-            conn, cfg, year=year)[active_policy]["income_pln"]
         sale_income_pln = sale["policies"][active_policy]["income_pln"]
-        combined_income_pln = base_income_pln + sale_income_pln
-        tax_without_loss_pln = round(max(0.0, combined_income_pln) * tax_rate, 2)
-
-        loss_avail = taxlosses.available_for_year(conn, cfg, year, policy=active_policy)
-        usable_loss_pln = min(loss_avail["total_remaining_pln"], max(0.0, combined_income_pln))
-        income_after_loss_pln = max(0.0, combined_income_pln - usable_loss_pln)
-        tax_with_max_loss_pln = round(income_after_loss_pln * tax_rate, 2)
+        annual = taxwhatif.annual_tax_breakdown(
+            conn, cfg, year, sale_income_pln, policy=active_policy)
 
         forfeit = forfeit_for_quantity(conn, quantity, price_eur, eurpln_rate, today=sale_date)
 
@@ -349,10 +340,10 @@ def optimize_sale_timing(conn: sqlite3.Connection, cfg: dict, quantity: float,
             "sale_date": sale_date,
             "year": year,
             "revenue_pln": sale["revenue_pln"],
-            "combined_income_pln": round(combined_income_pln, 2),
-            "tax_without_loss_pln": tax_without_loss_pln,
-            "usable_loss_pln": round(usable_loss_pln, 2),
-            "tax_with_max_loss_pln": tax_with_max_loss_pln,
+            "combined_income_pln": annual["combined_income_pln"],
+            "tax_without_loss_pln": annual["tax_without_loss_pln"],
+            "usable_loss_pln": annual["usable_loss_pln"],
+            "tax_with_max_loss_pln": annual["tax_with_max_loss_pln"],
             "forfeit_qty": forfeit["forfeit_qty"],
             "forfeit_value_pln": forfeit["forfeit_value_pln"],
         }
@@ -446,7 +437,6 @@ def exit_plan(conn: sqlite3.Connection, cfg: dict, shares_per_period: float,
 
     active_policy = cfg.get("cost_basis_policy", "own_only")
     allowed_types = taxpolicy.POLICIES[active_policy]
-    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
 
     periods: list[dict] = []
     income_by_year: dict[int, float] = {}
@@ -486,17 +476,13 @@ def exit_plan(conn: sqlite3.Connection, cfg: dict, shares_per_period: float,
 
     years: list[dict] = []
     for year in sorted(income_by_year):
-        base_income_pln = taxpolicy.compute_all_policies(
-            conn, cfg, year=year)[active_policy]["income_pln"]
-        combined_income_pln = base_income_pln + income_by_year[year]
-        loss_avail = taxlosses.available_for_year(conn, cfg, year, policy=active_policy)
-        usable_loss_pln = min(loss_avail["total_remaining_pln"], max(0.0, combined_income_pln))
-        income_after_loss_pln = max(0.0, combined_income_pln - usable_loss_pln)
+        annual = taxwhatif.annual_tax_breakdown(
+            conn, cfg, year, income_by_year[year], policy=active_policy)
         years.append({
             "year": year,
-            "income_pln": round(combined_income_pln, 2),
-            "usable_loss_pln": round(usable_loss_pln, 2),
-            "tax_pln": round(income_after_loss_pln * tax_rate, 2),
+            "income_pln": annual["combined_income_pln"],
+            "usable_loss_pln": annual["usable_loss_pln"],
+            "tax_pln": annual["tax_with_max_loss_pln"],
         })
 
     total_forfeit_qty = sum(p["forfeit_qty"] for p in periods)

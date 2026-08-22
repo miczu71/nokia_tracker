@@ -19,6 +19,7 @@ from datetime import datetime
 
 from ..providers import fx_nbp
 from . import lots as taxlots
+from . import losses as taxlosses
 from . import policy as taxpolicy
 from . import trace as taxtrace
 
@@ -104,3 +105,43 @@ def simulate_sale(conn: sqlite3.Connection, cfg: dict, quantity: float,
         "active_policy": active_policy,
         "net_proceeds_pln": round(revenue_pln - policies[active_policy]["tax_pln"], 2),
     }
+
+
+def _annual_tax(base_income_pln: float, sale_income_pln: float,
+                loss_available_pln: float, tax_rate: float) -> dict:
+    """Rdzeń „dochód roku + dochód scenariusza − strata z lat ubiegłych" (E6 krok 1,
+    docs/PLAN_E6_wyplata.md). CZYSTA — wydzielona z `advisor.py::optimize_sale_timing`
+    i `exit_plan`, które liczyły dokładnie tę samą arytmetykę w dwóch osobnych kopiach.
+    `solve_for_net()` (E6 krok 3) woła ten rdzeń dziesiątki razy w bisekcji, więc musi
+    być odseparowany od zapytań do bazy (patrz `annual_tax_breakdown` niżej)."""
+    combined_income_pln = base_income_pln + sale_income_pln
+    tax_without_loss_pln = round(max(0.0, combined_income_pln) * tax_rate, 2)
+
+    usable_loss_pln = min(loss_available_pln, max(0.0, combined_income_pln))
+    income_after_loss_pln = max(0.0, combined_income_pln - usable_loss_pln)
+    tax_with_max_loss_pln = round(income_after_loss_pln * tax_rate, 2)
+
+    return {
+        "combined_income_pln": round(combined_income_pln, 2),
+        "tax_without_loss_pln": tax_without_loss_pln,
+        "usable_loss_pln": round(usable_loss_pln, 2),
+        "income_after_loss_pln": round(income_after_loss_pln, 2),
+        "tax_with_max_loss_pln": tax_with_max_loss_pln,
+    }
+
+
+def annual_tax_breakdown(conn: sqlite3.Connection, cfg: dict, year: int,
+                         sale_income_pln: float, policy: str | None = None) -> dict:
+    """Wersja `_annual_tax` z bazą: dobiera `base_income_pln`
+    (`tax/policy.py::compute_all_policies`) i `loss_available_pln`
+    (`tax/losses.py::available_for_year`) dla `year`/`policy`, tak samo jak dziś robią
+    to inline `advisor.py::optimize_sale_timing` i `exit_plan` — jedno miejsce zamiast
+    dwóch identycznych par wywołań."""
+    if policy is None:
+        policy = cfg.get("cost_basis_policy", "own_only")
+    tax_rate = cfg.get("pl_capital_gains_tax_pct", 19.0) / 100
+
+    base_income_pln = taxpolicy.compute_all_policies(conn, cfg, year=year)[policy]["income_pln"]
+    loss_avail = taxlosses.available_for_year(conn, cfg, year, policy=policy)
+
+    return _annual_tax(base_income_pln, sale_income_pln, loss_avail["total_remaining_pln"], tax_rate)

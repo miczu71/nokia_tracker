@@ -49,6 +49,10 @@ _CSV_TABLES: dict[str, list[str]] = {
                             "payment_date", "ex_date", "gross_per_share_eur",
                             "currency", "dates_confirmed", "announced_on", "source",
                             "status", "matched_dividend_id", "notes"],
+    # krok E4 (0.20.0): księga gotówki — oba wpisywane ręcznie, ten sam powód co
+    # dividend_schedule (żadne zewnętrzne źródło ich nie odtworzy).
+    "tax_payments": ["id", "tax_year", "paid_date", "amount_pln", "notes"],
+    "broker_cash": ["id", "as_of_date", "amount", "currency", "source", "notes"],
 }
 
 

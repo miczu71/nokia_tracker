@@ -335,6 +335,44 @@ _MIGRATIONS = [
     );
     CREATE INDEX idx_dividend_schedule_record ON dividend_schedule(record_date);
     """,
+    # v11 — krok E4: księga gotówki (docs/ROADMAP_V3.md). Dwa ustalenia empiryczne
+    # z audytu na realnym wyciągu (2026-08-22) kształtują ten schemat:
+    # (1) Wyciąg Computershare NIE zawiera salda gotówkowego — sekcja "Assets by
+    # type" ma wyłącznie Shares/Restricted stock units, brak jakiegokolwiek pola
+    # Cash/Balance. `broker_cash.source='pdf'` zostaje w CHECK na przyszłość, ale
+    # jest dziś nieosiągalne — wyłącznie 'manual'. (2) Wszystkie dywidendy w
+    # produkcji są DRIP (reinwestowane) — cash.py liczy je jako bezgotówkowe, nie
+    # wlicza do żadnego salda tutaj.
+    #
+    # broker_cash to szereg ODCZYTÓW, nie jedna nadpisywana wartość — inaczej nie
+    # widać, kiedy saldo przestało być aktualne (cash.py::broker_balance liczy
+    # wiek ostatniego wpisu). UNIQUE(as_of_date, currency) + UPSERT: poprawka
+    # odczytu z tego samego dnia nadpisuje, nie duplikuje (wzorzec z
+    # dividend_schedule, v10).
+    #
+    # tax_payments obejmuje wyłącznie PIT-38 w PL — podatek u źródła w Finlandii
+    # jest już wyprowadzany z `dividends` (tax/dividends.py), dublowanie go tutaj
+    # rozjechałoby się z tamtym źródłem prawdy.
+    """
+    CREATE TABLE tax_payments (
+        id INTEGER PRIMARY KEY,
+        tax_year INTEGER NOT NULL,
+        paid_date TEXT NOT NULL,
+        amount_pln REAL NOT NULL,
+        notes TEXT
+    );
+    CREATE INDEX idx_tax_payments_year ON tax_payments(tax_year);
+
+    CREATE TABLE broker_cash (
+        id INTEGER PRIMARY KEY,
+        as_of_date TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'EUR',
+        source TEXT NOT NULL DEFAULT 'manual' CHECK(source IN ('manual','pdf')),
+        notes TEXT,
+        UNIQUE(as_of_date, currency)
+    );
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

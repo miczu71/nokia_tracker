@@ -55,6 +55,7 @@ def test_export_zip_contains_manifest_db_and_csvs(seeded_db_path):
             "nokia.db", "manifest.json",
             "lots.csv", "sales.csv", "sale_allocations.csv",
             "grants.csv", "vests.csv", "dividends.csv", "dividend_schedule.csv",
+            "tax_payments.csv", "broker_cash.csv",
         }
         manifest = json.loads(zf.read("manifest.json"))
         assert manifest["app_version"] == __version__
@@ -213,3 +214,62 @@ def test_restore_preview_survives_backup_missing_a_newer_table(tmp_path):
     assert result["diff"]["dividend_schedule"] == {"added": 0, "removed": 1, "unchanged": 0}
     # tabele obecne po obu stronach dalej liczą się normalnie
     assert result["diff"]["lots"] == {"added": 0, "removed": 1, "unchanged": 0}
+
+
+def test_export_zip_includes_cash_tables(tmp_path):
+    # Krok E4 (0.20.0): tax_payments/broker_cash to dane wpisane ręcznie,
+    # nieodtwarzalne z zewnętrznego źródła — ten sam powód co dividend_schedule
+    # (v10), więc muszą być w eksporcie od razu, nie dopiero gdy user zgłosi ich brak.
+    path = str(tmp_path / "current.db")
+    conn = dbm.get_conn(path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO tax_payments (tax_year, paid_date, amount_pln) "
+        "VALUES (2025, '2026-04-01', 500.0)")
+    conn.execute(
+        "INSERT INTO broker_cash (as_of_date, amount, currency) "
+        "VALUES ('2026-08-01', 1000.0, 'EUR')")
+    conn.commit()
+    conn.close()
+
+    data = backup.export_zip(path)
+    with zipfile.ZipFile(__import__("io").BytesIO(data)) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["row_counts"]["tax_payments"] == 1
+        assert manifest["row_counts"]["broker_cash"] == 1
+        assert "2026-04-01" in zf.read("tax_payments.csv").decode("utf-8")
+        assert "2026-08-01" in zf.read("broker_cash.csv").decode("utf-8")
+
+
+def test_restore_preview_survives_backup_missing_cash_tables(tmp_path):
+    # Analogiczny scenariusz do test_restore_preview_survives_backup_missing_a_newer_table,
+    # ale dla v11: kopia z v10 (sprzed E4) nie ma tax_payments/broker_cash w ogóle.
+    current_path = str(tmp_path / "current.db")
+    conn = dbm.get_conn(current_path)
+    dbm.migrate(conn)
+    _seed(conn, lot_id=1, sale_id=1, grant_id=1)
+    conn.execute(
+        "INSERT INTO broker_cash (as_of_date, amount, currency) "
+        "VALUES ('2026-08-01', 1000.0, 'EUR')")
+    conn.commit()
+    conn.close()
+
+    old_snapshot_path = tmp_path / "old_snapshot.db"
+    old_conn = sqlite3.connect(str(old_snapshot_path))
+    old_conn.executescript("".join(dbm._MIGRATIONS[:10]))
+    old_conn.execute("PRAGMA user_version = 10")
+    old_conn.commit()
+    old_conn.close()
+
+    buf = __import__("io").BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.write(str(old_snapshot_path), "nokia.db")
+        zf.writestr("manifest.json", json.dumps({
+            "app_version": "0.19.0", "schema_version": 10,
+            "exported_at": "2026-08-20T00:00:00+00:00", "row_counts": {},
+        }))
+
+    result = backup.restore_preview(current_path, buf.getvalue())
+
+    assert result["diff"]["broker_cash"] == {"added": 0, "removed": 1, "unchanged": 0}
+    assert result["diff"]["tax_payments"] == {"added": 0, "removed": 0, "unchanged": 0}

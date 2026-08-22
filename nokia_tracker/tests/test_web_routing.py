@@ -139,7 +139,8 @@ def test_static_assets_are_actually_served(app):
 
 @pytest.mark.parametrize("path", ["/", "/portfolio", "/lots", "/sales", "/dividends", "/grants",
                                   "/imports", "/news", "/forecasts", "/settings", "/pit38",
-                                  "/dane", "/wyniki", "/plan", "/pit38/kreator", "/asystent"])
+                                  "/dane", "/wyniki", "/plan", "/pit38/kreator", "/asystent",
+                                  "/gotowka"])
 def test_page_returns_200_with_no_store(client, path):
     resp = client.get(path)
     assert resp.status_code == 200
@@ -160,7 +161,8 @@ def test_nav_groups_render_without_js(client):
     html = client.get("/").get_data(as_text=True)
     assert '<details class="nav-group' in html
     for label in ["Pulpit", "Portfel", "Loty", "Sprzedaże", "Granty", "Dywidendy",
-                  "PIT-38", "Importy", "Newsy", "Prognozy", "Kopia zapasowa", "Ustawienia"]:
+                  "PIT-38", "Gotówka", "Importy", "Newsy", "Prognozy", "Kopia zapasowa",
+                  "Ustawienia"]:
         assert label in html
 
 

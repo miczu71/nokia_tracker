@@ -14,6 +14,9 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from . import settings as settingsm
+from .tax import pit38 as taxpit38
+
 _QTY_EPSILON = 0.001
 _MONEY_EPSILON_PLN = 0.02  # grosz + margines na zaokrąglenia pośrednie
 _STALE_PENDING_VEST_DAYS = 60
@@ -238,8 +241,39 @@ def _stale_pending_vest(
         len(bad), bad)
 
 
-def check_all(conn: sqlite3.Connection, today: str | None = None) -> list[Finding]:
+def _tax_payments_exceed_due(conn: sqlite3.Connection, cfg: dict) -> Finding | None:
+    """Krok E4 (0.20.0): `tax_payments` (wpisywane ręcznie, `cash.py`) sumowane
+    per rok istotnie WIĘKSZE niż `total_due_pln` z `tax/pit38.py::annual_report`
+    tego roku — prawdopodobna literówka w kwocie albo realna nadpłata do
+    odzyskania. Sprawdza WYŁĄCZNIE lata, w których jest choć jedna wpłata —
+    zero wpłat nigdy nie jest błędem."""
+    years = [r["tax_year"] for r in conn.execute(
+        "SELECT DISTINCT tax_year FROM tax_payments").fetchall()]
+    bad = []
+    for year in years:
+        due_pln = taxpit38.annual_report(conn, cfg, year)["total_due_pln"]
+        paid_pln = conn.execute(
+            "SELECT COALESCE(SUM(amount_pln), 0) FROM tax_payments WHERE tax_year = ?",
+            (year,)).fetchone()[0]
+        if paid_pln > due_pln + _MONEY_EPSILON_PLN:
+            bad.append({
+                "year": year, "due_pln": round(due_pln, 2),
+                "paid_pln": round(paid_pln, 2),
+                "overpaid_pln": round(paid_pln - due_pln, 2)})
+    if not bad:
+        return None
+    return Finding(
+        "tax_payments_exceed_due", "warning",
+        "Suma wpłat podatku za rok przekracza wyliczone total_due_pln — literówka "
+        "w kwocie albo realna nadpłata do odzyskania",
+        len(bad), bad)
+
+
+def check_all(
+    conn: sqlite3.Connection, today: str | None = None, cfg: dict | None = None
+) -> list[Finding]:
     today = today or date.today().isoformat()
+    cfg = cfg if cfg is not None else settingsm.get_settings(conn)
     findings: list[Finding] = []
     for check in (
         _qty_remaining_mismatch,
@@ -258,4 +292,7 @@ def check_all(conn: sqlite3.Connection, today: str | None = None) -> list[Findin
     stale = _stale_pending_vest(conn, today)
     if stale:
         findings.append(stale)
+    tax_payments_finding = _tax_payments_exceed_due(conn, cfg)
+    if tax_payments_finding:
+        findings.append(tax_payments_finding)
     return findings

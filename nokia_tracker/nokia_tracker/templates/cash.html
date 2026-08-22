@@ -1,0 +1,179 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat, empty_state %}
+{% block title %}Gotówka — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Gotówka — {{ year }}</h1>
+</div>
+
+<p class="disclaimer">
+  ⚠️ Gotówka to nie to samo co przychód podatkowy — opłaty, kurs NBP i moment
+  różnią się (patrz karty poniżej). Saldo u brokera jest wpisywane ręcznie:
+  wyciąg Computershare nie zawiera pola salda gotówkowego.
+</p>
+
+{% if error %}
+<p class="disclaimer error">⚠️ {{ error }}</p>
+{% endif %}
+
+<div class="card">
+  <div class="card-title">Saldo u brokera</div>
+  {% if broker_balance %}
+  <div class="grid stats">
+    {{ stat('Saldo', '%.2f'|format(broker_balance.amount), broker_balance.currency) }}
+    {{ stat('Sprawdzone', broker_balance.age_days ~ ' dni temu',
+            cls='bad' if broker_balance.is_stale else '',
+            sub=broker_balance.as_of_date) }}
+  </div>
+  {% if broker_balance.is_stale %}
+  <p class="disclaimer error">⚠️ Odczyt starszy niż 30 dni — zaktualizuj saldo poniżej.</p>
+  {% endif %}
+  {% else %}
+  {{ empty_state('Brak danych — wpisz pierwszy odczyt salda poniżej.') }}
+  {% endif %}
+
+  <form class="form" method="post" action="{{ url_for('gotowka_broker_balance_post') }}">
+    <div class="row3">
+      <label>Data odczytu
+        <input type="date" name="as_of_date" required>
+      </label>
+      <label>Kwota
+        <input type="number" step="0.01" name="amount" required>
+      </label>
+      <label>Waluta
+        <select name="currency">
+          <option value="EUR" selected>EUR</option>
+          <option value="PLN">PLN</option>
+        </select>
+      </label>
+    </div>
+    <label>Notatka (opcjonalnie)
+      <input type="text" name="notes" placeholder="np. zrzut ekranu z aplikacji brokera">
+    </label>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Zapisz odczyt</button>
+    </div>
+  </form>
+
+  {% if broker_history %}
+  <details class="no-print">
+    <summary class="muted">Historia odczytów ({{ broker_history | length }})</summary>
+    <div class="table-wrap">
+      <table class="table">
+        <thead><tr><th>Data</th><th class="num">Kwota</th><th>Waluta</th><th>Notatka</th></tr></thead>
+        <tbody>
+          {% for h in broker_history %}
+          <tr>
+            <td class="nowrap">{{ h.as_of_date }}</td>
+            <td class="num">{{ '%.2f'|format(h.amount) }}</td>
+            <td>{{ h.currency }}</td>
+            <td class="muted">{{ h.notes or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Wpływy ze sprzedaży</div>
+  {% if sale_proceeds.total_pln %}
+  <div class="grid stats">
+    {{ stat('W ' ~ year, '%.2f'|format(sale_proceeds.by_year.get(year|string, {}).get('pln', 0)), 'PLN',
+            sub='%.2f'|format(sale_proceeds.by_year.get(year|string, {}).get('eur', 0)) + ' EUR') }}
+    {{ stat('Łącznie (wszystkie lata)', '%.2f'|format(sale_proceeds.total_pln), 'PLN',
+            sub='%.2f'|format(sale_proceeds.total_eur) + ' EUR') }}
+  </div>
+  <p class="muted">
+    Liczone z realnego wpływu zapisanego przy sprzedaży (kurs NBP D-1, po opłatach) —
+    nie z ceny nominalnej razy ilość, żeby nie zgubić rzeczywistej kwoty „Sale Proceeds"
+    z wyciągu, gdy różni się od wyliczenia.
+  </p>
+  {% else %}
+  {{ empty_state('Brak sprzedaży.') }}
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Podatek PIT-38 — {{ year }}</div>
+  <div class="grid stats">
+    {{ stat('Należny', '%.2f'|format(tax_liability.due_pln), 'PLN') }}
+    {{ stat('Zapłacony', '%.2f'|format(tax_liability.paid_pln), 'PLN') }}
+    {{ stat('Do zapłaty', '%.2f'|format(tax_liability.outstanding_pln), 'PLN',
+            cls='highlight' if tax_liability.outstanding_pln > 0 else 'good') }}
+    {{ stat('Termin', tax_liability.deadline,
+            sub=(tax_liability.days_to_deadline|string) + ' dni') }}
+  </div>
+
+  {% if tax_payments %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Data wpłaty</th><th class="num">Kwota PLN</th><th>Notatka</th><th class="no-print"></th></tr></thead>
+      <tbody>
+        {% for p in tax_payments %}
+        <tr>
+          <td class="nowrap">{{ p.paid_date }}</td>
+          <td class="num">{{ '%.2f'|format(p.amount_pln) }}</td>
+          <td class="muted">{{ p.notes or '—' }}</td>
+          <td class="no-print">
+            <form method="post" action="{{ url_for('gotowka_tax_payment_delete', payment_id=p.id) }}"
+                  onsubmit="return confirm('Usunąć tę wpłatę?');">
+              <input type="hidden" name="year" value="{{ year }}">
+              <button class="btn small" type="submit">Usuń</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state('Brak zarejestrowanych wpłat w ' ~ year ~ ' roku.') }}
+  {% endif %}
+
+  <form class="form" method="post" action="{{ url_for('gotowka_tax_payment_post') }}">
+    <div class="row3">
+      <label>Rok podatkowy
+        <input type="number" name="tax_year" value="{{ year }}" required>
+      </label>
+      <label>Data wpłaty
+        <input type="date" name="paid_date" required>
+      </label>
+      <label>Kwota (PLN)
+        <input type="number" step="0.01" name="amount_pln" required>
+      </label>
+    </div>
+    <label>Notatka (opcjonalnie)
+      <input type="text" name="notes">
+    </label>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Zapisz wpłatę</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-title">Dywidendy — reinwestowane, bezgotówkowe
+    <span class="badge" title="Dywidenda reinwestowana (DRIP) natychmiast kupuje nowe akcje — nigdy nie ląduje jako gotówka na koncie">bezgotówkowe</span>
+  </div>
+  {% if dividend_flow.payout_count %}
+  <div class="grid stats">
+    {{ stat('Wypłat w ' ~ year, dividend_flow.payout_count) }}
+    {{ stat('Reinwestowane (DRIP)', dividend_flow.drip_payout_count) }}
+    {{ stat('Przychód netto', '%.2f'|format(dividend_flow.net_received_eur), 'EUR') }}
+    {{ stat('Wkład do gotówki', '%.2f'|format(dividend_flow.cash_contribution_eur), 'EUR',
+            cls='muted') }}
+  </div>
+  <p class="muted">
+    Przychód netto to kwota podatkowa (sekcja G PIT-38, patrz <a href="{{ url_for('pit38_get', year=year) }}">/pit38</a>) —
+    „wkład do gotówki" liczy wyłącznie dywidendy odebrane bez reinwestycji, dziś zawsze 0 EUR.
+  </p>
+  {% else %}
+  {{ empty_state('Brak dywidend w ' ~ year ~ ' roku.') }}
+  {% endif %}
+</div>
+
+{% endblock %}

@@ -1,5 +1,66 @@
 # Changelog
 
+## [0.20.0] - 2026-08-22
+
+Krok E4 roadmapy v3 (`docs/ROADMAP_V3.md`) — księga gotówki. Nowa strona
+`/gotowka`: saldo u brokera, wpływy ze sprzedaży, podatek PIT-38 należny vs
+zapłacony, dywidendy osobno jako bezgotówkowe. Model odczytu nad
+istniejącymi tabelami — **zero nowej matematyki podatkowej**, `tax/`
+nietknięte.
+
+### Dwa ustalenia empiryczne, które zmieniły zakres etapu vs pierwotna roadmapa
+- **Wyciąg Computershare nie zawiera salda gotówkowego** — sprawdzone na
+  realnym PDF (9 stron): sekcja „Assets by type” ma wyłącznie
+  `Shares`/`Restricted stock units`, zero wystąpień `Cash`/`Balance`. Zapowiadany
+  „auto-import salda" odpadł — `broker_cash` jest wyłącznie ręczne, jako
+  szereg odczytów z wiekiem (nie jedna nadpisywana wartość).
+- **Wszystkie dywidendy w produkcji są DRIP** (reinwestowane natychmiast w
+  nowy lot). `net_received_eur` nigdy nie ląduje jako gotówka na koncie —
+  strona pokazuje je osobno, jawnie oznaczone „bezgotówkowe”, z zerowym
+  wkładem do salda.
+
+### Dodano
+- **`cash.py`** — `sale_proceeds()`, `dividend_flow()`, `tax_liability()`,
+  `broker_balance()`/`broker_history()`/`record_broker_balance()`,
+  `add_tax_payment()`/`delete_tax_payment()`, `ledger()`. Trzy rozjazdy
+  gotówka↔podatek nazwane wprost w docstringu i pokryte testem: opłaty i
+  kurs (`sale_proceeds()` czyta `sales.revenue_pln`, nie przelicza
+  `quantity*price_eur` — zgubiłoby override „Sale Proceeds” z
+  Withhold-to-Cover Typ B), deklaracja vs wpływ (`reported_revenue_pln`
+  celowo ignorowane), moment/DRIP (dywidenda reinwestowana = zerowy
+  przepływ gotówki mimo bycia przychodem podatkowym).
+- **Migracja v11** — tabele `tax_payments` (PIT-38 zapłacone: rok, data,
+  kwota, notatka) i `broker_cash` (`UNIQUE(as_of_date, currency)` jako
+  UPSERT — poprawka odczytu z tego samego dnia nadpisuje, nie duplikuje).
+- **`views/cash.py::cash_view()`** — składanie danych dla `/gotowka`, wg
+  kontraktu warstwy `views/` z E3 (zero zapisu).
+- **`/gotowka`** (`web/routes_podatki.py`) — `GET /gotowka`,
+  `POST /gotowka/saldo`, `POST /gotowka/podatek`,
+  `POST /gotowka/podatek/<id>/usun`. Nowa pozycja w grupie nawigacji
+  „Podatki”.
+- **`backup.py`** — `tax_payments`/`broker_cash` dopisane do `_CSV_TABLES`
+  (dane ręczne, nieodtwarzalne z zewnętrznego źródła — ten sam powód co
+  `dividend_schedule` z v10).
+- **`integrity.py`** — nowy niezmiennik `tax_payments_exceed_due`: suma
+  wpłat podatku za rok istotnie większa niż wyliczone `total_due_pln` →
+  prawdopodobna literówka albo realna nadpłata do odzyskania.
+
+### Znane, świadomie nienaprawione
+`importers/computershare_pdf.py::parse_withhold_to_cover` paruje `taxes_eur`
+(podatek potrącony u źródła przy Withhold-to-Cover), ale
+`imports_confirm_sale` go nie przekazuje do `record_sale` — nie ma gdzie
+wylądować w schemacie. Pierwsza zaimportowana sprzedaż typu B zawyży
+wyliczony wpływ gotówkowy o kwotę potrącenia. Naprawa dotyka `tax/`, więc
+odłożona jako osobna pozycja backlogu.
+
+### Weryfikacja
+Testowe pokrycie: `tests/test_cash.py` (19 testów), `tests/test_web_cash.py`
+(9 testów), migracja + `backup.py`/`integrity.py` rozszerzone. Test liczbowy
+na eksporcie produkcyjnym (2026-08-22): wpływy ze sprzedaży 2025 =
+**17 596,49 PLN** (jedyna sprzedaż w bazie), wkład dywidend do gotówki =
+**0,00 EUR** przy 14 wypłatach (6 realnych, wszystkie DRIP). `test_tax_*.py`
+(beton) zielono bez zmian.
+
 ## [0.19.0] - 2026-08-22
 
 Krok E3 roadmapy v3 (`docs/ROADMAP_V3.md`) — refaktor `web.py`. **Zero zmian

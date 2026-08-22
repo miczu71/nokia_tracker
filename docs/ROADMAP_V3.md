@@ -172,16 +172,44 @@ składa się z gotowych klocków zamiast duplikować logikę pulpitu.
 
 Nowy moduł `cash.py` — **model odczytu nad istniejącymi tabelami**, plus dwa nowe źródła.
 
+**Dwa ustalenia empiryczne z 2026-08-22 (roadmapa kazała sprawdzić, nie zakładać —
+oba zmieniają literę poniższych podpunktów):**
+
+1. **Wyciąg Computershare NIE zawiera salda gotówkowego.** Sprawdzone na realnym PDF
+   (`/config/nokia_import/Plan holdings statement 13219230 2026-08-19 14_00_16.pdf`,
+   9 stron): sekcja „Assets by type" ma tylko `Shares`/`Restricted stock units`; ciągi
+   `Cash`/`Balance`/`Currency` — zero wystąpień. **„Krok 2 — auto z importu" poniżej
+   odpada.** `broker_cash` zostaje wyłącznie ręczne, jako szereg odczytów z wiekiem
+   (nie jedna nadpisywana wartość — inaczej nie widać, kiedy przestało być aktualne).
+2. **Wszystkie 20 dywidend w produkcji to DRIP** (`reinvested_lot_id` wypełniony na
+   każdym wierszu). `dividends.net_received_eur` nigdy nie trafia na konto jako
+   gotówka — to przychód podatkowy z zerowym przepływem gotówki. Księga pokazuje
+   dywidendy **osobno, jako bezgotówkowe**, nie wlicza ich do salda.
+
 Wyprowadzane z tego, co już jest:
-- **Wpływy ze sprzedaży**: `sales.quantity × price_eur - fee_eur`, narastająco w roku i łącznie
-- **Dywidendy odebrane**: `dividends.net_received_eur`; **oczekiwane**: `dividend_outlook.py` (0.14.0)
+- **Wpływy ze sprzedaży**: **`sales.revenue_pln` / `sales.nbp_rate`** dla EUR, nie
+  `quantity × price_eur - fee_eur` — ten wzór gubi `proceeds_eur` (override „Sale
+  Proceeds" z Withhold-to-Cover Typ B, patrz `tax/lots.py::record_sale`). Narastająco
+  w roku i łącznie. `reported_revenue_pln` (v4) świadomie ignorowane — to liczba do
+  deklaracji, nie przepływ gotówki.
+- **Dywidendy**: pokazywane bezgotówkowo (patrz wyżej), przez
+  `tax/dividends.py::payouts()` (nie surowe wiersze — pay_date nie jest unikalny,
+  lekcja 0.17.3).
 - **Podatek do zapłaty**: `tax/pit38.py::annual_report` za rok bieżący, z terminem 30.04
 
 Nowe (minimalna migracja, v11):
-- **`tax_payments`** — faktycznie zapłacone: rok, data, kwota, notatka. Zamienia PIT-38 z raportu rocznego w żywe saldo zobowiązania.
-- **`broker_cash`** — saldo u brokera: data, kwota, waluta, źródło (`manual` | `pdf`). Krok 1: wpis ręczny. Krok 2 (jeśli w PDF jest pole salda gotówkowego — **sprawdzić na realnym wyciągu, nie zakładać**): auto z importu.
+- **`tax_payments`** — faktycznie zapłacone: rok, data, kwota, notatka. Zamienia PIT-38 z raportu rocznego w żywe saldo zobowiązania. Tylko PIT-38 w PL (podatek u źródła w Finlandii jest już wyprowadzany z `dividends` — nie dublować).
+- **`broker_cash`** — saldo u brokera: data, kwota, waluta, źródło (`manual` | `pdf`, dziś zawsze `manual` — patrz ustalenie 1 wyżej). Append-only, `UNIQUE(as_of_date, currency)` jako UPSERT.
 
-**Pliki:** nowy `cash.py`, `db.py` (migracja v11), `web/routes_dane.py`, nowe formularze.
+**Znane ograniczenie, świadomie NIE naprawiane tutaj:** `parse_withhold_to_cover`
+paruje `taxes_eur` (podatek potrącony u źródła przy Withhold-to-Cover), ale
+`imports_confirm_sale` go nie przekazuje do `record_sale` — nie ma gdzie wylądować w
+schemacie. Pierwsza zaimportowana sprzedaż typu B zawyży wyliczony wpływ gotówkowy o
+kwotę potrącenia. Naprawa dotyka `tax/`, więc odłożona jako osobna pozycja backlogu.
+
+**Pliki:** nowy `cash.py`, nowy `views/cash.py`, `db.py` (migracja v11), nowa strona
+`/gotowka` w `web/routes_podatki.py` + `templates/cash.html`, `backup.py`
+(`_CSV_TABLES`), `integrity.py` (niezmiennik: zapłacony podatek > należny).
 **Ryzyko:** mylenie „gotówki" z „przychodem podatkowym" — to dwie różne liczby (opłaty, kurs NBP, moment). Test musi to jawnie rozróżniać.
 
 **Checkpoint:** ręczne uzgodnienie wpływów ze sprzedaży z realnym wyciągiem za jeden rok.

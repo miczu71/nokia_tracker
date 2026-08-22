@@ -24,13 +24,15 @@ def test_migrate_creates_all_tables(conn):
         "chat_log",
         # kalendarz i prognoza dywidend (krok 30, 0.14.0)
         "dividend_schedule",
+        # księga gotówki (krok E4, 0.20.0)
+        "tax_payments", "broker_cash",
     }
     assert expected <= tables
 
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 10  # v10: krok 30 - kalendarz dywidend
+    assert version == 11  # v11: krok E4 - księga gotówki
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):
@@ -139,3 +141,45 @@ def test_lots_natural_key_unique(conn):
         conn.execute(
             "INSERT INTO lots (acquired_date, lot_type, quantity, price_eur, natural_key) "
             "VALUES ('2026-02-01', 'own', 2.0, 2.0, 'k1')")
+
+
+# --- v11: księga gotówki (krok E4, 0.20.0) ---
+
+def test_broker_cash_source_check_constraint(conn):
+    import sqlite3
+    import pytest
+    conn.execute(
+        "INSERT INTO broker_cash (as_of_date, amount, currency, source) "
+        "VALUES ('2026-08-01', 1000.0, 'EUR', 'manual')")
+    conn.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO broker_cash (as_of_date, amount, currency, source) "
+            "VALUES ('2026-08-02', 1000.0, 'EUR', 'guess')")
+
+
+def test_broker_cash_upsert_same_day_and_currency(conn):
+    # Poprawka odczytu z tego samego dnia nadpisuje, nie duplikuje — wzorzec
+    # z dividend_schedule (v10).
+    conn.execute(
+        "INSERT INTO broker_cash (as_of_date, amount, currency) "
+        "VALUES ('2026-08-01', 1000.0, 'EUR')")
+    conn.commit()
+    conn.execute(
+        "INSERT INTO broker_cash (as_of_date, amount, currency) VALUES "
+        "('2026-08-01', 1234.5, 'EUR') "
+        "ON CONFLICT(as_of_date, currency) DO UPDATE SET amount = excluded.amount")
+    conn.commit()
+    rows = conn.execute("SELECT amount FROM broker_cash").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["amount"] == 1234.5
+
+
+def test_tax_payments_basic_insert(conn):
+    conn.execute(
+        "INSERT INTO tax_payments (tax_year, paid_date, amount_pln, notes) "
+        "VALUES (2025, '2026-04-20', 5000.0, 'przelew US')")
+    conn.commit()
+    row = conn.execute("SELECT * FROM tax_payments").fetchone()
+    assert row["tax_year"] == 2025
+    assert row["amount_pln"] == 5000.0

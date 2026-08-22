@@ -1,4 +1,8 @@
-"""Trasy PIT-38: /pit38, eksporty CSV/XLSX, kreator /pit38/kreator/*."""
+"""Trasy PIT-38: /pit38, eksporty CSV/XLSX, kreator /pit38/kreator/*.
+Trasy /gotowka (krok E4, docs/ROADMAP_V3.md) żyją tu, nie w osobnym pliku —
+grupa nawigacji „Podatki" jest ta sama co /pit38, cztery trasy nie
+uzasadniają nowego modułu (wzorzec E3: podział wg domeny nawigacji,
+nie wg tabeli)."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -6,7 +10,9 @@ from datetime import datetime
 from flask import Flask, Response, redirect, render_template, request, url_for
 
 from ._context import AppContext
+from ._helpers import _is_future_date
 from .. import __version__
+from .. import cash as cashm
 from .. import db as dbm
 from .. import sensors
 from .. import settings as settingsm
@@ -17,6 +23,7 @@ from ..tax import losses as taxlosses
 from ..tax import lots as taxlots
 from ..tax import pit38 as taxpit38
 from ..tax import whatif as taxwhatif
+from ..views.cash import cash_view
 from ..views.market_context import instrument_ids as _ids
 from ..views.pit38 import waterfall
 
@@ -176,5 +183,74 @@ def register_podatki_routes(app: Flask, ctx: AppContext) -> None:
             with dbm.WRITE_LOCK:
                 taxlosses.reopen_year(conn, year)
             return redirect(url_for("pit38_wizard_get", year=year))
+        finally:
+            conn.close()
+
+    @app.get("/gotowka")
+    def gotowka_get():
+        """Krok E4: „jaki jest mój stan gotówki" — wpływy ze sprzedaży (nie
+        przychód podatkowy, patrz `cash.py` docstring), podatek PIT-38 należny
+        vs zapłacony, saldo u brokera (wpis ręczny — wyciąg Computershare nie
+        ma pola salda gotówkowego, sprawdzone empirycznie), dywidendy osobno
+        jako bezgotówkowe (wszystkie 20 w produkcji to DRIP)."""
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            year = request.args.get("year", type=int) or cfg.get("tax_year") or datetime.now().year
+            view = cash_view(conn, cfg, year)
+            return render_template(
+                "cash.html", active="gotowka", version=__version__,
+                year=year, cfg=cfg, error=request.args.get("error"), **view)
+        finally:
+            conn.close()
+
+    @app.post("/gotowka/saldo")
+    def gotowka_broker_balance_post():
+        conn = _conn()
+        try:
+            as_of_date = request.form.get("as_of_date") or ""
+            if _is_future_date(as_of_date):
+                return redirect(url_for(
+                    "gotowka_get", error="Data salda nie może być w przyszłości"))
+            try:
+                amount = float(request.form.get("amount") or 0)
+            except ValueError:
+                return redirect(url_for("gotowka_get", error="Nieprawidłowa kwota"))
+            currency = request.form.get("currency") or "EUR"
+            notes = request.form.get("notes") or None
+            with dbm.WRITE_LOCK:
+                cashm.record_broker_balance(conn, as_of_date, amount, currency, notes)
+            return redirect(url_for("gotowka_get"))
+        finally:
+            conn.close()
+
+    @app.post("/gotowka/podatek")
+    def gotowka_tax_payment_post():
+        conn = _conn()
+        try:
+            try:
+                tax_year = int(request.form.get("tax_year") or 0)
+                amount_pln = float(request.form.get("amount_pln") or 0)
+            except ValueError:
+                return redirect(url_for("gotowka_get", error="Nieprawidłowe dane wpłaty"))
+            paid_date = request.form.get("paid_date") or ""
+            if _is_future_date(paid_date):
+                return redirect(url_for(
+                    "gotowka_get", error="Data wpłaty nie może być w przyszłości"))
+            notes = request.form.get("notes") or None
+            with dbm.WRITE_LOCK:
+                cashm.add_tax_payment(conn, tax_year, paid_date, amount_pln, notes)
+            return redirect(url_for("gotowka_get", year=tax_year))
+        finally:
+            conn.close()
+
+    @app.post("/gotowka/podatek/<int:payment_id>/usun")
+    def gotowka_tax_payment_delete(payment_id: int):
+        conn = _conn()
+        try:
+            year = request.form.get("year", type=int)
+            with dbm.WRITE_LOCK:
+                cashm.delete_tax_payment(conn, payment_id)
+            return redirect(url_for("gotowka_get", year=year))
         finally:
             conn.close()

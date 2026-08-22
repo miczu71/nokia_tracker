@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from nokia_tracker import integrity
+from nokia_tracker import cash, integrity, settings as settingsm
 from nokia_tracker.tax import grants, lots as taxlots
 
 
@@ -278,3 +278,33 @@ def test_pending_vest_uses_available_from_when_present(conn):
     findings = integrity.check_all(conn, today="2026-08-11")
 
     assert not any(f.check == "stale_pending_vest" for f in findings)
+
+
+# --- new: zapłacony podatek przekracza należny (krok E4, 0.20.0) ---
+
+def test_tax_payments_exceed_due_detected(conn):
+    lot_id = taxlots.add_lot(conn, "2024-01-10", "own", 100.0, 5.0, source="pdf_import")
+    conn.execute(
+        "INSERT INTO sales (sale_date, quantity, price_eur, revenue_pln, nbp_rate) "
+        "VALUES ('2025-06-01', 100.0, 6.0, 2000.0, 4.0)")
+    conn.commit()
+    # total_due_pln za 2025 z pustym portfelem lotów/alokacji wynosi 0 (brak
+    # sale_allocations zarejestrowanych ręcznie tutaj) — realny cel testu to
+    # samo porównanie "zapłacone > należne", więc jawnie zapłać więcej niż
+    # cokolwiek policzone przez silnik.
+    cash.add_tax_payment(conn, 2025, "2026-04-01", 999999.0, "literówka")
+
+    findings = integrity.check_all(conn)
+
+    f = next(f for f in findings if f.check == "tax_payments_exceed_due")
+    assert f.count == 1
+    assert f.details[0]["year"] == 2025
+    assert f.severity == "warning"
+
+
+def test_tax_payments_within_due_not_flagged(conn):
+    cash.add_tax_payment(conn, 2025, "2026-04-01", 0.0, "zerowa wpłata")
+
+    findings = integrity.check_all(conn)
+
+    assert not any(f.check == "tax_payments_exceed_due" for f in findings)

@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.21.0] - 2026-08-22
+
+Krok E5 roadmapy v3 (`docs/ROADMAP_V3.md`) — ekran „Stan konta" zastępuje
+pulpit. `/` odpowiada teraz na „jaki jest mój stan": akcje (pozycja + trzy
+kubełki wolne/z ograniczeniem/zablokowane), gotówka i podatek (`cash.ledger()`
+z 0.20.0), najbliższe zdarzenia, wejście do symulacji sprzedaży. Dawny pulpit
+rynkowy (kurs, wykres, sentyment, rekomendacja AI, prognozy) przeniósł się na
+**`/rynek`** — świadome odstępstwo od pierwotnej litery roadmapy „bez zmian w
+treści": karta Portfel zostałaby zdublowana na obu ekranach, więc migruje w
+całości na Stan konta. **Zero nowej matematyki finansowej** — złożone
+wyłącznie z istniejących klocków (`views/` z E3, `cash.ledger()` z E4).
+
+### Dodano
+- **`account_events.py::upcoming_events()`** — cztery MOŻLIWE źródła
+  (vesting, dywidenda, koniec restrykcji ESPP, termin PIT-38) złożone w jedną
+  oś czasu posortowaną po dacie. Funkcja czysta (ten sam wzorzec co
+  `dashboard_insights.py`): liczy wyłącznie odstęp w dniach i formatuje, zero
+  matematyki finansowej. Zdarzenie przeterminowane NIE znika po cichu —
+  pokazuje się z ujemnymi dniami.
+- **`views/account.py::account_view()`** — składanie danych dla `/`: te same
+  wywołania portfelowe w tej samej kolejności co dawny `views/dashboard.py`
+  (zero zmiany liczb), plus kompozycja `cash.ledger()` i
+  `dividend_outlook.calendar()`.
+- **`/`** (`web/routes_konto.py`, nowy moduł) — `GET /` → `account_get`,
+  `templates/account.html`. Karty: Portfel (przeniesiona 1:1 z dawnego
+  pulpitu), Gotówka i podatek (skrót `/gotowka`+`/pit38`), Najbliższe
+  zdarzenia, „Ile wypłacę?" (link do `/plan` — podmiana na `/wyplata` w E6),
+  „Dziś warto wiedzieć", Zapytaj asystenta.
+
+### Zmieniono
+- **`views/dashboard.py` → `views/market.py`** (`git mv`, `dashboard_view` →
+  `market_view`) — zostaje wyłącznie część rynkowa: kurs, benchmark, AI,
+  prognozy, alerty.
+- **`templates/dashboard.html` → `templates/market.html`** — karty Portfel /
+  „Dziś warto wiedzieć" / Zapytaj asystenta usunięte (przeniosły się na Stan
+  konta), tytuł „Rynek — Nokia Tracker".
+- **Nawigacja** (`templates/base.html`) — jeden płaski link „Pulpit" → dwa
+  płaskie linki „Stan konta" i „Rynek".
+- Endpoint `dashboard` zniknął — zastąpiony przez `account_get` (`/`) i
+  `rynek_get` (`/rynek`). Zaktualizowane wszystkie 4 referencje
+  (`base.html`, `news.html`, `routes_ai.py::analyze_now`).
+
+### Zweryfikowane
+1165 testów zielono (+19 wobec 0.20.0: `account_events.py` — 13,
+`views/account.py` — 5, plus konsolidacja przy podziale `test_web_dashboard.py`
+na `test_web_market.py`/`test_web_account.py`). `test_tax_*.py` (beton) bez
+ani jednej zmiany. Po drodze złapany i naprawiony hazard własnego kopiowania:
+gubiący się `cur_block()` dla kubełka „Zablokowane" (kwota PLN/EUR nie
+renderowała się w ogóle) — złapany przez test przeniesiony bez zmiany
+asercji, nie przez nowy test.
+
 ## [0.20.0] - 2026-08-22
 
 Krok E4 roadmapy v3 (`docs/ROADMAP_V3.md`) — księga gotówki. Nowa strona

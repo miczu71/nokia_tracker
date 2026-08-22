@@ -49,7 +49,8 @@
 <nav class="nav">
   <span class="nav-brand">📈 Nokia Tracker</span>
   <div class="nav-links">
-    <a href="{{ url_for('dashboard') }}" {% if active == 'dashboard' %}class="active"{% endif %}>Pulpit</a>
+    <a href="{{ url_for('account_get') }}" {% if active == 'account' %}class="active"{% endif %}>Stan konta</a>
+    <a href="{{ url_for('rynek_get') }}" {% if active == 'rynek' %}class="active"{% endif %}>Rynek</a>
     {% for key, group in NAV_GROUPS.items() %}
     {% set group_pages = group.pages | map(attribute=1) | list %}
     {% set is_active_group = active in group_pages %}

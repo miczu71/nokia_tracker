@@ -5,5 +5,5 @@ Funkcje tutaj biorą `conn` + argumenty zwykłe (nigdy `flask.request`,
 `render_template(**...)`. Nigdy nie zapisują do bazy — zapisy zostają w
 trasach pod `dbm.WRITE_LOCK`, żeby moment zapisu był widoczny w jednym
 miejscu. Dzięki temu logika składania jest wywoływalna spoza Flaska (sensory
-MQTT, przyszłe „Stan konta" z E5) i testowalna bez klienta HTTP.
+MQTT, „Stan konta" z E5 — `account.py`) i testowalna bez klienta HTTP.
 """

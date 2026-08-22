@@ -51,7 +51,7 @@ def register_ai_routes(app: Flask, ctx: AppContext) -> None:
                 cfg = dict(settingsm.get_settings(conn), **_ai_keys())
                 ok = analysis.run_daily_analysis(
                     conn, cfg, ids["primary"], ids["ericsson"], ids["omxh25"], ids["eurpln"])
-            return redirect(url_for("dashboard", analyzed="1" if ok else "0"))
+            return redirect(url_for("rynek_get", analyzed="1" if ok else "0"))
         finally:
             conn.close()
 

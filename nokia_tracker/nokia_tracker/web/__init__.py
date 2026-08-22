@@ -25,6 +25,7 @@ from ._context import AppContext
 from .routes_ai import register_ai_routes
 from .routes_dane import register_dane_routes
 from .routes_dywidendy import register_dywidendy_routes
+from .routes_konto import register_konto_routes
 from .routes_plan import register_plan_routes
 from .routes_podatki import register_podatki_routes
 from .routes_portfel import register_portfel_routes
@@ -110,6 +111,7 @@ def create_app(db_path: str) -> Flask:
         finally:
             conn.close()
 
+    register_konto_routes(app, ctx)
     register_rynek_routes(app, ctx)
     register_portfel_routes(app, ctx)
     register_dywidendy_routes(app, ctx)

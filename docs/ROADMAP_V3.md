@@ -243,6 +243,15 @@ kwotę potrącenia. Naprawa dotyka `tax/`, więc odłożona jako osobna pozycja 
 + wejście do kalkulatora. Dzisiejszy pulpit (cena, wykres, newsy, prognozy AI, co-pilot) → **`/rynek`**,
 bez zmian w treści. Zero nowych pozycji w nawigacji.
 
+**Decyzje domknięte przed implementacją (2026-08-22):**
+
+| Pytanie | Wybór |
+|---|---|
+| Podział treści `/` ↔ `/rynek` | **Czysty podział** — karty Portfel / „Dziś warto wiedzieć" / „Zapytaj asystenta" przenoszą się na Stan konta i **znikają** z `/rynek` (odstępstwo od litery „bez zmian w treści" powyżej, świadome — inaczej karta Portfel byłaby w dwóch miejscach naraz) |
+| Karta „Najbliższe zdarzenia" | **Pełne cztery** — vesting, dywidenda, koniec restrykcji ESPP, termin PIT-38 |
+| Wejście do kalkulatora (E6) | **Link do `/plan`** na razie; w E6 podmiana `href` na `/wyplata` |
+| Nawigacja | **Dwa płaskie linki** — „Stan konta" (`/`) i „Rynek" (`/rynek`); jeśli pasek zawinie na 390 px, etykieta skraca się do „Konto" |
+
 Składane z klocków `views/` z E3 i z `cash.py` z E4 — **zero nowych obliczeń w tym etapie**.
 Mobile-first od razu (warunek ukończenia, nie osobna praca).
 

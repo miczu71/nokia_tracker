@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat, empty_state %}
+{% block title %}Rynek — Nokia Tracker{% endblock %}
+
+{% block content %}
+
+{% set price_pln = (values.price_eur * fx_info.rate)
+                   if values.price_eur is not none and fx_info.rate is not none else none %}
+
+<div class="page-head">
+  <h1>NOKIA.HE</h1>
+  <form method="post" action="{{ url_for('analyze_now') }}">
+    <button class="btn primary" type="submit">🔄 Przeanalizuj teraz</button>
+  </form>
+</div>
+
+{#- Krok 28.6: sticky pasek z ceną — widoczny cały czas przy przewijaniu.
+    Krok E5: wartość portfela przeniosła się na Stan konta (`/`), ta strona
+    zostaje czysto rynkowa. #}
+<div class="sticky-summary no-print">
+  <span>NOKIA.HE
+    {%- if values.price_eur is not none %}
+    <strong>{{ '%.3f'|format(values.price_eur) }}</strong> <span class="muted">EUR</span>
+    {%- else %}
+    <strong>—</strong>
+    {%- endif %}
+  </span>
+</div>
+
+<div class="card">
+  <div class="grid stats">
+    {{ stat('Kurs',
+            '%.3f'|format(values.price_eur) if values.price_eur is not none else '—',
+            'EUR',
+            sub=('≈ %s zł'|format('%.2f'|format(price_pln)) if price_pln is not none else none)) }}
+    <div class="stat">
+      <span class="stat-label">Zmiana dziś</span>
+      <span class="stat-value {{ 'up' if (values.change_pct_day or 0) > 0 else 'down' }}">
+        {{ '%+.2f'|format(values.change_pct_day) if values.change_pct_day is not none else '—' }}
+        <span class="stat-unit">%</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Sesja</span>
+      <span class="stat-value">{{ values.market_state or '—' }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Trend</span>
+      <span class="stat-value">{{ values.trend or '—' }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">RSI 14</span>
+      <span class="stat-value">{{ '%.1f'|format(values.rsi_14) if values.rsi_14 is not none else '—' }}</span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">Werdykt</span>
+      <span class="stat-value" style="font-size:16px">{{ values.alpha_verdict or '—' }}</span>
+    </div>
+  </div>
+  <div class="chart-range-bar" id="chart-range-bar">
+    {% for r in chart_ranges %}
+    <button type="button" data-range="{{ r }}"
+            {% if r == default_chart_range %}class="active"{% endif %}>{{ r }}</button>
+    {% endfor %}
+  </div>
+  <div class="chart-wrap chart-skeleton"><canvas id="price-chart"></canvas></div>
+</div>
+
+<div class="card">
+  <div class="card-title">Sentyment i briefing</div>
+  <p>
+    Sentyment 24h:
+    <strong class="sentiment {{ 'pos' if (values.sentiment_score or 0) > 0.2 else ('neg' if (values.sentiment_score or 0) < -0.2 else '') }}">
+      {{ '%+.2f'|format(values.sentiment_score) if values.sentiment_score is not none else '—' }}
+      ({{ values.sentiment_label or 'brak danych' }})
+    </strong>
+    · {{ values.news_count_24h or 0 }} artykułów w 24h ·
+    <a href="{{ url_for('news_page') }}">wszystkie newsy</a>
+  </p>
+  {% if values.daily_briefing_attrs and values.daily_briefing_attrs.text %}
+    <p>{{ values.daily_briefing_attrs.text }}</p>
+    {% if values.daily_briefing_attrs.key_risks %}
+      <p class="muted">Ryzyka:
+        {% for r in values.daily_briefing_attrs.key_risks %}⚠️ {{ r }}{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+    {% endif %}
+  {% else %}
+    {{ empty_state('Brak jeszcze wygenerowanego briefingu — kliknij „Przeanalizuj teraz” powyżej.') }}
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Rekomendacja AI</div>
+  {% if values.ai_recommendation %}
+    <p>
+      <span class="badge rec-{{ values.ai_recommendation }}">{{ values.ai_recommendation|upper }}</span>
+      {{ values.ai_recommendation_attrs.reason_pl or '' }}
+    </p>
+    <p class="disclaimer">⚠️ {{ values.ai_recommendation_attrs.disclaimer }}</p>
+  {% else %}
+    {{ empty_state('Brak jeszcze rekomendacji.') }}
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-title">Prognozy</div>
+  <div class="row3">
+    <div class="stat">
+      <span class="stat-label">1 tydzień</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(values.forecast_1w_eur) if values.forecast_1w_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">1 miesiąc</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(values.forecast_1m_eur) if values.forecast_1m_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat">
+      <span class="stat-label">12 miesięcy</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(values.forecast_12m_eur) if values.forecast_12m_eur is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+  </div>
+  <p class="muted">Trafność historyczna:
+    {{ '%.1f'|format(values.forecast_accuracy_pct) if values.forecast_accuracy_pct is not none else 'brak danych' }}
+    {% if values.forecast_accuracy_pct is not none %}%{% endif %}
+    · <a href="{{ url_for('forecasts_page') }}">historia prognoz</a>
+  </p>
+</div>
+
+{% if alerts %}
+<div class="card">
+  <div class="card-title">Ostatnie alerty</div>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Kiedy</th><th>Typ</th><th>Tytuł</th></tr></thead>
+      <tbody>
+        {% for a in alerts %}
+        <tr><td data-label="Kiedy">{{ a.fired_at[:16] }}</td><td data-label="Typ">{{ a.kind }}</td><td class="wrap" data-label="Tytuł">{{ a.title }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
+{% block scripts %}
+<script>
+NT.initPriceChart("price-chart", "chart-range-bar", {{ chart_api_url|tojson }},
+                   {{ default_chart_range|tojson }});
+</script>
+{% endblock %}

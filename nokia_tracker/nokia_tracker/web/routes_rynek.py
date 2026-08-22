@@ -1,4 +1,7 @@
-"""Trasy pulpitu i wiadomości rynkowych: /, /api/chart, /news, /forecasts."""
+"""Trasy rynku i wiadomości: /rynek, /api/chart, /news, /forecasts. Krok E5
+(docs/ROADMAP_V3.md): dawny endpoint `dashboard` (`/`) przeniósł się tutaj
+jako `rynek_get` (`/rynek`) — `/` należy teraz do `routes_konto.py` (Stan
+konta)."""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -9,7 +12,7 @@ from ._context import AppContext
 from .. import __version__
 from .. import quotes
 from .. import sensors
-from ..views.dashboard import dashboard_view
+from ..views.market import market_view
 from ..views.market_context import instrument_ids as _ids
 
 # Zakresy wykresu pulpitu (krok 16): (granularity, dni_wstecz). `None` dni = bez
@@ -34,14 +37,14 @@ def register_rynek_routes(app: Flask, ctx: AppContext) -> None:
     # `git diff -M` czyta się wtedy jak przeniesienie, nie przepisanie.
     _conn = ctx.conn
 
-    @app.get("/")
-    def dashboard():
+    @app.get("/rynek")
+    def rynek_get():
         conn = _conn()
         try:
             ids = _ids(conn)
-            view = dashboard_view(conn, ids)
+            view = market_view(conn, ids)
             return render_template(
-                "dashboard.html", active="dashboard", version=__version__,
+                "market.html", active="rynek", version=__version__,
                 chart_ranges=list(_CHART_RANGES), default_chart_range=_DEFAULT_CHART_RANGE,
                 chart_api_url=url_for("chart_api"),
                 **view,

@@ -236,7 +236,7 @@ def record_broker_balance(conn: sqlite3.Connection, as_of_date: str, amount: flo
 
 def ledger(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
     """Spina wszystko powyższe w jeden słownik — konsument: `views/cash.py`
-    (E4) i przyszłe „Stan konta" (E5)."""
+    (E4) i `views/account.py` — „Stan konta" (E5)."""
     return {
         "sale_proceeds": sale_proceeds(conn, year=year),
         "dividend_flow": dividend_flow(conn, cfg, year=year),

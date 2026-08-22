@@ -237,7 +237,40 @@ kwotę potrącenia. Naprawa dotyka `tax/`, więc odłożona jako osobna pozycja 
 
 ---
 
-### E5 — Ekran „Stan konta" zastępuje pulpit (0.21.0) · ~1.5 dnia
+### E5 — Ekran „Stan konta" zastępuje pulpit (0.21.0/0.21.1) · WYDANE 2026-08-22
+
+**Wynik:** `/` odpowiada na „jaki jest mój stan" — nowy `account_events.py::upcoming_events()`
+(cztery MOŻLIWE źródła: vesting, dywidenda, koniec restrykcji ESPP, termin PIT-38, jedna oś czasu
+posortowana po dacie, zero matematyki finansowej) + nowy `views/account.py::account_view()`
+(te same wywołania portfelowe w tej samej kolejności co dawny `views/dashboard.py`, zero zmiany
+liczb, plus kompozycja `cash.ledger()` z E4 i `dividend_outlook.calendar()`) + nowy
+`web/routes_konto.py` (`GET /`) + nowy `templates/account.html`. Dawny pulpit rynkowy →
+`views/dashboard.py` → `views/market.py`, `templates/dashboard.html` → `templates/market.html`,
+`/rynek`. Nawigacja: jeden link „Pulpit" → dwa płaskie linki „Konto" i „Rynek".
+
+**Zweryfikowane na produkcji (Playwright, 2026-08-22, po `ha_manage_updates` z backupem):**
+liczby na `/` zgadzają się co do grosza z `/gotowka?year=2026` (wpływy 0,00 PLN, podatek do
+zapłaty 21,13 PLN, 3 dywidendy) i z kartą Portfel sprzed migracji (162 936 zł, kubełki
+Wolne/Z ograniczeniem/Zablokowane bez zmian). Karta „Najbliższe zdarzenia" pokazuje 4 realne
+zdarzenia posortowane po dacie na produkcyjnych danych. Zero błędów konsoli na `/` i `/rynek`,
+1920 px i 390 px (tabele w trybie kartowym, `data-label` dodane — luka, którą `cash.html`
+miał nienaprawioną).
+
+**Znalezisko poboczne, złapane przed publikacją:** kopiując kartę Portfel do `account.html`
+zgubiony `cur_block()` dla kubełka „Zablokowane" — kwota PLN/EUR w ogóle się nie renderowała.
+Złapane przez test przeniesiony bez zmiany asercji (`test_account_shows_three_portfolio_blocks_with_correct_totals`),
+nie przez nowy test — dokładnie wzorzec z E3/E4 („realne dane/testy łapią błędy kopiowania”).
+
+**Znalezisko po instalacji na produkcji → 0.21.1:** pasek nawigacji zawijał się do dwóch linii
+na 390 px (6 pozycji top-level zamiast dawnych 5). Etykieta „Stan konta" skrócona do „Konto" —
+zmniejsza próg zawijania, ale **nie eliminuje go całkowicie** (liczba pozycji, nie długość
+tekstu, jest głównym czynnikiem). Zdiagnozowane jako **nie-regresja**: `.nav-links` ma
+`flex-wrap: wrap` od kroku 28.6, a `NT.initStickyNavOffset()` istnieje właśnie po to, by
+zmierzyć realną (także zawiniętą) wysokość `.nav` — zweryfikowane, sticky pasek nie zachodzi
+na zawinięty wiersz. Twardy wymóg roadmapy („Rynek" jednym kliknięciem, nie schowany w grupie)
+spełniony niezależnie od liczby linii paska.
+
+<details><summary>Plan sprzed implementacji (E5)</summary>
 
 `/` staje się odpowiedzią na „jaki jest mój stan": akcje + gotówka + podatek + najbliższe zdarzenia
 + wejście do kalkulatora. Dzisiejszy pulpit (cena, wykres, newsy, prognozy AI, co-pilot) → **`/rynek`**,
@@ -259,6 +292,8 @@ Mobile-first od razu (warunek ukończenia, nie osobna praca).
 **Ryzyko:** utrata przyzwyczajeń — `/rynek` musi być jednym kliknięciem, nie schowane w grupie.
 
 **Checkpoint:** Playwright na 390 px i 1920 px, screenshot + konsola. Ocena, czy pierwsze spojrzenie odpowiada na Twoje pytanie.
+
+</details>
 
 ---
 

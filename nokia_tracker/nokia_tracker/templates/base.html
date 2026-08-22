@@ -49,7 +49,10 @@
 <nav class="nav">
   <span class="nav-brand">📈 Nokia Tracker</span>
   <div class="nav-links">
-    <a href="{{ url_for('account_get') }}" {% if active == 'account' %}class="active"{% endif %}>Stan konta</a>
+    {#- Krok E5: "Stan konta" zawijał pasek nawigacji na 390px (6 pozycji
+        zamiast dawnych 5) - skrócone do "Konto" (fallback z planu),
+        pełna etykieta zostaje w <title> i nagłówku strony (account.html). #}
+    <a href="{{ url_for('account_get') }}" {% if active == 'account' %}class="active"{% endif %}>Konto</a>
     <a href="{{ url_for('rynek_get') }}" {% if active == 'rynek' %}class="active"{% endif %}>Rynek</a>
     {% for key, group in NAV_GROUPS.items() %}
     {% set group_pages = group.pages | map(attribute=1) | list %}

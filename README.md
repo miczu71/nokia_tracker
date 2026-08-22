@@ -170,7 +170,7 @@ Wymaga działającego brokera MQTT (`core-mosquitto` domyślnie).
 
 Dodatek wystawia własny interfejs na ingressie (panel „Nokia Tracker” w bocznym menu HA) — to
 **główny sposób interakcji** z dodatkiem, dashboard Lovelace nie jest wymagany. Nawigacja
-*(od 0.5.0, zaktualizowana 0.21.0)* ma dwa płaskie linki **Stan konta** / **Rynek** obok trzech
+*(od 0.5.0, zaktualizowana 0.21.0)* ma dwa płaskie linki **Konto** (Stan konta) / **Rynek** obok trzech
 zwiniętych grup: **Portfel** (Portfel, Loty, Sprzedaże, Granty, Wyniki, Plan, Asystent) /
 **Podatki** (Dywidendy, PIT-38, Gotówka) /
 **Dane** (Importy, Newsy, Prognozy, Kopia zapasowa) / Ustawienia — grupy

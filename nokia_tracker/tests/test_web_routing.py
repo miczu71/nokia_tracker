@@ -160,7 +160,7 @@ def test_base_template_versions_static_assets(client):
 def test_nav_groups_render_without_js(client):
     html = client.get("/").get_data(as_text=True)
     assert '<details class="nav-group' in html
-    for label in ["Stan konta", "Rynek", "Portfel", "Loty", "Sprzedaże", "Granty", "Dywidendy",
+    for label in ["Konto", "Rynek", "Portfel", "Loty", "Sprzedaże", "Granty", "Dywidendy",
                   "PIT-38", "Gotówka", "Importy", "Newsy", "Prognozy", "Kopia zapasowa",
                   "Ustawienia"]:
         assert label in html

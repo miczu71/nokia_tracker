@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.21.1] - 2026-08-22
+
+Fix produkcyjny 0.21.0, znaleziony w weryfikacji Playwright na żywo tuż po
+aktualizacji przez Supervisor: pasek nawigacji zawijał się do dwóch linii na
+390px (6 pozycji top-level zamiast dawnych 5 — „Stan konta" + „Rynek" + 3
+grupy + „Ustawienia"). Etykieta „Stan konta" skrócona do **„Konto"** —
+fallback przewidziany w planie E5, uruchomiony po realnym pomiarze, nie
+zgadywany z góry. Sama strona (`<h1>`, `<title>`) i wszystkie miejsca w
+README/CHANGELOG opisujące funkcję zostają przy pełnej nazwie „Stan konta" —
+skrócona jest wyłącznie etykieta linku w `base.html`.
+
 ## [0.21.0] - 2026-08-22
 
 Krok E5 roadmapy v3 (`docs/ROADMAP_V3.md`) — ekran „Stan konta" zastępuje
@@ -37,7 +48,9 @@ wyłącznie z istniejących klocków (`views/` z E3, `cash.ledger()` z E4).
   „Dziś warto wiedzieć" / Zapytaj asystenta usunięte (przeniosły się na Stan
   konta), tytuł „Rynek — Nokia Tracker".
 - **Nawigacja** (`templates/base.html`) — jeden płaski link „Pulpit" → dwa
-  płaskie linki „Stan konta" i „Rynek".
+  płaskie linki „Konto" (Stan konta) i „Rynek" — etykieta „Stan konta"
+  zawijała pasek na 390px (6 pozycji zamiast dawnych 5), skrócona po
+  weryfikacji Playwright.
 - Endpoint `dashboard` zniknął — zastąpiony przez `account_get` (`/`) i
   `rynek_get` (`/rynek`). Zaktualizowane wszystkie 4 referencje
   (`base.html`, `news.html`, `routes_ai.py::analyze_now`).

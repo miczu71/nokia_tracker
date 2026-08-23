@@ -428,6 +428,59 @@ Pełny plan implementacyjny (ustalenia empiryczne, SQL rekonstrukcji, lista test
 
 ---
 
+### E8 — Ślad „skąd ta liczba" (0.24.0/0.24.1) · WYDANE 2026-08-23
+
+**Wynik:** nowy `breakdown.py` (model odczytu, zero zapisu) — `Source`/`Component`/`Breakdown`
++ dwa domykacze, `close_sum()` (składniki SUMUJĄ się do kwoty) i `close_formula()` (kwota jest
+WYNIKIEM FORMUŁY nad składnikami, przeliczonej niezależnie i skonfrontowanej z liczbą silnika)
+— oba rzucają `BreakdownNotClosedError` przy rozjeździe > 1 grosz, resztę ≤ 1 gr doklejają jako
+jawny składnik „zaokrąglenie". `BreakdownCtx` (cache lotów + indeks `natural_key → plik wyciągu`,
+budowany raz na żądanie) i `provenance()` (noga „skąd w bazie"). `withdrawal_traces()` (9 śladów
+na `/wyplata`) i `account_traces()` (11 śladów na `/`, z zebranymi awariami domykania zamiast
+cichego połknięcia). Nowe makra `_macros.html::traced()`/`trace_body()` — serwerowe `<details>`,
+zero nowego JS. Nowy niezmiennik `integrity.py::breakdown_not_closed` (warning) powtarza
+`account_view()` i zgłasza zebrane awarie na karcie „Spójność danych". 7 kwot (Przychód, Dochód
+roku na `/wyplata`) dostało przy okazji własny widoczny kafelek — wcześniej liczone tylko
+wewnętrznie, nigdy nie pokazywane jako osobna liczba.
+
+**Odstępstwo od litery planu, ustalone przed implementacją:** nowy moduł najwyższego poziomu
+`breakdown.py`, NIE rozszerzenie `tax/trace.py` — `tax/` to beton (§ Zasady pracy wyżej), a
+rozbicia E8 komponują sześć modułów naraz (`portfolio`/`cash`/`advisor`/`tax/grants`/
+`tax/pit38`/`tax/whatif`), czyli leżą NAD silnikami, nie w środku silnika podatkowego.
+`tax/trace.py::fx_derivation` zostaje nietknięte i jest stąd konsumowane bez zmian. Ten sam
+wzorzec odstępstwa co „gotówka per plan" w E7.
+
+**Ustalenie empiryczne sprzed implementacji:** „który wiersz PDF" (litera planu) nie ma klucza
+obcego — `lots`/`vests`/`dividends` mają `source`/`natural_key` (tożsamość wiersza wyciągu),
+nazwa pliku dochodzi wyłącznie przez dopasowanie w `statement_snapshots` (E7). Na produkcji ten
+indeks był w dniu wydania pusty dla większości historii (importy sprzed 0.23.0) — ślad pokazuje
+`natural_key` ZAWSZE i jawne „plik wyciągu nieznany" zamiast pustego pola; potwierdzone na
+produkcji (poniżej) — działa poprawnie dla obu przypadków.
+
+**Zweryfikowane na produkcji (Playwright, 2026-08-23, po `ha_manage_updates` z backupem):** `/`
+i `/wyplata` (oba kierunki), 390 px i 1920 px — zero błędów konsoli na każdej sprawdzonej
+stronie. Rozwinięte ślady pokazują realne dane produkcyjne z poprawnymi źródłami (`Import z
+wyciągu PDF (purchase:2025-07-24:2025-10-27:19.49484)` / `Plik wyciągu nieznany (import sprzed
+0.23.0…)` / `Wpisane ręcznie` dla lotów DRIP) i jawny składnik „zaokrąglenie" tam, gdzie
+zaokrąglenie grosza to wymagało. Native `<details>` rozwija się dotykiem na 390 px bez JS.
+Karta „Spójność danych" na `/dane`: „Wszystkie niezmienniki spójności przechodzą — zero
+znalezisk."
+
+**Znalezisko po instalacji 0.24.0 → 0.24.1 (tego samego dnia):** dwa z 20 śladów
+(`portfel.restricted`, `portfel.cost_basis`) nie domykały się na koncie produkcyjnym — 1-2
+grosze rozjazdu. Przyczyna: składniki były zaokrąglane do grosza OSOBNO, przed zsumowaniem;
+przy jednym locie (testy przed wydaniem) to się nie ujawniało, przy wielu (produkcja: 12 lotów
+w rozbiciu) suma osobno zaokrąglonych składników dryfowała od kwoty zbiorczej liczonej raz na
+całej sumie. **Strona nie padła** — degradacja zaprojektowana w planie zadziałała dokładnie tak
+jak przewidziano: obie kwoty wyrenderowały się bez `<details>`, a `integrity.py` zgłosił oba
+rozjazdy jako findingi na `/dane` (znalezione WŁAŚNIE przez tę weryfikację, nie w ciemno).
+Naprawa: `Component.value` przekazywany nieprzycięty, `close_sum`/`close_formula` zaokrąglają
+raz, na końcu. Dwa nowe testy regresyjne (7 lotów, 9 dywidend) — 1314 testów zielono, ponownie
+zweryfikowane na produkcji po instalacji 0.24.1: wszystkie 20 śladów domykają się, zero
+findingów.
+
+<details><summary>Plan sprzed implementacji (E8)</summary>
+
 ### E8 — Ślad „skąd ta liczba" (0.24.0) · ~1.5 dnia
 
 Rozciągnięcie istniejącego `tax/trace.py` (`fx_derivation`, `enrich_allocations`) ze stron
@@ -438,6 +491,10 @@ i źródłem: który lot, który wiersz PDF, która tabela NBP z jakiego dnia.
 Ta sama zasada, którą roadmapa v1 nałożyła na atrybucję — inaczej rozwinięcie jest ozdobnikiem.
 
 **Pliki:** `tax/trace.py` (uogólnienie), `templates/_macros.html` (makro `traced()`), `views/*`, `static/app.js`.
+
+Pełny plan implementacyjny w `docs/PLAN_E8_slad.md`.
+
+</details>
 
 ---
 
@@ -451,7 +508,7 @@ Ta sama zasada, którą roadmapa v1 nałożyła na atrybucję — inaczej rozwin
 | 0.21.0 | E5 stan konta |
 | 0.22.0 / 0.22.1 | E6 kalkulator (0.22.1 tego samego dnia — fix NBP HTTP 400 dla dat przyszłych) |
 | 0.23.0 | E7 uzgodnienie |
-| 0.24.0 | E8 ślad |
+| 0.24.0 / 0.24.1 | E8 ślad (0.24.1 tego samego dnia — fix podwójnego zaokrąglania w 2 z 20 śladów, znaleziony przy weryfikacji produkcyjnej) |
 
 E2, E4 i E7 mają migracje — **przed każdą pełny eksport ZIP**.
 E1 nie jest wydawany (sama diagnoza).
@@ -472,11 +529,26 @@ Release wg `feedback_ha_addon_release`: bump `nokia_tracker/config.yaml` + `__in
 
 ---
 
-## Weryfikacja końcowa (po E8)
+## Weryfikacja końcowa (po E8) — WYKONANA 2026-08-23
 
-1. `pytest` — wszystkie testy zielono; oczekiwany wzrost 1065 → ~1250.
-2. `test_tax_*.py` zielono (beton nietknięty).
-3. `integrity.check_all()` na produkcji — zero pęknięć.
-4. Playwright na 390 px i 1920 px: `/`, `/rynek`, `/wyplata`, `/imports`, `/pit38` — screenshot **i** konsola bez błędów, do `/config/playwright/`.
-5. Test empiryczny celu: „potrzebuję X zł netto w listopadzie" → odpowiedź w ≤ 3 kliknięciach od `/`, liczba zgodna z ręcznym wyliczeniem.
-6. Uzgodnienie stanu konta z najnowszym wyciągiem Computershare — zielono we wszystkich pozycjach albo jawnie wyjaśniona różnica.
+1. `pytest` — **1314 testów zielono** (punkt odniesienia 1065 na starcie roadmapy v3, ~1283 na
+   0.23.0; przyrost E8 zgodny z oczekiwaniem).
+2. `test_tax_*.py` zielono (beton nietknięty — `git diff --stat` nie dotyka `tax/` w żadnym
+   commicie E8).
+3. `integrity.check_all()` na produkcji (0.24.1) — **zero pęknięć** („Wszystkie niezmienniki
+   spójności przechodzą — zero znalezisk" na `/dane`; 0.24.0 miał chwilowo 2 warningi
+   `breakdown_not_closed:*`, naprawione w 0.24.1 tego samego dnia).
+4. Playwright na 390 px i 1920 px: `/`, `/rynek`, `/wyplata` (oba kierunki), `/imports`,
+   `/pit38`, `/dane` — screenshot **i** konsola bez błędów na każdej, zapisane do
+   `/config/playwright/`.
+5. Test empiryczny celu: `/wyplata?direction=target&wyplata_target=5000` → 156,89 szt., na rękę
+   5 000 zł, **2 kliknięcia od `/`** (Stan konta → „Policz wypłatę"), rozwinięty ślad „Przychód"
+   pokazuje realny rozkład po 12 lotach + jawne „zaokrąglenie (-0,01)" — suma zgadza się z
+   nagłówkiem co do grosza, zweryfikowane ręcznie.
+6. Uzgodnienie stanu konta z wyciągiem Computershare: `/` pokazuje „Brak wyciągu do porównania"
+   (produkcyjna baza ma importy sprzed 0.23.0, `statement_snapshots` puste — stan jawnie
+   wyjaśniony, nie ukryty; ten sam stan co przy weryfikacji E7). Ślad E8 do tych samych lotów
+   pokazuje `natural_key` i jawne „Plik wyciągu nieznany" — spójne z tym samym ograniczeniem.
+
+**Roadmapa v3 (0.18.0 → 0.24.1) w całości wydana i zweryfikowana na produkcji.** Zostaje
+warunkowe e-Deklaracje (research, nie zaplanowane) i zarezerwowane 1.0.0.

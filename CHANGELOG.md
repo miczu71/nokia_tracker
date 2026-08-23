@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.24.1] - 2026-08-23
+
+Fix znaleziony przy weryfikacji produkcyjnej 0.24.0 (Playwright, tego samego dnia).
+
+### Naprawiono
+- **`breakdown.py` — podwójne zaokrąglanie w `portfel.restricted`,
+  `portfel.cost_basis`, `portfel.dividends_net`, `wyplata.forfeit`.**
+  Składniki rozbicia były zaokrąglane do grosza OSOBNO, PRZED zsumowaniem
+  — na koncie z jednym lotem/wpłatą (testy) to się nie ujawniało, ale na
+  koncie z wieloma lotami/dywidendami suma osobno zaokrąglonych
+  składników dryfowała o 1-2 grosze od kwoty zbiorczej (liczonej raz, na
+  całej sumie). Efekt na produkcji: `/dane` zgłaszał 2 findingi
+  `breakdown_not_closed:*`, a dwa z 20 śladów renderowały się bez
+  rozwinięcia — **strona nie padła** (dokładnie zaprojektowana
+  degradacja), ale ślad był niedostępny dla akurat tych dwóch kwot.
+  Naprawa: `Component.value` przekazywany nieprzycięty,
+  `close_sum()`/`close_formula()` zaokrąglają raz, na końcu — zgodnie z
+  tym, jak liczona jest kwota zbiorcza. Dwa nowe testy regresyjne (7
+  lotów, 9 dywidend) łapiące dokładnie ten wzorzec.
+
 ## [0.24.0] - 2026-08-23
 
 Krok E8 roadmapy v3 (`docs/ROADMAP_V3.md`, `docs/PLAN_E8_slad.md`) — ślad

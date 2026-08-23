@@ -645,3 +645,38 @@ def test_import_statement_balance_check_skipped_when_importing_an_older_backfill
     balance_conflicts = conn.execute(
         "SELECT COUNT(*) c FROM import_conflicts WHERE entity_type = 'balance'").fetchone()["c"]
     assert balance_conflicts == 0
+
+
+# --- E7: statement_snapshots — snapshot wyciągu zapisany przy każdym imporcie, pod
+# uzgodnienie liczone na żądanie (reconcile.py) bez ponownego wgrywania PDF.
+
+def test_import_statement_saves_a_statement_snapshot_row(conn, _fake_pdf):
+    report = cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    row = conn.execute(
+        "SELECT * FROM statement_snapshots WHERE import_id = ?",
+        (report["import_id"],)).fetchone()
+    assert row is not None
+    assert row["as_of_date"] == "2026-07-26"
+    payload = __import__("json").loads(row["snapshot_json"])
+    assert payload["as_of_date"] == "2026-07-26"
+    assert len(payload["dividends"]) == 1
+
+
+def test_reimporting_same_file_upserts_snapshot_instead_of_duplicating(conn, _fake_pdf):
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+    rows = conn.execute(
+        "SELECT COUNT(*) c FROM statement_snapshots WHERE as_of_date = '2026-07-26'"
+    ).fetchone()
+    assert rows["c"] == 1
+
+
+def test_import_statement_snapshot_is_never_written_when_as_of_date_is_missing(conn, monkeypatch):
+    # Wyciąg bez rozpoznawalnej daty "as of" (format się nie dopasował) - snapshot bez
+    # as_of_date byłby bezużyteczny dla reconcile() i złamałby UNIQUE(as_of_date) przy
+    # drugim takim pliku - lepiej pominąć zapis niż zapisać śmieciowy wiersz.
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: "tekst bez rozpoznawalnego nagłówka")
+    cp.import_statement(conn, b"weird-bytes", "weird.pdf")
+    assert conn.execute("SELECT COUNT(*) c FROM statement_snapshots").fetchone()["c"] == 0

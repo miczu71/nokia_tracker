@@ -26,13 +26,15 @@ def test_migrate_creates_all_tables(conn):
         "dividend_schedule",
         # księga gotówki (krok E4, 0.20.0)
         "tax_payments", "broker_cash",
+        # uzgodnienie z wyciągiem (krok E7, 0.23.0)
+        "statement_snapshots",
     }
     assert expected <= tables
 
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 11  # v11: krok E4 - księga gotówki
+    assert version == 12  # v12: krok E7 - uzgodnienie z wyciągiem
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):
@@ -183,3 +185,53 @@ def test_tax_payments_basic_insert(conn):
     row = conn.execute("SELECT * FROM tax_payments").fetchone()
     assert row["tax_year"] == 2025
     assert row["amount_pln"] == 5000.0
+
+
+# --- v12: uzgodnienie z wyciągiem (krok E7, 0.23.0) ---
+
+def test_statement_snapshots_basic_insert(conn):
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, period_start, period_end, "
+        "snapshot_json) VALUES (?, '2026-08-18', '2026-01-01', '2026-08-18', '{}')",
+        (import_id,))
+    conn.commit()
+    row = conn.execute("SELECT * FROM statement_snapshots").fetchone()
+    assert row["as_of_date"] == "2026-08-18"
+    assert row["snapshot_json"] == "{}"
+
+
+def test_statement_snapshots_upsert_same_as_of_date(conn):
+    # Ponowny import tego samego wyciągu nadpisuje snapshot, nie duplikuje - ta sama
+    # filozofia idempotencji co _record_conflict/broker_cash.
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', '{}')", (import_id,))
+    conn.commit()
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', '{\"shares_total\": 1.0}') "
+        "ON CONFLICT(as_of_date) DO UPDATE SET snapshot_json = excluded.snapshot_json",
+        (import_id,))
+    conn.commit()
+    rows = conn.execute("SELECT snapshot_json FROM statement_snapshots").fetchall()
+    assert len(rows) == 1
+    assert rows[0]["snapshot_json"] == '{"shares_total": 1.0}'
+
+
+def test_statement_snapshots_cascade_deletes_with_import(conn):
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', '{}')", (import_id,))
+    conn.commit()
+    conn.execute("DELETE FROM imports WHERE id = ?", (import_id,))
+    conn.commit()
+    assert conn.execute("SELECT COUNT(*) c FROM statement_snapshots").fetchone()["c"] == 0

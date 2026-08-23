@@ -539,6 +539,31 @@ def _record_conflict(conn: sqlite3.Connection, import_id: int, entity_type: str,
     return True
 
 
+def save_statement_snapshot(conn: sqlite3.Connection, import_id: int, snapshot: dict) -> None:
+    """E7: zapisuje `statement_snapshot()` (strona wyciągu, zero odwołań do bazy) pod
+    `statement_snapshots`, żeby `reconcile.reconcile()` dało się przeliczyć NA ŻĄDANIE
+    na karcie `/imports` bez ponownego wgrywania PDF.
+
+    Bez `as_of_date` snapshot jest bezużyteczny dla uzgodnienia (nie wiadomo, na jaki
+    dzień porównywać stan bazy) i złamałby `UNIQUE(as_of_date)` przy kolejnym takim
+    pliku — zapis jest pomijany, nie zapisywany z kluczem `NULL`.
+
+    UPSERT po `as_of_date` (ponowny import tego samego wyciągu nadpisuje, nie
+    duplikuje) — ta sama filozofia idempotencji co `broker_cash` (v11) i
+    `_record_conflict` powyżej."""
+    if snapshot.get("as_of_date") is None:
+        return
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, period_start, period_end, "
+        "snapshot_json) VALUES (?,?,?,?,?) "
+        "ON CONFLICT(as_of_date) DO UPDATE SET "
+        "import_id = excluded.import_id, period_start = excluded.period_start, "
+        "period_end = excluded.period_end, snapshot_json = excluded.snapshot_json",
+        (import_id, snapshot["as_of_date"], snapshot.get("period_start"),
+         snapshot.get("period_end"), json.dumps(snapshot)))
+    conn.commit()
+
+
 def _check_dividend_arithmetic(row: dict) -> None:
     """Sanity-check, nie twardy gate: Gross - Taxes - Fees powinno się równać Dividend
     Reinvested + Residual Amount. Łapie błędy pozycjonowania kolumn, nie blokuje importu —
@@ -805,6 +830,8 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
                 "Withhold-to-Cover Typ B (prawdziwa sprzedaż): %s, %.4f akcji, %.2f EUR "
                 "netto — wymaga ręcznego potwierdzenia przez /lots/sell",
                 row["execution_date"], row["quantity"], row["net_proceeds_eur"])
+
+    save_statement_snapshot(conn, import_id, statement_snapshot(text))
 
     if reconcile_holdings(conn, text, meta["as_of_date"], import_id):
         rows_conflict += 1

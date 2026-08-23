@@ -53,6 +53,11 @@ _CSV_TABLES: dict[str, list[str]] = {
     # dividend_schedule (żadne zewnętrzne źródło ich nie odtworzy).
     "tax_payments": ["id", "tax_year", "paid_date", "amount_pln", "notes"],
     "broker_cash": ["id", "as_of_date", "amount", "currency", "source", "notes"],
+    # krok E7 (0.23.0): snapshot wyciągu — parsowane liczby z PDF (statement_snapshot()),
+    # niezbędne do przeliczenia uzgodnienia na żądanie bez ponownego wgrywania PDF; nie
+    # odtwarzalne z zewnętrznego źródła po fakcie (plik już przetworzony i odrzucony).
+    "statement_snapshots": ["id", "import_id", "as_of_date", "period_start", "period_end",
+                              "snapshot_json", "created_at"],
 }
 
 

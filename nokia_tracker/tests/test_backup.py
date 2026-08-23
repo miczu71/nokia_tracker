@@ -55,7 +55,7 @@ def test_export_zip_contains_manifest_db_and_csvs(seeded_db_path):
             "nokia.db", "manifest.json",
             "lots.csv", "sales.csv", "sale_allocations.csv",
             "grants.csv", "vests.csv", "dividends.csv", "dividend_schedule.csv",
-            "tax_payments.csv", "broker_cash.csv",
+            "tax_payments.csv", "broker_cash.csv", "statement_snapshots.csv",
         }
         manifest = json.loads(zf.read("manifest.json"))
         assert manifest["app_version"] == __version__
@@ -273,3 +273,62 @@ def test_restore_preview_survives_backup_missing_cash_tables(tmp_path):
 
     assert result["diff"]["broker_cash"] == {"added": 0, "removed": 1, "unchanged": 0}
     assert result["diff"]["tax_payments"] == {"added": 0, "removed": 0, "unchanged": 0}
+
+
+def test_export_zip_includes_statement_snapshots(tmp_path):
+    # Krok E7 (0.23.0): snapshot wyciągu jest niezbędny do przeliczenia uzgodnienia
+    # na żądanie bez ponownego wgrywania PDF — musi być w eksporcie od razu, ten sam
+    # powód co tax_payments/broker_cash (v11) i dividend_schedule (v10).
+    path = str(tmp_path / "current.db")
+    conn = dbm.get_conn(path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', '{}')", (import_id,))
+    conn.commit()
+    conn.close()
+
+    data = backup.export_zip(path)
+    with zipfile.ZipFile(__import__("io").BytesIO(data)) as zf:
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["row_counts"]["statement_snapshots"] == 1
+        assert "2026-08-18" in zf.read("statement_snapshots.csv").decode("utf-8")
+
+
+def test_restore_preview_survives_backup_missing_statement_snapshots(tmp_path):
+    # Analogiczny scenariusz do test_restore_preview_survives_backup_missing_cash_tables,
+    # ale dla v12: kopia z v11 (sprzed E7) nie ma statement_snapshots w ogóle.
+    current_path = str(tmp_path / "current.db")
+    conn = dbm.get_conn(current_path)
+    dbm.migrate(conn)
+    _seed(conn, lot_id=1, sale_id=1, grant_id=1)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', '{}')", (import_id,))
+    conn.commit()
+    conn.close()
+
+    old_snapshot_path = tmp_path / "old_snapshot.db"
+    old_conn = sqlite3.connect(str(old_snapshot_path))
+    old_conn.executescript("".join(dbm._MIGRATIONS[:11]))
+    old_conn.execute("PRAGMA user_version = 11")
+    old_conn.commit()
+    old_conn.close()
+
+    buf = __import__("io").BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.write(str(old_snapshot_path), "nokia.db")
+        zf.writestr("manifest.json", json.dumps({
+            "app_version": "0.22.1", "schema_version": 11,
+            "exported_at": "2026-08-22T00:00:00+00:00", "row_counts": {},
+        }))
+
+    result = backup.restore_preview(current_path, buf.getvalue())
+
+    assert result["diff"]["statement_snapshots"] == {"added": 0, "removed": 1, "unchanged": 0}

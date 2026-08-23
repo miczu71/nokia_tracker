@@ -373,6 +373,30 @@ _MIGRATIONS = [
         UNIQUE(as_of_date, currency)
     );
     """,
+    # v12 — krok E7: uzgodnienie z wyciągiem (docs/PLAN_E7_uzgodnienie.md). Wynik
+    # statement_snapshot() (importers/computershare_pdf.py) zapisany jako JSON, żeby
+    # `reconcile.reconcile()` dało się przeliczyć NA ŻĄDANIE (karta na /imports) bez
+    # ponownego wgrywania PDF — snapshot to WYŁĄCZNIE strona wyciągu (parsowane
+    # liczby/wiersze), strona bazy jest zawsze rekonstruowana na żywo z aktualnych
+    # tabel (reconcile.py), nigdy zamrożona razem z nią.
+    #
+    # UNIQUE(as_of_date) + UPSERT: ponowny import tego samego wyciągu nadpisuje
+    # snapshot, nie duplikuje — ta sama filozofia idempotencji co `broker_cash` (v11)
+    # i `_record_conflict` w importerze. `ON DELETE CASCADE` na `import_id`: usunięcie
+    # importu (dziś niedostępne z UI, ale możliwe ręcznie) sprząta snapshot razem z nim
+    # — nie zostaje osierocony wpis wskazujący na nieistniejący import.
+    """
+    CREATE TABLE statement_snapshots (
+        id INTEGER PRIMARY KEY,
+        import_id INTEGER NOT NULL REFERENCES imports(id) ON DELETE CASCADE,
+        as_of_date TEXT NOT NULL,
+        period_start TEXT,
+        period_end TEXT,
+        snapshot_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(as_of_date)
+    );
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

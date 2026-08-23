@@ -297,6 +297,46 @@ Mobile-first od razu (warunek ukończenia, nie osobna praca).
 
 ---
 
+### E6 — Kalkulator wypłaty, dwukierunkowy (0.22.0/0.22.1) · WYDANE 2026-08-23
+
+**Wynik:** `/wyplata`, przełącznik kierunku. Nowy `tax/whatif.py::solve_for_net()` —
+jedyna nowa matematyka całej roadmapy v3: bisekcja po ilości akcji nad istniejącym
+`_plan_fifo`, model ROCZNY (dochód sprzedaży + dochód roku − strata z lat ubiegłych,
+`_annual_tax`/`annual_tax_breakdown` wydzielone z dwóch kopii w `advisor.py`). Nowy
+`annual_net_for_quantity()` liczy „na rękę" tym samym modelem dla znanej ilości —
+kierunek B i finalny krok kierunku A kończą w TEJ SAMEJ funkcji. Nowy
+`views/withdrawal.py::withdrawal_view()` składa oba kierunki w jeden kształt
+(przepadek ESPP pokazany OSOBNO od „na rękę", koncentracja przed/po, porównanie z
+2 stycznia, ślad FIFO do numeru tabeli NBP). Przy okazji naprawiony dług z E3 §3b:
+`views/plan.py::timing_scenario` łapie już `InsufficientLotsError`/
+`CostBasisMissingError` zamiast rzucać gołe 500.
+
+**Zweryfikowane na produkcji (Playwright + `ha_manage_app` proxy, 2026-08-23, po
+`ha_manage_updates` z backupem):** `/wyplata` oba kierunki na 390 px i 1920 px —
+target 5000 zł → 145,99 szt., na rękę 5 000,01 zł (±1 zł), wariant pełnych akcji
+146 szt.; quantity 10 szt. → 305,84 zł na rękę. Przepadek ESPP (59,99 szt., 2 265 zł)
+pokazany osobno, nieodjęty od „na rękę". Zero błędów konsoli na `/wyplata`, `/`, `/plan`.
+Przycisk „Policz wypłatę" na Stanie konta prowadzi do `/wyplata` (zweryfikowane
+`href` w DOM).
+
+**Znalezisko po instalacji na produkcji → 0.22.1:** `GET /api/preview/wyplata`
+zwracał gołe 500. Root cause potwierdzony logiem Supervisora: NBP zwraca HTTP 400
+dla dat PRZYSZŁYCH (udokumentowane w `fx_nbp.py`, ale bez konsekwencji, dopóki nic
+nie pytało NBP o kurs na przyszłość). Karta „Kiedy sprzedać" (`optimize_sale_timing`,
+krok 26/0.11.0) zawsze liczy scenariusz „2 stycznia następnego roku" — data zawsze w
+przyszłości — i była w praktyce zepsuta w produkcji od 0.11.0, nigdy niezauważona
+(testy mockują NBP na stały kurs). Poważniejsze: `withdrawal_view()` (oba kierunki,
+nie tylko karta porównania) też nie łapał tego wyjątku — wybranie w kalkulatorze
+daty sprzedaży odległej w przyszłości, czyli DOKŁADNIE scenariusz „ile wypłacę w
+listopadzie" nazwany jako cel projektu na początku tego dokumentu, wywalałoby całą
+stronę. Złapane PRZED pokazaniem użytkownikowi, przy weryfikacji na żywych danych.
+Naprawione w obu miejscach (`QuoteProviderError` łapane obok już obsługiwanych
+wyjątków), 1209 testów zielono, zweryfikowane ponownie na produkcji po instalacji
+0.22.1 — `/api/preview/wyplata` zwraca 200 z realnym wynikiem, data w przyszłości
+poza zasięgiem NBP zwraca czytelny komunikat błędu zamiast 500.
+
+<details><summary>Plan sprzed implementacji (E6)</summary>
+
 ### E6 — Kalkulator wypłaty, dwukierunkowy (0.22.0) · ~2 dni
 
 Jeden ekran `/wyplata`, przełącznik kierunku.
@@ -311,6 +351,8 @@ Jeden ekran `/wyplata`, przełącznik kierunku.
 **Ryzyko:** progi nieciągłe (przejście przez rok podatkowy, wyczerpanie straty) mogą łamać monotoniczność. Test na skonstruowanym przypadku z progiem, jawnie.
 
 **Checkpoint:** trzy realne scenariusze policzone ręcznie w arkuszu vs wynik narzędzia.
+
+</details>
 
 ---
 
@@ -349,7 +391,7 @@ Ta sama zasada, którą roadmapa v1 nałożyła na atrybucję — inaczej rozwin
 | 0.19.0 | E3 refaktor |
 | 0.20.0 | E4 księga gotówki |
 | 0.21.0 | E5 stan konta |
-| 0.22.0 | E6 kalkulator |
+| 0.22.0 / 0.22.1 | E6 kalkulator (0.22.1 tego samego dnia — fix NBP HTTP 400 dla dat przyszłych) |
 | 0.23.0 | E7 uzgodnienie |
 | 0.24.0 | E8 ślad |
 

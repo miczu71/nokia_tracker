@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.24.2] - 2026-08-24
+
+Fix znaleziony przy re-imporcie wszystkich 6 wyciągów Computershare (uzgodnienie E7
+przeliczone na pełnej historii po raz pierwszy) — ujawnił realny rozjazd pozycji
+„Akcje": wyciąg 2 935,5107 vs baza 2 958,3189 (+22,8082 szt.), potwierdzony przez
+`integrity.py` na `/dane`.
+
+### Naprawiono
+- **`data_fixes.py` — cofnięta błędna naprawa E1 (2026-08-22).**
+  `fix_missing_espp_match_lot_2025_08` uznała transzę dopasowania ESPP z grantu
+  2024-10-21 (24,42 szt.) za brakującą i dopisała jej osobny lot. To założenie
+  było błędne: te akcje BYŁY już policzone w innym locie — Computershare łączy
+  w JEDEN wiersz Withhold-to-Cover wszystkie transze dopasowania ESPP, które
+  stają się dostępne tego samego dnia (ten sam wzorzec widoczny gdzie indziej w
+  danych: 2024-08-29, cztery transze pod jednym wierszem). Dowód arytmetyczny:
+  suma 50% dopasowania sześciu zakupów ESPP odblokowanych 2025-08-28 =
+  101,396666 — zgadza się z realną wartością wyciągu (101,396662, lot
+  `vested_release:2025-08-28:3.71:101.396662`, już poprawnie zaimportowany) co
+  do 0,000004. Grant 2024-10-21 to ostatni z tych sześciu zakupów — dokładnie
+  ta kwota, którą naprawa E1 uznała za brakującą. Zgodne z istniejącym testem
+  pakietu (`test_reconcile_vesting_resolves_exactly_the_provable_tranches`),
+  który dla tej samej transzy 24,42 asercjuje `pending` — naprawa E1 była więc
+  rozbieżna z własnymi testami od początku.
+
+  Nowa `revert_phantom_espp_match_lot_2025_08()` (wołana zamiast starej naprawy
+  w `apply_all()`) usuwa fantomowy lot, cofa transzę na `pending`/`lot_id=NULL`
+  i przelicza FIFO sprzedaży #1 bez tego lotu — suma alokacji zostaje 784,0
+  szt., zmienia się tylko rozkład na loty. `reported_cost_pln`/
+  `reported_revenue_pln` (nadpisania PIT-38) nietknięte — naprawa dotyczy
+  wyłącznie śladu audytowego w `lots`/`vests`/`sale_allocations`. Skutek
+  widoczny na Stanie konta: bieżący stan akcji spada o 23,29 szt. (fantomowe
+  akcje, które nigdy realnie nie istniały). 6 nowych testów regresyjnych
+  (`tests/test_data_fixes.py`).
+
 ## [0.24.1] - 2026-08-23
 
 Fix znaleziony przy weryfikacji produkcyjnej 0.24.0 (Playwright, tego samego dnia).

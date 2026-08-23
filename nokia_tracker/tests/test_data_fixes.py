@@ -186,3 +186,133 @@ def test_integrity_clean_after_fix(conn):
 
     post = integrity.check_all(conn, today="2026-08-22")
     assert post == []
+
+
+# --- 2026-08-24: cofnięcie naprawy powyżej (re-import 6 wyciągów odsłonił, że jej
+# założenie było błędne — te 24.42 szt. BYŁY już policzone w `batch2_id`
+# ('vested_release:2025-08-28:3.71:101.396662'), Computershare łączy w jeden wiersz
+# Withhold-to-Cover wszystkie transze dopasowania ESPP odblokowane tego samego dnia.
+# Testy niżej łańcuchują DOKŁADNIE realną sekwencję zdarzeń: stan sprzed naprawy →
+# błędna naprawa (jak na produkcji 2026-08-22) → cofnięcie (2026-08-24) — zamiast
+# osobnej fixtury, żeby zweryfikować, że cofnięcie faktycznie odwraca TĘ KONKRETNĄ
+# naprawę, nie generyczny mechanizm. ---
+
+
+def test_revert_removes_the_lot_fix_added(conn):
+    _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    lot = conn.execute(
+        "SELECT * FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
+    ).fetchone()
+    assert lot is None
+
+
+def test_revert_puts_vest_back_to_pending(conn):
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "pending"
+    assert vest["lot_id"] is None
+
+
+def test_revert_reproduces_exact_pre_fix_allocation(conn):
+    """FIFO bez fantomu, nad TYMI SAMYMI lotami, musi odtworzyć DOKŁADNIE
+    alokację sprzed naprawy — deterministyczność FIFO nad niezmienionym
+    zestawem realnych lotów."""
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    allocs = {a["lot_id"]: a["quantity"] for a in conn.execute(
+        "SELECT lot_id, quantity FROM sale_allocations WHERE sale_id = 1").fetchall()}
+    assert allocs == {
+        ids["before_id"]: pytest.approx(673.640618),
+        ids["batch1_id"]: pytest.approx(0.48),
+        ids["batch2_id"]: pytest.approx(101.396662),
+        ids["late_id"]: pytest.approx(8.482719999999816),
+    }
+    assert sum(allocs.values()) == pytest.approx(784.0)
+
+
+def test_revert_leaves_reported_pit38_override_untouched(conn):
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    sale = conn.execute("SELECT * FROM sales WHERE id = ?", (ids["sale_id"],)).fetchone()
+    assert sale["reported_cost_pln"] == pytest.approx(7500.66)
+    assert sale["reported_revenue_pln"] == pytest.approx(17631.72)
+
+
+def test_revert_is_idempotent(conn):
+    _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    # Druga naprawa nie ma już czego robić — no-op, bez wyjątku i bez zmiany stanu.
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    assert conn.execute(
+        "SELECT id FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
+    ).fetchone() is None
+    total = conn.execute(
+        "SELECT SUM(quantity) FROM sale_allocations WHERE sale_id = 1").fetchone()[0]
+    assert total == pytest.approx(784.0)
+
+
+def test_revert_is_noop_on_state_that_was_never_broken(conn):
+    """Świeża baza (fantomowy lot nigdy nie istniał) — guard po `source =
+    'manual_reconciliation'` musi zwrócić się natychmiast, nic nie ruszając."""
+    ids = _setup_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "pending"
+    assert vest["lot_id"] is None
+    total = conn.execute(
+        "SELECT SUM(quantity) FROM sale_allocations WHERE sale_id = 1").fetchone()[0]
+    assert total == pytest.approx(784.0)  # niezmieniona alokacja sprzed jakiejkolwiek naprawy
+
+
+def test_apply_all_no_longer_reintroduces_the_lot(conn):
+    """`apply_all()` woła już tylko `revert_...`, nie `fix_missing_...` — na
+    stanie sprzed naprawy (transza wciąż 'pending', bez lotu) musi zostać
+    no-opem, NIE dodawać z powrotem 24.42 szt."""
+    ids = _setup_pre_fix_state(conn)
+
+    data_fixes.apply_all(conn)
+
+    assert conn.execute(
+        "SELECT id FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
+    ).fetchone() is None
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "pending"
+
+
+def test_apply_all_on_already_broken_production_shape_converges_to_clean(conn):
+    """Mirror realnego startu add-onu na bazie, która już ma zastosowaną starą
+    naprawę (dokładnie stan produkcyjny sprzed tego wydania) — jedno wywołanie
+    `apply_all()` sprząta za jednym razem."""
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+
+    data_fixes.apply_all(conn)
+
+    assert conn.execute(
+        "SELECT id FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
+    ).fetchone() is None
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "pending"
+    assert vest["lot_id"] is None
+    total = conn.execute(
+        "SELECT SUM(quantity) FROM sale_allocations WHERE sale_id = 1").fetchone()[0]
+    assert total == pytest.approx(784.0)

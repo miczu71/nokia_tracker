@@ -414,3 +414,26 @@ def test_reconcile_espp_purchases_in_period_ok_when_matching(conn):
     p = _position(positions, "espp_purchases_in_period")
     assert p.status == "ok"
     assert p.database == pytest.approx(19.21982)
+
+
+# --- latest_snapshot() — wspólny odczyt dla views/imports.py i views/account.py (krok 7) ---
+
+def test_latest_snapshot_returns_none_when_no_import_yet(conn):
+    assert reconcile.latest_snapshot(conn) is None
+
+
+def test_latest_snapshot_returns_the_parsed_json_of_the_most_recent_as_of_date(conn):
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-01-01')")
+    old_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-01-01', '{\"as_of_date\": \"2026-01-01\"}')", (old_id,))
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('y','y','2026-08-18')")
+    new_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', '{\"as_of_date\": \"2026-08-18\"}')", (new_id,))
+    conn.commit()
+    assert reconcile.latest_snapshot(conn) == {"as_of_date": "2026-08-18"}

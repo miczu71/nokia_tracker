@@ -24,15 +24,9 @@ def imports_view(conn: sqlite3.Connection) -> dict:
         d["incoming"] = json.loads(d["incoming_json"]) if d["incoming_json"] else {}
         conflicts.append(d)
 
-    reconciliation = None
-    reconciliation_as_of = None
-    snapshot_row = conn.execute(
-        "SELECT snapshot_json, as_of_date FROM statement_snapshots "
-        "ORDER BY as_of_date DESC LIMIT 1").fetchone()
-    if snapshot_row is not None:
-        snapshot = json.loads(snapshot_row["snapshot_json"])
-        reconciliation = reconcilem.reconcile(conn, snapshot)
-        reconciliation_as_of = snapshot_row["as_of_date"]
+    snapshot = reconcilem.latest_snapshot(conn)
+    reconciliation = reconcilem.reconcile(conn, snapshot) if snapshot else None
+    reconciliation_as_of = snapshot.get("as_of_date") if snapshot else None
 
     return {
         "history": history,

@@ -17,10 +17,27 @@ from .. import cash as cashm
 from .. import dashboard_insights
 from .. import dividend_outlook
 from .. import portfolio as portfoliom
+from .. import reconcile as reconcilem
 from .. import sensors
 from ..tax import grants as grantsm
 from ..tax import losses as taxlosses
 from ..tax import policy as taxpolicy
+
+
+def _reconciliation_summary(conn) -> dict | None:
+    """E7 (krok 7): skrót uzgodnienia z wyciągiem — data + liczba rozjeżdżających się
+    pozycji, do jednej linii w karcie Portfel. `None` gdy nie wgrano jeszcze żadnego
+    wyciągu ("brak wyciągu do porównania", nie "niezgodność") — ten sam odczyt
+    (`reconcile.latest_snapshot`) co pełna tabela na `/imports`, żeby oba miejsca
+    nigdy nie pokazały dwóch różnych odpowiedzi."""
+    snapshot = reconcilem.latest_snapshot(conn)
+    if snapshot is None:
+        return None
+    positions = reconcilem.reconcile(conn, snapshot)
+    return {
+        "as_of_date": snapshot.get("as_of_date"),
+        "mismatch_count": sum(1 for p in positions if p.status == "mismatch"),
+    }
 
 
 def account_view(conn, cfg: dict, ids: dict, year: int) -> dict:
@@ -91,4 +108,5 @@ def account_view(conn, cfg: dict, ids: dict, year: int) -> dict:
         "restricted": restricted, "buckets": buckets, "forfeit": forfeit,
         "eurpln_rate": eurpln_rate, "ledger": ledger, "events": events,
         "insights": insights,
+        "reconciliation_summary": _reconciliation_summary(conn),
     }

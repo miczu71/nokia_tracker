@@ -92,6 +92,22 @@
   </p>
   {% endif %}
 
+  {#- E7 (docs/PLAN_E7_uzgodnienie.md, krok 7): jedna linia statusu uzgodnienia z
+      wyciągiem, bez nowej karty i bez nowej pozycji w nawigacji. "Brak wyciągu do
+      porównania" gdy nic jeszcze nie zaimportowano - nigdy "niezgodność". #}
+  {% if reconciliation_summary is none %}
+  <p class="muted">Brak wyciągu do porównania — wgraj pierwszy PDF na <a href="{{ url_for('imports_get') }}">Importach</a>.</p>
+  {% elif reconciliation_summary.mismatch_count %}
+  <p class="disclaimer">
+    ⚠️ Uzgodnienie z wyciągiem z {{ reconciliation_summary.as_of_date }}:
+    {{ reconciliation_summary.mismatch_count }}
+    {{ 'pozycja' if reconciliation_summary.mismatch_count == 1 else 'pozycje' }} z rozjazdem —
+    szczegóły na <a href="{{ url_for('imports_get') }}">Importach</a>.
+  </p>
+  {% else %}
+  <p class="muted">Uzgodnione z wyciągiem z {{ reconciliation_summary.as_of_date }}.</p>
+  {% endif %}
+
   <div class="pf-perf grid stats">
     {{ stat('Koszt bazowy', position.cost_basis_pln|money if position.cost_basis_pln is not none else '—',
             ('zł' if position.cost_basis_pln is not none else none),

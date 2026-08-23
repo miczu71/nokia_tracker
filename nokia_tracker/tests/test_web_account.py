@@ -167,3 +167,71 @@ def test_account_restricted_note_shows_forfeit_amount(tmp_path, monkeypatch):
         # forfeit_value_pln = 50 * 10 (price) * 4 (eurpln) = 2000
         assert "utratę 50,00 akcji dopasowania" in html
         assert "2\xa0000" in html
+
+
+# --- E7 (krok 7): jedna linia statusu uzgodnienia z wyciągiem ---
+
+def test_account_shows_no_statement_to_compare_before_first_import(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "Brak wyciągu do porównania" in html
+
+
+def test_account_shows_reconciled_line_when_snapshot_matches(tmp_path):
+    import json
+
+    from nokia_tracker import db as dbm
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "recon_ok.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    snapshot = {
+        "period_start": "2026-01-01", "period_end": "2026-08-18", "as_of_date": "2026-08-18",
+        "shares_total": 0.0, "restricted_units_total": None,
+        "pending_tranches": [], "dividends": [], "purchases": [],
+        "withhold_type_a": [], "withhold_type_b": [],
+    }
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', ?)", (import_id, json.dumps(snapshot)))
+    conn.commit()
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "Uzgodnione z wyciągiem z 2026-08-18" in html
+
+
+def test_account_shows_mismatch_warning_with_link_to_imports(tmp_path):
+    import json
+
+    from nokia_tracker import db as dbm
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "recon_bad.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    snapshot = {
+        "period_start": "2026-01-01", "period_end": "2026-08-18", "as_of_date": "2026-08-18",
+        "shares_total": 100.0, "restricted_units_total": None,
+        "pending_tranches": [], "dividends": [], "purchases": [],
+        "withhold_type_a": [], "withhold_type_b": [],
+    }
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', ?)", (import_id, json.dumps(snapshot)))
+    conn.commit()
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "z rozjazdem" in html
+        assert 'href="/imports"' in html

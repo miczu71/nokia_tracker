@@ -16,8 +16,42 @@ def test_account_view_on_empty_db_has_all_keys(conn):
     ids = instrument_ids(conn)
     view = account_view(conn, cfg, ids, year=date.today().year)
     for key in ("position", "dividends", "unvested", "restricted", "buckets",
-                "forfeit", "eurpln_rate", "ledger", "events", "insights"):
+                "forfeit", "eurpln_rate", "ledger", "events", "insights",
+                "reconciliation_summary"):
         assert key in view
+
+
+def test_account_view_reconciliation_summary_none_before_first_import(conn):
+    # E7 (krok 7): brak wyciągu do porównania - "brak danych", nie "niezgodność".
+    cfg = settingsm.get_settings(conn)
+    ids = instrument_ids(conn)
+    view = account_view(conn, cfg, ids, year=date.today().year)
+    assert view["reconciliation_summary"] is None
+
+
+def test_account_view_reconciliation_summary_reflects_latest_snapshot(conn):
+    import json
+
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    snapshot = {
+        "period_start": "2026-01-01", "period_end": "2026-08-18", "as_of_date": "2026-08-18",
+        "shares_total": 0.0, "restricted_units_total": None,
+        "pending_tranches": [], "dividends": [], "purchases": [],
+        "withhold_type_a": [], "withhold_type_b": [],
+    }
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', ?)", (import_id, json.dumps(snapshot)))
+    conn.commit()
+
+    cfg = settingsm.get_settings(conn)
+    ids = instrument_ids(conn)
+    view = account_view(conn, cfg, ids, year=date.today().year)
+    summary = view["reconciliation_summary"]
+    assert summary["as_of_date"] == "2026-08-18"
+    assert summary["mismatch_count"] == 0  # 0.0 == 0.0, brak rozjazdu akcji
 
 
 def test_account_view_broker_balance_none_not_zero_on_empty_db(conn):

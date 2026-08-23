@@ -53,6 +53,17 @@ def _allocation_date_violations(conn: sqlite3.Connection) -> int:
     return row["c"]
 
 
+def latest_snapshot(conn: sqlite3.Connection) -> dict | None:
+    """Najnowszy `statement_snapshot()` zapisany przy imporcie, sparsowany z JSON.
+    `None` gdy nie wgrano jeszcze żadnego wyciągu — wspólny odczyt dla
+    `views/imports.py` (pełna tabela) i `views/account.py` (skrót statusu, krok 7),
+    żeby oba miejsca czytały DOKŁADNIE ten sam snapshot, nigdy dwie kopie zapytania."""
+    row = conn.execute(
+        "SELECT snapshot_json FROM statement_snapshots "
+        "ORDER BY as_of_date DESC LIMIT 1").fetchone()
+    return json.loads(row["snapshot_json"]) if row is not None else None
+
+
 def shares_as_of(conn: sqlite3.Connection, as_of: str) -> dict | None:
     """Akcje posiadane na dzień `as_of`, per `lot_type` i łącznie — `Σ lots.quantity`
     nabytych do D minus `Σ sale_allocations.quantity` sprzedanych do D, liczone PER LOT

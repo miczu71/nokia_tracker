@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from .. import advisor as advisorm
 from .. import portfolio as portfoliom
+from ..providers.base import QuoteProviderError
 from ..tax import grants as grantsm
 from ..tax import lots as taxlots
 from ..tax import whatif as taxwhatif
@@ -35,6 +36,18 @@ def withdrawal_view(conn, cfg: dict, direction: str, price_eur: float, fee_pct: 
     except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError,
             taxwhatif.TargetUnreachableError) as e:
         return None, str(e)
+    except QuoteProviderError:
+        # Znalezisko z weryfikacji produkcyjnej 0.22.0 (docs/PLAN_E6_wyplata.md,
+        # naprawione też w advisor.py::optimize_sale_timing dla karty "Kiedy
+        # sprzedać"): NBP nie publikuje kursów dla dat PRZYSZŁYCH (fx_nbp.py
+        # docstring, HTTP 400), więc data sprzedaży zbyt daleko w przyszłości
+        # nie ma jeszcze kursu, po którym mogłaby się przeliczyć. Jawny błąd,
+        # nie cichy fallback na dzisiejszy kurs — byłby to inny wynik niż ten,
+        # o który poprosił użytkownik.
+        return None, (
+            "NBP nie publikuje jeszcze kursu dla tak odległej daty sprzedaży "
+            "(kurs jest znany dopiero dzień po fakcie). Wybierz dzisiejszą "
+            "datę albo datę z przeszłości.")
 
     quantity_sold = engine["quantity"]
     # Kurs zamrożony przez simulate_sale() na dzień sale_date (art. 11a) — używany

@@ -113,6 +113,29 @@ def test_withdrawal_view_fee_pct_reduces_net_for_quantity_direction(conn):
     assert with_fee["net_pln"] < no_fee["net_pln"]
 
 
+def test_withdrawal_view_future_sale_date_beyond_nbp_returns_error_not_500(
+        conn, monkeypatch):
+    # Znalezisko z weryfikacji produkcyjnej 0.22.0: NBP zwraca HTTP 400 dla
+    # dat PRZYSZŁYCH (fx_nbp.py docstring) — data sprzedaży daleko w
+    # przyszłości (np. wybór miesiąca w kalkulatorze) nie ma jeszcze kursu.
+    from nokia_tracker.providers.base import QuoteProviderError
+
+    lots.add_lot(conn, "2020-01-01", "own", 100.0, 3.0, source="manual")
+
+    def _raise(conn, event_date):
+        raise QuoteProviderError(f"NBP {event_date}: HTTP 400")
+
+    monkeypatch.setattr("nokia_tracker.tax.whatif.fx_nbp.rate_for_event", _raise)
+
+    result, error = withdrawal_view(
+        conn, settingsm.get_settings(conn), "quantity", price_eur=8.0, fee_pct=0.0,
+        sale_date="2027-06-01", quantity=10.0)
+
+    assert result is None
+    assert error is not None
+    assert "NBP" in error
+
+
 def test_withdrawal_view_forfeit_not_subtracted_from_net_pln(conn):
     # E4-lekcja: przepadek to utrata akcji, nie przepływ gotówki — nie może być
     # wliczony do net_pln (patrz PLAN_E6_wyplata.md, krok 4).

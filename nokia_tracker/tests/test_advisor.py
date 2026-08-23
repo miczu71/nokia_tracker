@@ -337,6 +337,33 @@ def test_optimize_sale_timing_insufficient_lots_returns_none_without_raising(con
     assert r["recommendation_pl"] is None
 
 
+def test_optimize_sale_timing_jan2_quote_provider_error_returns_none_without_500(
+        conn, monkeypatch):
+    # Znalezisko z weryfikacji produkcyjnej 0.22.0 (docs/PLAN_E6_wyplata.md):
+    # NBP zwraca HTTP 400 dla dat PRZYSZŁYCH (fx_nbp.py docstring), a
+    # scenariusz "2 stycznia" ZAWSZE pyta o kurs na dzień przyszły (rok+1) —
+    # z żywym NBP to się nigdy nie udaje. Tu symulujemy realny 400 zamiast
+    # zależeć od żywego API.
+    from nokia_tracker.providers.base import QuoteProviderError
+
+    taxlots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
+
+    def _rate_for_event(conn, event_date):
+        if event_date.startswith("2027"):
+            raise QuoteProviderError(f"NBP {event_date}: HTTP 400")
+        return (4.0, "stub")
+
+    monkeypatch.setattr("nokia_tracker.tax.whatif.fx_nbp.rate_for_event", _rate_for_event)
+
+    r = advisor.optimize_sale_timing(
+        conn, _base_cfg(), 10.0, 8.0, eurpln_rate=4.0, today="2026-07-28")
+
+    assert r["today"] is not None
+    assert r["jan2_next_year"] is None
+    assert r["delta_tax_pln"] is None
+    assert r["recommendation_pl"] is None
+
+
 def test_optimize_sale_timing_deltas_match_scenario_arithmetic(conn):
     taxlots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
 

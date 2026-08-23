@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.22.1] - 2026-08-23
+
+Poprawka znaleziona w weryfikacji produkcyjnej 0.22.0, tuż po aktualizacji
+przez Supervisor: `GET /api/preview/wyplata` zwracał gołe 500 zamiast
+podglądu.
+
+**Root cause (potwierdzony logiem Supervisora, nie zgadywany):** `NBP zwraca
+HTTP 400 dla dat PRZYSZŁYCH` — udokumentowane już w docstringu
+`fx_nbp.py`, ale nigdy nie miało konsekwencji, dopóki żaden kod nie pytał
+NBP o kurs na dzień przyszły. Karta „Kiedy sprzedać" (`advisor.py::
+optimize_sale_timing`, krok 26/0.11.0) **zawsze** liczy scenariusz „2
+stycznia następnego roku" — czyli data ZAWSZE w przyszłości względem
+dzisiaj. Silnik łapał już `InsufficientLotsError`/`CostBasisMissingError`
+dla tego scenariusza, ale NIE `QuoteProviderError` z żywego NBP — więc
+karta „Kiedy sprzedać" na `/plan` była w praktyce zepsuta w produkcji od
+0.11.0 (nigdy wcześniej nie zauważone, bo testy mockują `fx_nbp.rate_for_event`
+na stały kurs niezależny od daty). `/wyplata` (0.22.0) odziedziczyło ten sam
+błąd przez `withdrawal_view()`, które woła `optimize_sale_timing()` dla
+karty porównania z 2 stycznia — i to jego pierwsze realne uderzenie w
+produkcyjny NBP ujawniło usterkę.
+
+**Naprawiono:**
+- `advisor.py::optimize_sale_timing._scenario()` łapie teraz też
+  `providers.base.QuoteProviderError` — scenariusz niedostępny (kurs NBP
+  nieosiągalny) zwraca `None`, jak pozostałe dwa wyjątki, zamiast wywalać
+  całą funkcję. Naprawia kartę „Kiedy sprzedać" na `/plan`.
+- **Drugie, poważniejsze znalezisko przy tej samej okazji:** `views/withdrawal.py::
+  withdrawal_view()` (oba kierunki kalkulatora, nie tylko karta porównania)
+  łapie teraz `QuoteProviderError` z jawnym komunikatem PL — bez tej poprawki
+  wybranie w kalkulatorze daty sprzedaży wystarczająco odległej w przyszłości
+  (czyli DOKŁADNIE scenariusz „ile wypłacę w listopadzie", nazwany wprost jako
+  cel projektu w `docs/ROADMAP_V3.md`) wywalałoby `/wyplata` gołym 500, nie
+  tylko jego pomocniczą kartę. Złapane PRZED pokazaniem użytkownikowi, przy
+  weryfikacji na żywych danych produkcyjnych.
+
+Dwa nowe testy regresyjne symulują realny `QuoteProviderError` z HTTP 400,
+bez zależności od żywego NBP. 1209 testów zielono. Zweryfikowane na
+produkcji przez `ha_manage_app` proxy: `/wyplata` i `/api/preview/wyplata`
+zwracają 200 z pełnym wynikiem dla dzisiejszej daty; data w przyszłości poza
+zasięgiem NBP zwraca czytelny komunikat błędu, nie 500.
+
 ## [0.22.0] - 2026-08-23
 
 Krok E6 roadmapy v3 (`docs/ROADMAP_V3.md`) — kalkulator wypłaty, dwukierunkowy.

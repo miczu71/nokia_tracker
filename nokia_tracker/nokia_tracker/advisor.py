@@ -16,6 +16,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
 from . import portfolio as portfoliom
+from .providers import base as quotebase
 from .tax import grants as grantsm
 from .tax import lots as taxlots
 from .tax import policy as taxpolicy
@@ -341,7 +342,13 @@ def optimize_sale_timing(conn: sqlite3.Connection, cfg: dict, quantity: float,
     def _scenario(sale_date: str) -> dict | None:
         try:
             sale = taxwhatif.simulate_sale(conn, cfg, quantity, price_eur, sale_date=sale_date)
-        except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError):
+        except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError,
+                quotebase.QuoteProviderError):
+            # QuoteProviderError: znalezisko z weryfikacji produkcyjnej 0.22.0 —
+            # NBP zwraca HTTP 400 dla dat PRZYSZŁYCH (fx_nbp.py docstring), a
+            # scenariusz "2 stycznia" zawsze pyta o kurs na dzień przyszły
+            # (rok+1). Ta sama zasada co pozostałe dwa wyjątki: scenariusz
+            # niedostępny -> None, nie 500.
             return None
         year = int(sale_date[:4])
         active_policy = sale["active_policy"]

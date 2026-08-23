@@ -398,3 +398,34 @@ def test_statement_mismatch_not_flagged_when_snapshot_matches_database(conn):
     findings = integrity.check_all(conn)
 
     assert not any(f.check.startswith("statement_mismatch:") for f in findings)
+
+
+def test_breakdown_not_closed_absent_on_clean_db(conn):
+    # E8 (docs/PLAN_E8_slad.md): baza pusta/czysta -> `account_view()` nie
+    # zbiera żadnych `trace_failures`, więc zero findingów tego typu.
+    findings = integrity.check_all(conn)
+    assert not any(f.check.startswith("breakdown_not_closed:") for f in findings)
+
+
+def test_breakdown_not_closed_surfaced_as_warning(conn, monkeypatch):
+    # E8: `_breakdown_not_closed` powtarza wywołanie `account_view()` i
+    # zgłasza KAŻDY zebrany `trace_failures` jako osobny warning-finding —
+    # kontrakt sprawdzony tu bez konstruowania realnego rozjazdu danych
+    # (por. `test_breakdown_account.py::test_forced_mismatch_lands_in_failures_not_raised`,
+    # gdzie sam mechanizm zbierania w `breakdown.account_traces` jest już pokryty).
+    from nokia_tracker import breakdown as bd
+
+    fake_failure = bd.BreakdownNotClosedError("portfel.total", 100.0, 90.0)
+
+    def _fake_account_view(conn, cfg, ids, year):
+        return {"trace_failures": [fake_failure]}
+
+    monkeypatch.setattr("nokia_tracker.integrity.account_view", _fake_account_view)
+
+    findings = integrity.check_all(conn)
+
+    f = next(f for f in findings if f.check == "breakdown_not_closed:portfel.total")
+    assert f.severity == "warning"
+    assert f.count == 1
+    assert f.details[0]["shown"] == 100.0
+    assert f.details[0]["recomputed"] == 90.0

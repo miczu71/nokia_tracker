@@ -17,6 +17,8 @@ from datetime import date, timedelta
 from . import reconcile as reconcilem
 from . import settings as settingsm
 from .tax import pit38 as taxpit38
+from .views.account import account_view
+from .views.market_context import instrument_ids as _instrument_ids
 
 _QTY_EPSILON = 0.001
 _MONEY_EPSILON_PLN = 0.02  # grosz + margines na zaokrąglenia pośrednie
@@ -318,6 +320,32 @@ def _statement_mismatch(conn: sqlite3.Connection) -> list[Finding]:
     return findings
 
 
+def _breakdown_not_closed(conn: sqlite3.Connection, cfg: dict, today: str) -> list[Finding]:
+    """Krok E8 (docs/PLAN_E8_slad.md): powtarza DOKŁADNIE to samo wywołanie, którego
+    używa `/` (`views/account.py::account_view`), i zgłasza każdy ślad, który nie
+    domknął się do grosza (`breakdown.BreakdownNotClosedError`, zebrane tam jako
+    `trace_failures` zamiast po cichu połknięte). `warning`, nie `error` — strona
+    już się z tym poprawnie degraduje (kwota renderuje się bez `<details>`), to
+    znalezisko jest sygnałem do zbadania, nie dowodem korupcji danych.
+
+    Świadomie WYŁĄCZNIE `/` — ślady `/wyplata` zależą od wejścia z formularza
+    (cena, data, ilość), więc nie ma ustalonego „dzisiejszego" zestawu do
+    powtórzenia poza samym żądaniem (patrz `breakdown.withdrawal_traces`
+    docstring)."""
+    year = cfg.get("tax_year") or int(today[:4])
+    ids = _instrument_ids(conn)
+    view = account_view(conn, cfg, ids, year)
+    findings = []
+    for failure in view.get("trace_failures", []):
+        findings.append(Finding(
+            f"breakdown_not_closed:{failure.key}", "warning",
+            f"Ślad „skąd ta liczba” dla '{failure.key}' się nie domyka — wyświetlane "
+            f"{failure.shown} != przeliczone {failure.recomputed}",
+            1, [{"key": failure.key, "shown": failure.shown,
+                 "recomputed": failure.recomputed}]))
+    return findings
+
+
 def check_all(
     conn: sqlite3.Connection, today: str | None = None, cfg: dict | None = None
 ) -> list[Finding]:
@@ -346,4 +374,5 @@ def check_all(
     if tax_payments_finding:
         findings.append(tax_payments_finding)
     findings.extend(_statement_mismatch(conn))
+    findings.extend(_breakdown_not_closed(conn, cfg, today))
     return findings

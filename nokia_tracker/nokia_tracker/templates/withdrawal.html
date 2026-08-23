@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% from "_macros.html" import stat, tax_disclaimer, empty_state %}
+{% block title %}Wypłata — Nokia Tracker{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <h1>Wypłata</h1>
+  <div class="form-actions no-print">
+    <a class="btn" href="{{ url_for('wyplata_get', direction=direction, print=1) }}" target="_blank">Widok do druku</a>
+  </div>
+</div>
+
+<p class="disclaimer">
+  ⚠️ Kalkulator pomocniczy, nie doradztwo inwestycyjne ani podatkowe. „Na rękę" liczone
+  modelem ROCZNYM: dochód tej sprzedaży + już zrealizowany dochód roku − dostępna strata
+  z lat ubiegłych (ta sama zasada, którą stosuje porównanie dat na
+  <a href="{{ url_for('plan_get') }}">Planie</a>) — inna liczba niż uproszczony podatek
+  pojedynczej sprzedaży pokazywany gdzie indziej w aplikacji.
+</p>
+
+<div class="card no-print">
+  <div class="card-title">Kierunek</div>
+  <div class="form-actions">
+    <a class="btn{% if direction == 'target' %} primary{% endif %}"
+       href="{{ url_for('wyplata_get', direction='target') }}">Potrzebuję X zł netto</a>
+    <a class="btn{% if direction == 'quantity' %} primary{% endif %}"
+       href="{{ url_for('wyplata_get', direction='quantity') }}">Mam N akcji do sprzedania</a>
+  </div>
+</div>
+
+<div class="card no-print">
+  <div class="card-title">
+    {% if direction == 'target' %}Ile akcji sprzedać{% else %}Ile zostanie na rękę{% endif %}
+  </div>
+  <form class="inline-form" id="wyplata-form" method="get" action="{{ url_for('wyplata_get') }}">
+    <input type="hidden" name="direction" value="{{ direction }}">
+    {% if direction == 'target' %}
+    <label>Potrzebuję netto (PLN)
+      <input type="number" step="0.01" min="0" name="wyplata_target"
+             value="{{ wyplata_target or '' }}" required>
+    </label>
+    {% else %}
+    <label>Ilość akcji
+      <input type="number" step="0.0001" min="0" name="wyplata_qty"
+             value="{{ wyplata_qty or '' }}" required>
+    </label>
+    {% endif %}
+    <label>Cena (EUR/akcję)
+      <input type="number" step="0.0001" min="0" name="wyplata_price"
+             value="{{ price_eur or '' }}" required>
+    </label>
+    <label>Opłata brokera (%)
+      <input type="number" step="0.01" min="0" name="wyplata_fee_pct" value="{{ fee_pct }}">
+    </label>
+    <label>Data sprzedaży
+      <input type="date" name="wyplata_date" value="{{ sale_date }}">
+    </label>
+    <button class="btn primary" type="submit">Policz</button>
+  </form>
+  <div class="preview-box" id="wyplata-preview" hidden></div>
+
+  {% if error %}
+  <p class="disclaimer error">⚠️ {{ error }}</p>
+  {% elif result %}
+  <div class="grid stats">
+    {{ stat('Ilość akcji', result.quantity|qty, 'szt.', cls='highlight') }}
+    {{ stat('Brutto', result.gross_eur|money(2), 'EUR') }}
+    {{ stat('Koszt FIFO', result.cost_fifo_pln|money, 'zł') }}
+    {{ stat('Podatek', result.tax_pln|money, 'zł') }}
+    {{ stat('Na rękę', result.net_pln|money, 'zł', cls='highlight') }}
+  </div>
+
+  {% if result.usable_loss_pln %}
+  <p class="muted">
+    Wykorzystana strata z lat ubiegłych: {{ result.usable_loss_pln|money }} zł.
+  </p>
+  {% endif %}
+
+  {% if result.whole_shares %}
+  <p class="muted">
+    Zaokrąglone w górę do {{ result.whole_shares.quantity|qty(0) }} pełnych akcji
+    (broker rzadko sprzedaje ułamek): na rękę {{ result.whole_shares.net_pln|money }} zł.
+  </p>
+  {% endif %}
+
+  {% if result.forfeit_value_pln %}
+  <p class="disclaimer">
+    ⚠️ Ta sprzedaż przepala {{ result.forfeit_qty|qty }} szt. dopasowania ESPP (wartość
+    {{ result.forfeit_value_pln|money }} zł) — utrata akcji, NIE odjęta od „na rękę" powyżej
+    (to dwie różne rzeczy: gotówka vs utracone dopasowanie).
+  </p>
+  {% endif %}
+
+  {% if result.concentration_after and result.concentration_after.configured %}
+  <div class="grid stats">
+    {{ stat('Koncentracja przed', result.concentration_before.pct|pct(1, false), '%') }}
+    {{ stat('Koncentracja po', result.concentration_after.pct|pct(1, false), '%') }}
+  </div>
+  {% endif %}
+
+  {% if result.timing and result.timing.today and result.timing.jan2_next_year %}
+  <p class="muted">
+    Sprzedaż 2 stycznia zamiast {{ result.sale_date }}: różnica
+    {{ result.timing.delta_total_pln|money(signed=true) }} zł (podatek + przepadek razem).
+    <a href="{{ url_for('plan_get', timing_qty=result.quantity, timing_price=result.price_eur) }}">szczegóły na Planie</a>
+  </p>
+  {% endif %}
+
+  <details class="no-print">
+    <summary>Z których lotów idzie sprzedaż — pełne rozbicie do numeru tabeli NBP</summary>
+    {% set detail = result.lots_consumed_detailed %}
+    {% include "_alloc_detail.html" %}
+  </details>
+  {{ tax_disclaimer() }}
+  {% else %}
+  {{ empty_state('Wpisz ' + ('kwotę netto' if direction == 'target' else 'ilość akcji') + ' i policz.') }}
+  {% endif %}
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+NT.initFormPreview({
+  formId: "wyplata-form", boxId: "wyplata-preview",
+  url: {{ url_for('preview_wyplata')|tojson }},
+  requiredFields: {% if direction == 'target' %}["wyplata_target", "wyplata_price"]{% else %}["wyplata_qty", "wyplata_price"]{% endif %},
+  fields: [["direction", "direction"], ["wyplata_target", "wyplata_target"],
+           ["wyplata_qty", "wyplata_qty"], ["wyplata_price", "wyplata_price"],
+           ["wyplata_fee_pct", "wyplata_fee_pct"], ["wyplata_date", "wyplata_date"]],
+});
+</script>
+{% endblock %}

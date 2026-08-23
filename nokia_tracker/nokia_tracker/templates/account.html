@@ -181,11 +181,9 @@
 <div class="card">
   <div class="card-title">Ile wypłacę?</div>
   <p class="muted">
-    Symulacja sprzedaży: brutto, koszt FIFO, podatek wg aktywnej polityki, na rękę.
+    Dwukierunkowy kalkulator: ile akcji na daną kwotę netto, albo ile zostanie z N akcji.
   </p>
-  {#- Krok E6 (docs/ROADMAP_V3.md): podmiana href na `/wyplata`, gdy powstanie
-      dwukierunkowy kalkulator. Dziś prowadzi do istniejącej symulacji sprzedaży. #}
-  <a class="btn primary" href="{{ url_for('plan_get') }}">Policz wypłatę</a>
+  <a class="btn primary" href="{{ url_for('wyplata_get') }}">Policz wypłatę</a>
 </div>
 
 {% if insights %}

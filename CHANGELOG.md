@@ -1,5 +1,71 @@
 # Changelog
 
+## [0.22.0] - 2026-08-23
+
+Krok E6 roadmapy v3 (`docs/ROADMAP_V3.md`) — kalkulator wypłaty, dwukierunkowy.
+Nowa strona `/wyplata`: „Potrzebuję X zł netto" → ile akcji sprzedać, z
+których lotów, jaki podatek, co przepada; albo „Mam N akcji" → brutto,
+opłaty, koszt FIFO, podatek, na rękę, przepadek. Jedyna nowa matematyka
+całej roadmapy v3 — reszta etapów (E1–E5) składała wyłącznie istniejące
+klocki.
+
+### Dodano
+- **`tax/whatif.py::solve_for_net()`** — bisekcja po ilości akcji nad
+  istniejącym `_plan_fifo`, żeby znaleźć ile sprzedać dla zadanej kwoty
+  netto. Model ROCZNY: dochód tej sprzedaży + zrealizowany dochód roku −
+  strata z lat ubiegłych (ta sama zasada co porównanie dat na Planie), nie
+  uproszczony podatek pojedynczej sprzedaży. Zero zapytań do bazy per
+  iterację — kurs NBP, dochód roku i dostępna strata pobrane raz przed
+  pętlą. Cel nieosiągalny dostępnymi lotami albo brak zbieżności w limicie
+  iteracji podnosi `TargetUnreachableError` zamiast zwrócić przybliżenie po
+  cichu.
+- **`tax/whatif.py::annual_net_for_quantity()`** — „na rękę" modelem
+  rocznym dla ZNANEJ ilości akcji; wywoływana zarówno przez finalny krok
+  `solve_for_net()` (kierunek „X zł netto"), jak i wprost przez kierunek
+  „N akcji" — oba kierunki kalkulatora kończą w tej samej funkcji, zero
+  drugiej kopii matematyki.
+- **`tax/whatif.py::annual_tax_breakdown()`/`_annual_tax()`** — wspólny
+  silnik podatku rocznego, wydzielony z dwóch osobnych kopii, które dotąd
+  żyły w `advisor.py::optimize_sale_timing()` i `exit_plan()`. Refaktor bez
+  zmiany zachowania — oba konsumenci przepięte, zero zmiany liczb.
+- **`views/withdrawal.py::withdrawal_view()`** — jeden kształt wyniku dla
+  obu kierunków (brutto, koszt FIFO, podatek, na rękę, przepadek ESPP,
+  koncentracja przed/po, porównanie z 2 stycznia, ślad FIFO do numeru
+  tabeli NBP). Przepadek pokazywany OSOBNO od kwoty „na rękę" — utrata akcji
+  to nie przepływ gotówki (ta sama zasada co gotówka↔przychód podatkowy z
+  0.20.0).
+- **`/wyplata`** (`web/routes_plan.py`) — `GET /wyplata`,
+  `GET /api/preview/wyplata` (podgląd na żywo, ten sam mechanizm
+  `NT.initFormPreview` co Plan). Nowa pozycja „Wypłata” w grupie nawigacji
+  „Portfel”, zaraz po „Plan”. Przycisk „Policz wypłatę” na Stanie konta
+  przełączony z `/plan` na `/wyplata`.
+- **Opłata brokera ożywiona** — `broker_fee_pct` z Ustawień (istniał od
+  dawna, ale nie miał ani jednego konsumenta) domyślnie wypełnia pole opłaty
+  w kalkulatorze, edytowalne ręcznie per wyliczenie.
+
+### Naprawiono
+- **Przepadek dopasowania ESPP zawyżony dla przyszłej daty sprzedaży** —
+  `advisor.forfeit_for_quantity(today=<przyszłość>)` liczył lot jako w
+  pełni ograniczony nawet gdy do tej daty realnie zdążyłby się uwolnić
+  (`restricted_own_lots()` filtruje po fakcie z bazy `vests.status`, nie po
+  porównaniu dat). Naprawia scenariusz „2 stycznia” na `/plan` — wydzielone
+  jako `advisor._effective_match_rates()` i przepięte w `forfeit_for_quantity`
+  oraz `exit_plan` (który już miał ten cutoff, tylko inline i osobno).
+- **`/plan?timing_qty=…` przy niewystarczających lotach rzucał gołe 500**
+  (dług zgłoszony przy refaktorze 0.19.0) — `views/plan.py::timing_scenario`
+  łapie teraz `InsufficientLotsError`/`CostBasisMissingError`, jak
+  `exit_scenario` już robił dla planera wyjścia.
+
+### Weryfikacja
+1207 testów zielono (+25 od 0.21.1: `tax/whatif.py`, `views/withdrawal.py`,
+`views/plan.py`, `web/routes_plan.py`), `test_tax_*.py`/`test_advisor.py`
+(beton) bez zmiany asercji w kroku refaktoru. Kryteria twarde roadmapy:
+`solve_for_net(X)` → `annual_net_for_quantity(wynik)` w granicach ±1 zł od
+X; wynik nigdy nie przekracza dostępnej ilości akcji; brak zbieżności
+zwraca jawny błąd. Playwright na 390 px i 1920 px: `/wyplata` (oba
+kierunki), `/` (nowy link), `/plan` (regresja po naprawie przepadku i
+obsłudze błędu) — screenshot i konsola bez błędów.
+
 ## [0.21.1] - 2026-08-22
 
 Poprawka etykiety nawigacji z 0.21.0, znaleziona w weryfikacji Playwright na

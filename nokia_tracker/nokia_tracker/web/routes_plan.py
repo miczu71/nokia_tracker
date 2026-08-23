@@ -1,9 +1,13 @@
 """Trasy doradcy planu: /plan i jego podglądy JSON /api/preview/espp,
-/api/preview/sale-timing, /api/preview/exit-plan. Silniki scenariuszy
-(`espp_scenario`/`timing_scenario`/`exit_scenario`) współdzielone z
-`views/plan.py` — patrz jego docstring dla granicy dedupu (E3 §3b,
-docs/ROADMAP_V3.md)."""
+/api/preview/sale-timing, /api/preview/exit-plan, oraz /wyplata (kalkulator
+wypłaty, E6 — docs/PLAN_E6_wyplata.md) i /api/preview/wyplata. Silniki
+scenariuszy (`espp_scenario`/`timing_scenario`/`exit_scenario`) współdzielone
+z `views/plan.py` — patrz jego docstring dla granicy dedupu (E3 §3b,
+docs/ROADMAP_V3.md). `/wyplata` żyje w tym samym pliku co `/plan` — rodzina
+doradcy trzyma się razem."""
 from __future__ import annotations
+
+from datetime import datetime
 
 from flask import Flask, render_template, request
 
@@ -13,6 +17,7 @@ from .. import advisor as advisorm
 from .. import settings as settingsm
 from ..views.market_context import latest_eurpln_rate, latest_price_and_rate
 from ..views.plan import espp_scenario, exit_scenario, timing_scenario
+from ..views.withdrawal import withdrawal_view
 
 
 def register_plan_routes(app: Flask, ctx: AppContext) -> None:
@@ -187,6 +192,114 @@ def register_plan_routes(app: Flask, ctx: AppContext) -> None:
                               "value": result["totals"]["tax_pln"], "unit": "PLN"})
                 lines.append({"label": "Na rękę", "value": result["totals"]["net_proceeds_pln"],
                               "unit": "PLN", "emphasis": True})
+            return {"ok": True, "lines": lines}
+        finally:
+            conn.close()
+
+    @app.get("/wyplata")
+    def wyplata_get():
+        """E6 (docs/PLAN_E6_wyplata.md): kalkulator wypłaty, dwukierunkowy.
+        Kierunek `target` — 'potrzebuję X zł netto' (bisekcja, `solve_for_net`).
+        Kierunek `quantity` — 'mam N akcji' (`annual_net_for_quantity`). Obie
+        strony kończą w `views/withdrawal.py::withdrawal_view` — jeden kształt
+        wyniku, jeden blok renderujący w szablonie."""
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            default_price_eur, _default_eurpln_rate = latest_price_and_rate(conn)
+
+            direction = request.args.get("direction") or "target"
+            if direction not in ("target", "quantity"):
+                direction = "target"
+
+            price_raw = request.args.get("wyplata_price")
+            fee_raw = request.args.get("wyplata_fee_pct")
+            date_raw = request.args.get("wyplata_date")
+            target_raw = request.args.get("wyplata_target")
+            qty_raw = request.args.get("wyplata_qty")
+            sale_date = date_raw or datetime.now().strftime("%Y-%m-%d")
+
+            result = None
+            error = None
+            price_eur = default_price_eur
+            fee_pct = cfg["broker_fee_pct"]
+
+            has_input = (
+                (direction == "target" and target_raw) or (direction == "quantity" and qty_raw))
+            if has_input:
+                try:
+                    if price_raw:
+                        price_eur = float(price_raw)
+                    if fee_raw:
+                        fee_pct = float(fee_raw)
+                    if not price_eur or price_eur <= 0:
+                        raise ValueError(
+                            "Brak aktualnej ceny rynkowej — podaj cenę ręcznie.")
+                    if direction == "target":
+                        result, error = withdrawal_view(
+                            conn, cfg, "target", price_eur, fee_pct, sale_date,
+                            target_net_pln=float(target_raw))
+                    else:
+                        result, error = withdrawal_view(
+                            conn, cfg, "quantity", price_eur, fee_pct, sale_date,
+                            quantity=float(qty_raw))
+                except ValueError as e:
+                    error = str(e)
+
+            return render_template(
+                "withdrawal.html", active="wyplata", version=__version__,
+                direction=direction, result=result, error=error,
+                price_eur=price_eur, default_price_eur=default_price_eur, fee_pct=fee_pct,
+                sale_date=sale_date, wyplata_target=target_raw, wyplata_qty=qty_raw,
+                print_mode=request.args.get("print") == "1")
+        finally:
+            conn.close()
+
+    @app.get("/api/preview/wyplata")
+    def preview_wyplata():
+        conn = _conn()
+        try:
+            direction = request.args.get("direction") or "target"
+            if direction not in ("target", "quantity"):
+                return {"ok": False, "error": "Nieznany kierunek."}
+
+            try:
+                price_eur = float(request.args.get("wyplata_price") or 0)
+                fee_pct = float(request.args.get("wyplata_fee_pct") or 0)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+            if price_eur <= 0:
+                return {"ok": False, "error": "Cena musi być dodatnia."}
+
+            sale_date = request.args.get("wyplata_date") or datetime.now().strftime("%Y-%m-%d")
+            cfg = settingsm.get_settings(conn)
+
+            try:
+                if direction == "target":
+                    target_net_pln = float(request.args.get("wyplata_target") or 0)
+                    if target_net_pln <= 0:
+                        return {"ok": False, "error": "Kwota docelowa musi być dodatnia."}
+                    result, error = withdrawal_view(
+                        conn, cfg, "target", price_eur, fee_pct, sale_date,
+                        target_net_pln=target_net_pln)
+                else:
+                    quantity = float(request.args.get("wyplata_qty") or 0)
+                    if quantity <= 0:
+                        return {"ok": False, "error": "Ilość musi być dodatnia."}
+                    result, error = withdrawal_view(
+                        conn, cfg, "quantity", price_eur, fee_pct, sale_date,
+                        quantity=quantity)
+            except ValueError:
+                return {"ok": False, "error": "Niepoprawna liczba."}
+
+            if error is not None:
+                return {"ok": False, "error": error}
+
+            lines = [
+                {"label": "Ilość akcji", "value": result["quantity"], "unit": "szt."},
+                {"label": "Podatek", "value": result["tax_pln"], "unit": "PLN"},
+                {"label": "Na rękę", "value": result["net_pln"], "unit": "PLN", "emphasis": True},
+            ]
             return {"ok": True, "lines": lines}
         finally:
             conn.close()

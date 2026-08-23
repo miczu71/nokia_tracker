@@ -344,6 +344,124 @@ def test_parse_withhold_to_cover_type_a_zero_effect_confirmation():
     assert type_a[0]["quantity"] == type_a[0]["net_units"] == 634.0
 
 
+# --- E7: kontrola krzyżowa transz oczekujących (RSU) — "Restricted stock units" na
+# stronie 1 wyciągu (sekcja "Assets by type"), symetryczne do parse_shares_total powyżej.
+
+def test_parse_restricted_units_total_basic():
+    # Kształt zmierzony na realnym wyciągu (as_of=2026-08-18): liczba na linii
+    # BEZPOŚREDNIO PRZED linią "Restricted stock units".
+    text = (
+        " 1 360.89909                                                         1 266\n"
+        " Restricted stock units                     52 387.88 PLN            Restricted "
+        "Shares                           48 734.74 PLN\n"
+    )
+    assert cp.parse_restricted_units_total(text) == 1360.89909
+
+
+def test_parse_restricted_units_total_ignores_wider_indent_variant_far_in_document():
+    # "Restricted stock units" pojawia się też jako nagłówek kolumny w tabelach dalej
+    # w dokumencie ("Locked" / "Available"), z większym wcięciem i inną spacją między
+    # słowami ("Restrictedstock units") - regex musi je ignorować (wymaga małego wcięcia
+    # i dokładnie jednej spacji między słowami, wzorzec z parse_shares_total).
+    text = (
+        "     Restricted        stock     units\n"
+        "                                                                      "
+        "Restrictedstock units                   Total\n"
+        "                                                                             "
+        "94.89909               3 653.14  PLN\n"
+    )
+    assert cp.parse_restricted_units_total(text) is None
+
+
+def test_parse_restricted_units_total_returns_none_when_absent():
+    # Ustalone empirycznie na wyciągu 2023-01-01 (pierwszy, gdy portfel nie miał jeszcze
+    # żadnych transz oczekujących) - sekcja "Restricted stock units" po prostu nie istnieje.
+    assert cp.parse_restricted_units_total("brak żadnej sekcji Assets by type tutaj") is None
+
+
+# --- E7: statement_snapshot() - jeden słownik zbierający WYŁĄCZNIE stronę wyciągu, zero
+# odwołań do bazy (żeby dało się go zapisać jako JSON i przeliczać uzgodnienie na żądanie,
+# bez ponownego wgrywania PDF). Zawiera natural_key policzone tym samym wzorem co
+# import_statement() dla purchase/espp_vest/lti_vest/dividend, żeby reconcile.py mógł
+# dopasować wiersze po stronie bazy bez duplikowania logiki generowania kluczy.
+
+_META_HEADER = "                1 Jan2026  - 26 Jul2026                     User  ID: 00000000\nas of 26 Jul2026\n"
+
+_PURCHASE_LINE = (
+    "  2 Feb  2026        24 Oct  2025         2 Feb 2026          4Feb  2026           "
+    "105.39  EUR           0.00 EUR           0.00 EUR         0.00  EUR          "
+    "5.48 EUR        19.21982           0.00 EUR\n"
+)
+
+_MATCHING_LINE = (
+    f"Matching   Shares                                                      27 Oct 2025                      "
+    f"1 Aug  2026                  27 Aug  2026                             29.24                     1{_THIN}036.84  PLN\n"
+)
+
+_RS_AWARD_LINE = (
+    f"2025  RS AWARD    07-JUL-2025                                         7Jul 2025                     "
+    f"5 Jul 2028                   5 Jul2028                          633.00                  14{_THIN}882.25  PLN\n"
+)
+
+_DIVIDEND_LINE = (
+    "30 Jan 2026                       19 Feb  2026            61.491555                  1.84 EUR        "
+    "0.64 EUR       0.00 EUR            1.20 EUR      6.3015  EUR          0.19028           0.00 EUR\n"
+)
+
+_WITHHOLD_A_LINE = (
+    "9 Jul2026                                            Nokia  Share                            634                 "
+    "10.22 EUR                 0.00 EUR                   0.00 EUR                     634\n"
+)
+
+_WITHHOLD_B_LINE = (
+    "27 Oct 2025                                           784                               5.31 EUR              "
+    "4 161.47 EUR                 0.00 EUR                    8.32 EUR           4 153.15  EUR\n"
+)
+
+
+def test_statement_snapshot_collects_all_sections():
+    text = (_META_HEADER + _PURCHASE_LINE + _MATCHING_LINE + _RS_AWARD_LINE + _DIVIDEND_LINE
+            + _WITHHOLD_A_LINE + _WITHHOLD_B_LINE)
+    snap = cp.statement_snapshot(text)
+
+    assert snap["period_start"] == "2026-01-01"
+    assert snap["period_end"] == "2026-07-26"
+    assert snap["as_of_date"] == "2026-07-26"
+    assert snap["shares_total"] is None            # brak sekcji "Assets by type" w tym tekście
+    assert snap["restricted_units_total"] is None
+
+    assert len(snap["pending_tranches"]) == 2       # 1 Matching + 1 RS AWARD
+    espp = next(t for t in snap["pending_tranches"] if t["kind"] == "espp")
+    assert espp["quantity"] == 29.24
+    assert espp["natural_key"] == "espp_vest:2025-10-27:2026-08-01:29.24"
+    lti = next(t for t in snap["pending_tranches"] if t["kind"] == "lti")
+    assert lti["quantity"] == 633.0
+    assert lti["natural_key"] == "lti_vest:2025 RS AWARD 07-JUL-2025:2028-07-05:633.0"
+
+    assert len(snap["dividends"]) == 1
+    assert snap["dividends"][0]["natural_key"] == "dividend:2026-01-30:2026-02-19:61.491555"
+
+    assert len(snap["purchases"]) == 1
+    assert snap["purchases"][0]["natural_key"] == "purchase:2025-10-24:2026-02-02:19.21982"
+
+    assert len(snap["withhold_type_a"]) == 1
+    assert len(snap["withhold_type_b"]) == 1
+    assert snap["withhold_type_b"][0]["execution_date"] == "2025-10-27"
+
+
+def test_statement_snapshot_on_empty_text_has_all_keys_empty_or_none():
+    snap = cp.statement_snapshot("")
+    assert snap["period_start"] is None
+    assert snap["as_of_date"] is None
+    assert snap["shares_total"] is None
+    assert snap["restricted_units_total"] is None
+    assert snap["pending_tranches"] == []
+    assert snap["dividends"] == []
+    assert snap["purchases"] == []
+    assert snap["withhold_type_a"] == []
+    assert snap["withhold_type_b"] == []
+
+
 def test_parse_withhold_to_cover_type_a_large_quantity_no_thousands_separator():
     # "2100" bez separatora tysięcy mimo 4 cyfr - zaobserwowane empirycznie.
     line = "9 Jul2026                                            Nokia  Share                           2100                 10.22 EUR                 0.00 EUR                   0.00 EUR                    2100"

@@ -372,6 +372,71 @@ def parse_shares_total(text: str) -> float | None:
     return None
 
 
+# --- E7: kontrola krzyżowa transz oczekujących — strona 1, sekcja "Assets by type",
+# etykieta "Restricted stock units". Kształt SYMETRYCZNY do parse_shares_total powyżej:
+# liczba na linii bezpośrednio przed etykietą, małe wcięcie odróżnia od nagłówków kolumn
+# ("Restricted stock units / Total") w tabelach dalej w dokumencie, które mają duże
+# wcięcie i (empirycznie) bywają sklejone bez spacji ("Restrictedstock units"). Brak
+# sekcji na najstarszym wyciągu (2023-01-01, przed pierwszymi transzami) jest realny -
+# `None`, nie 0 (patrz cash.py::broker_balance dla tej samej filozofii).
+_RESTRICTED_UNITS_LABEL_RE = re.compile(r"^\s{0,3}Restricted stock units\b")
+
+
+def parse_restricted_units_total(text: str) -> float | None:
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if i > 0 and _RESTRICTED_UNITS_LABEL_RE.match(line):
+            m = _LEADING_NUM_RE.match(lines[i - 1])
+            if m:
+                return _num(m.group(1))
+    return None
+
+
+def statement_snapshot(text: str) -> dict:
+    """E7: jeden słownik zbierający WYŁĄCZNIE stronę wyciągu — zero odwołań do bazy, żeby
+    dało się go zapisać jako JSON (`statement_snapshots`, migracja v12) i przeliczać
+    uzgodnienie na żądanie bez ponownego wgrywania PDF.
+
+    Każdy wiersz transakcyjny dostaje `natural_key` policzony DOKŁADNIE tym samym wzorem co
+    `import_statement()` (`purchase:`/`espp_vest:`/`lti_vest:`/`dividend:` poniżej) — jedyne
+    źródło prawdy o kształcie klucza. Bez tego `reconcile.py` musiałby duplikować tę logikę
+    i dwie kopie nieuchronnie rozjechałyby się przy kolejnej zmianie formatu."""
+    meta = parse_document_meta(text)
+
+    pending_tranches = []
+    for row in parse_matching_shares(text):
+        nk = f"espp_vest:{row['allocation_date']}:{row['vesting_date']}:{row['quantity']}"
+        pending_tranches.append({**row, "kind": "espp", "natural_key": nk})
+    for row in parse_rs_award(text):
+        nk = f"lti_vest:{row['participation_description']}:{row['vesting_date']}:{row['quantity']}"
+        pending_tranches.append({**row, "kind": "lti", "natural_key": nk})
+
+    dividends = []
+    for row in parse_dividends(text):
+        nk = f"dividend:{row['record_date']}:{row['purchase_date']}:{row['entitled_quantity']}"
+        dividends.append({**row, "natural_key": nk})
+
+    purchases = []
+    for row in parse_purchases(text):
+        nk = f"purchase:{row['contribution_date']}:{row['trade_date']}:{row['quantity']}"
+        purchases.append({**row, "natural_key": nk})
+
+    withhold_type_a, withhold_type_b = parse_withhold_to_cover(text)
+
+    return {
+        "period_start": meta["period_start"],
+        "period_end": meta["period_end"],
+        "as_of_date": meta["as_of_date"],
+        "shares_total": parse_shares_total(text),
+        "restricted_units_total": parse_restricted_units_total(text),
+        "pending_tranches": pending_tranches,
+        "dividends": dividends,
+        "purchases": purchases,
+        "withhold_type_a": withhold_type_a,
+        "withhold_type_b": withhold_type_b,
+    }
+
+
 def reconcile_holdings(conn: sqlite3.Connection, text: str, as_of_date: str | None,
                         import_id: int) -> bool:
     """Kontrola krzyżowa BLUEPRINT §3a: SUM(qty_remaining) WSZYSTKICH lotów vs "Shares"

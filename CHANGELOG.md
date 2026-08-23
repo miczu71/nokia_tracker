@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.24.0] - 2026-08-23
+
+Krok E8 roadmapy v3 (`docs/ROADMAP_V3.md`, `docs/PLAN_E8_slad.md`) — ślad
+„skąd ta liczba", ostatni etap roadmapy v3. Rozciąga zaufanie do liczb
+(E1/E2 niezmienniki, E7 uzgodnienie z wyciągiem) na **codzienne ekrany**:
+Stan konta i kalkulator wypłaty. 20 kwot klikalnych, każda rozwija się w
+tabelę składników + formułę + źródło w bazie.
+
+**Odstępstwo od litery planu, ustalone przed implementacją:** nowy moduł
+najwyższego poziomu `breakdown.py`, nie rozszerzenie `tax/trace.py` —
+`tax/` to beton, a rozbicia komponują sześć modułów naraz (portfolio/cash/
+advisor/grants/pit38/whatif), czyli leżą NAD silnikami. `tax/trace.py`
+pozostaje nietknięty i jest stąd konsumowane (`fx_derivation`).
+
+**Ustalenie empiryczne sprzed implementacji:** „który wiersz PDF" nie ma
+klucza obcego — `lots`/`vests`/`dividends` mają `source`/`natural_key`
+(tożsamość wiersza wyciągu), nazwa pliku dochodzi tylko przez dopasowanie
+w `statement_snapshots` (E7). Na produkcji ten indeks jest dziś pusty
+(importy sprzed 0.23.0) — ślad pokazuje `natural_key` zawsze i jawne „plik
+wyciągu nieznany" zamiast pustego pola, wypełni się przy re-imporcie.
+
+### Dodano
+- **`breakdown.py`** (nowy moduł, model odczytu, zero zapisu) —
+  `Source`/`Component`/`Breakdown` (kształt wspólny dla wszystkich 20
+  śladów), `close_sum()`/`close_formula()` (dwa domykacze: składniki
+  SUMUJĄ się do kwoty, albo kwota jest WYNIKIEM FORMUŁY nad składnikami —
+  oba rzucają `BreakdownNotClosedError` przy rozjeździe > 1 grosz, resztę
+  ≤ 1 gr doklejają jako jawny składnik „zaokrąglenie"), `BreakdownCtx`
+  (cache lotów + indeks `natural_key → plik wyciągu`, budowany raz na
+  żądanie), `provenance()` (noga „skąd w bazie" — `source`/`natural_key`
+  zawsze, plik wyciągu gdy dopasowany).
+- **`withdrawal_traces()`** — 9 śladów na `/wyplata`: ilość akcji (wynik
+  bisekcji, oznaczony jako taki — nie udaje sumy), brutto, przychód,
+  koszt FIFO, dochód roku, wykorzystana strata, podatek, na rękę,
+  przepadek dopasowania ESPP. Rozjazd pojedynczego śladu jest po cichu
+  pomijany (kwota renderuje się jak dziś) — inputy zależą od formularza
+  (cena/data), nie ma ustalonego zestawu do powtórzenia poza żądaniem.
+- **`account_traces()`** — 11 śladów na `/`: wartość całkowita/wolne/
+  z ograniczeniem/zablokowane, koszt bazowy, niezrealizowany P&L,
+  całkowity zwrot, dywidendy netto, saldo u brokera, wpływy ze sprzedaży,
+  podatek do zapłaty. Rozjazdy są ZBIERANE (nie tylko pomijane) i
+  zgłaszane dalej do `integrity.py`.
+- **`_macros.html::traced()`/`trace_body()`** — serwerowe `<details>`
+  (zero nowego JS — klawiatura/czytnik ekranu/dotyk działają od razu, w
+  odróżnieniu od dzisiejszego `<abbr title="…">` na `/pit38`/`/sales`,
+  niedostępnego na telefonie). `bd is none` renderuje zawartość bez
+  zmian — degradacja przy braku danych albo złapanym rozjeździe.
+- **`integrity.py::breakdown_not_closed`** (warning) — powtarza wywołanie
+  `account_view()` i zgłasza każdy zebrany rozjazd na karcie „Spójność
+  danych" (`/dane`).
+- **7 kwot dodatkowo teraz widocznych wprost** na `/wyplata` (Przychód,
+  Dochód roku) — wcześniej liczone wewnętrznie, nigdy nie pokazywane jako
+  osobna liczba; teraz mają własny kafelek i własny ślad.
+
+### Kryteria dotrzymane
+`git diff --stat` nie dotyka `tax/`. Wszystkie istniejące asercje
+`test_web_account.py`/`test_web_wyplata.py` (bajtowa identyczność starych
+kwot) przechodzą bez zmiany. 1296+ testów zielono. Zero migracji — jedyny
+etap roadmapy v3 bez zmiany schematu.
+
 ## [0.23.0] - 2026-08-23
 
 Krok E7 roadmapy v3 (`docs/ROADMAP_V3.md`, `docs/PLAN_E7_uzgodnienie.md`) —

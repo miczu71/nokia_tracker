@@ -18,6 +18,7 @@ from ..importers import computershare_pdf
 from .. import settings as settingsm
 from ..tax import grants as grantsm
 from ..tax import lots as taxlots
+from ..views.imports import imports_view
 
 
 def _restore_dir(db_path: str) -> Path:
@@ -50,20 +51,10 @@ def register_dane_routes(app: Flask, ctx: AppContext) -> None:
     def imports_get():
         conn = _conn()
         try:
-            history = conn.execute(
-                "SELECT * FROM imports ORDER BY imported_at DESC").fetchall()
-            conflict_rows = conn.execute(
-                "SELECT * FROM import_conflicts WHERE resolved = 0 ORDER BY id DESC"
-            ).fetchall()
-            conflicts = []
-            for r in conflict_rows:
-                d = dict(r)
-                d["existing"] = json.loads(d["existing_json"]) if d["existing_json"] else {}
-                d["incoming"] = json.loads(d["incoming_json"]) if d["incoming_json"] else {}
-                conflicts.append(d)
+            data = imports_view(conn)
             return render_template(
                 "imports.html", active="imports", version=__version__,
-                history=[dict(r) for r in history], conflicts=conflicts,
+                **data,
                 report=request.args.get("report"), sold=request.args.get("sold") == "1",
                 error=request.args.get("error"))
         finally:

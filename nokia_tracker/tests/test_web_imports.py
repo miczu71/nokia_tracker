@@ -236,3 +236,80 @@ def test_imports_conflicts_queue_shows_unresolved_and_resolve_hides_it(tmp_path)
         assert "Brak nierozwiązanych konfliktów" in resp3.get_data(as_text=True)
 
 
+# --- E7: karta "Uzgodnienie z wyciągiem" + dedykowany renderer konfliktu 'balance' ---
+
+def test_imports_page_shows_no_reconciliation_before_first_import(client):
+    resp = client.get("/imports")
+    html = resp.get_data(as_text=True)
+    assert "Brak wyciągu do porównania" in html
+
+
+def test_imports_page_shows_reconciliation_table_from_saved_snapshot(tmp_path):
+    import json as _json
+
+    from nokia_tracker import db as dbm
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "reconcile.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    snapshot = {
+        "period_start": "2026-01-01", "period_end": "2026-08-18", "as_of_date": "2026-08-18",
+        "shares_total": 0.0, "restricted_units_total": None,
+        "pending_tranches": [], "dividends": [], "purchases": [],
+        "withhold_type_a": [], "withhold_type_b": [],
+    }
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', ?)", (import_id, _json.dumps(snapshot)))
+    conn.commit()
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/imports").get_data(as_text=True)
+        assert "Uzgodnienie z wyciągiem" in html
+        assert "stan na 2026-08-18" in html
+        assert "Gotówka u brokera" in html  # broker_cash zawsze no_data, zawsze w tabeli
+
+
+def test_imports_page_renders_balance_conflict_with_dedicated_summary(tmp_path):
+    import json as _json
+
+    from nokia_tracker import db as dbm
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "balance.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    existing = {
+        "qty_remaining_total_minus_pending_sales": 100.0,
+        "positions": [
+            {"key": "shares", "label": "Akcje", "statement": 150.0, "database": 100.0,
+             "diff": -50.0, "tolerance": 0.02, "status": "mismatch", "note": "", "details": []},
+        ],
+    }
+    incoming = {"shares_total_from_pdf": 150.0, "as_of_date": "2026-08-18"}
+    conn.execute(
+        "INSERT INTO import_conflicts (import_id, entity_type, natural_key, existing_json, "
+        "incoming_json) VALUES (?, 'balance', 'balance:2026-08-18', ?, ?)",
+        (import_id, _json.dumps(existing), _json.dumps(incoming)))
+    conn.commit()
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/imports").get_data(as_text=True)
+        assert "saldo vs wyciąg" in html
+        assert "Akcje: wyciąg" in html
+        assert "150" in html and "100" in html
+        # nie generyczny fallback "k: v" dla tego typu konfliktu
+        assert "qty_remaining_total_minus_pending_sales:" not in html
+
+

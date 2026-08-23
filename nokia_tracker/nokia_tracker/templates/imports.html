@@ -40,6 +40,59 @@
 </div>
 
 <div class="card">
+  <div class="card-title">
+    Uzgodnienie z wyciągiem{% if reconciliation_as_of %} — stan na {{ reconciliation_as_of }}{% endif %}
+  </div>
+  {% if reconciliation %}
+  <div class="table-wrap">
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Pozycja</th><th class="num">Wyciąg</th><th class="num">Baza</th>
+          <th class="num">Różnica</th><th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in reconciliation %}
+        <tr>
+          <td data-label="Pozycja">{{ p.label }}</td>
+          <td class="num" data-label="Wyciąg">{{ p.statement|qty(4) }}</td>
+          <td class="num" data-label="Baza">{{ p.database|qty(4) }}</td>
+          <td class="num {{ 'bad' if p.status == 'mismatch' else '' }}" data-label="Różnica">
+            {%- if p.diff is not none -%}
+              {{ '+' if p.diff >= 0 else '' }}{{ p.diff|qty(4) }}
+            {%- else -%}—{%- endif -%}
+          </td>
+          <td data-label="Status">
+            {% if p.status == 'ok' %}<span class="good">zgodne</span>
+            {% elif p.status == 'mismatch' %}<span class="bad">rozjazd</span>
+            {% else %}<span class="muted">brak danych</span>{% endif %}
+          </td>
+        </tr>
+        {% if p.note %}
+        <tr><td colspan="5" class="muted wrap">{{ p.note }}</td></tr>
+        {% endif %}
+        {% if p.details %}
+        <tr><td colspan="5">
+          <details><summary class="muted">{{ p.details|length }} wierszy rozbieżnych</summary>
+            <ul class="muted">
+              {% for d in p.details %}
+              <li>{% for k, v in d.items() %}{{ k }}: {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}</li>
+              {% endfor %}
+            </ul>
+          </details>
+        </td></tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  {{ empty_state('Brak wyciągu do porównania — wgraj pierwszy PDF powyżej.') }}
+  {% endif %}
+</div>
+
+<div class="card">
   <div class="card-title">Kolejka konfliktów ({{ conflicts|length }})</div>
   {% if conflicts %}
   <div class="table-wrap">
@@ -53,30 +106,56 @@
         {% for c in conflicts %}
         <tr>
           {% if c.entity_type == 'withhold_to_cover_sale' %}
-          <td>sprzedaż (Sell/Withhold)</td>
-          <td class="muted">{{ c.natural_key }}</td>
-          <td class="muted">—</td>
-          <td>
+          <td data-label="Typ">sprzedaż (Sell/Withhold)</td>
+          <td class="muted" data-label="Klucz">{{ c.natural_key }}</td>
+          <td class="muted" data-label="Zapisane">—</td>
+          <td data-label="Z importu">
             {{ c.incoming.execution_date }} · {{ '%.4f'|format(c.incoming.quantity) }} akcji ·
             {{ '%.2f'|format(c.incoming.sale_price_eur) }} EUR/szt ·
             prowizja {{ '%.2f'|format(c.incoming.fees_eur) }} EUR ·
             netto {{ '%.2f'|format(c.incoming.net_proceeds_eur) }} EUR
           </td>
-          <td>
+          <td data-label="Akcja">
             <form method="post" action="{{ url_for('imports_confirm_sale', conflict_id=c.id) }}">
               <button class="btn small primary" type="submit">Zatwierdź jako sprzedaż</button>
             </form>
           </td>
+          {% elif c.entity_type == 'balance' %}
+          <td data-label="Typ">saldo vs wyciąg</td>
+          <td class="muted" data-label="Klucz">{{ c.natural_key }}</td>
+          <td class="muted" data-label="Zapisane">
+            stan na {{ c.incoming.as_of_date }}
+          </td>
+          <td class="wrap" data-label="Z importu">
+            {% if c.existing.positions %}
+              {% for pos in c.existing.positions if pos.status == 'mismatch' %}
+              <div>
+                {{ pos.label }}: wyciąg {{ pos.statement|qty(4) }} vs baza {{ pos.database|qty(4) }}
+                (różnica {{ '+' if pos.diff >= 0 else '' }}{{ pos.diff|qty(4) }})
+              </div>
+              {% endfor %}
+            {% else %}
+              akcje: wyciąg {{ c.incoming.shares_total_from_pdf|qty(4) }} vs baza
+              {{ c.existing.qty_remaining_total_minus_pending_sales|qty(4) }}
+            {% endif %}
+            — pełna tabela w karcie „Uzgodnienie z wyciągiem" powyżej.
+          </td>
+          <td data-label="Akcja">
+            <form method="post" action="{{ url_for('imports_resolve_conflict', conflict_id=c.id) }}">
+              <input type="text" name="resolution" placeholder="notatka (opcjonalnie)">
+              <button class="btn small" type="submit">Oznacz rozwiązany</button>
+            </form>
+          </td>
           {% else %}
-          <td>{{ c.entity_type }}</td>
-          <td class="muted">{{ c.natural_key }}</td>
-          <td class="muted wrap">
+          <td data-label="Typ">{{ c.entity_type }}</td>
+          <td class="muted" data-label="Klucz">{{ c.natural_key }}</td>
+          <td class="muted wrap" data-label="Zapisane">
             {% for k, v in c.existing.items() %}{{ k }}: {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}
           </td>
-          <td class="muted wrap">
+          <td class="muted wrap" data-label="Z importu">
             {% for k, v in c.incoming.items() %}{{ k }}: {{ v }}{% if not loop.last %} · {% endif %}{% endfor %}
           </td>
-          <td>
+          <td data-label="Akcja">
             <form method="post" action="{{ url_for('imports_resolve_conflict', conflict_id=c.id) }}">
               <input type="text" name="resolution" placeholder="notatka (opcjonalnie)">
               <button class="btn small" type="submit">Oznacz rozwiązany</button>
@@ -111,11 +190,11 @@
       <tbody>
         {% for h in history %}
         <tr>
-          <td>{{ h.filename }}</td>
-          <td class="nowrap" title="stan na dzień {{ h.as_of_date }}">{{ h.period_start }} — {{ h.period_end }}</td>
-          <td class="muted nowrap">{{ h.imported_at }}</td>
-          <td class="num">{{ h.rows_inserted }}</td>
-          <td class="num">{{ h.rows_conflict }}</td>
+          <td data-label="Plik">{{ h.filename }}</td>
+          <td class="nowrap" data-label="Okres" title="stan na dzień {{ h.as_of_date }}">{{ h.period_start }} — {{ h.period_end }}</td>
+          <td class="muted nowrap" data-label="Wgrano">{{ h.imported_at }}</td>
+          <td class="num" data-label="Nowe">{{ h.rows_inserted }}</td>
+          <td class="num" data-label="Konflikty">{{ h.rows_conflict }}</td>
         </tr>
         {% endfor %}
       </tbody>

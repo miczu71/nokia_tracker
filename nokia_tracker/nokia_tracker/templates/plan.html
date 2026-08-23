@@ -174,7 +174,9 @@
   </form>
   <div class="preview-box" id="timing-preview" hidden></div>
 
-  {% if timing_result and timing_result.today and timing_result.jan2_next_year %}
+  {% if timing_error %}
+  <p class="disclaimer error">⚠️ {{ timing_error }}</p>
+  {% elif timing_result and timing_result.today and timing_result.jan2_next_year %}
   <div class="grid stats">
     {{ stat('Podatek dziś (po stracie)', timing_result.today.tax_with_max_loss_pln|money, 'zł') }}
     {{ stat('Podatek 2 stycznia (po stracie)', timing_result.jan2_next_year.tax_with_max_loss_pln|money, 'zł') }}

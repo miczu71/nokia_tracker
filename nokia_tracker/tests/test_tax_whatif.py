@@ -200,3 +200,125 @@ def test_annual_tax_breakdown_defaults_policy_from_cfg(conn):
         conn, cfg, year=2026, sale_income_pln=100.0, policy="all_at_acquisition")
 
     assert r == explicit
+
+
+# --- E6 krok 3 (docs/PLAN_E6_wyplata.md): annual_net_for_quantity — kierunek B ---
+# i finalny krok solve_for_net (kierunek A) kończą w TEJ SAMEJ funkcji: woła
+# simulate_sale() dla śladu FIFO/NBP, potem annual_tax_breakdown() na jej
+# income_pln aktywnej polityki — model roczny zamiast tax_pln pojedynczej
+# sprzedaży z simulate_sale()["policies"].
+
+def test_annual_net_for_quantity_uses_annual_model_not_flat_policy_tax(conn):
+    cfg = _base_cfg()
+    # Kolejność jak w test_optimize_sale_timing_uses_available_loss_to_reduce_tax:
+    # lot straty + sprzedaż NAJPIERW (żeby FIFO skonsumował właśnie ten lot, nie
+    # tańszy lot dodany później), dopiero potem otwarty lot do testu.
+    lots.add_lot(conn, "2024-01-10", "own", 10.0, 10.0, source="manual")
+    lots.record_sale(conn, "2024-06-01", 10.0, 5.0)  # strata 200 PLN
+    losses.rebuild(conn, cfg)
+    lots.add_lot(conn, "2020-01-01", "own", 50.0, 3.0, source="manual")
+
+    r = whatif.annual_net_for_quantity(conn, cfg, 20.0, 8.0, sale_date="2026-07-28")
+
+    flat_tax = r["policies"][r["active_policy"]]["tax_pln"]
+    assert r["annual"]["tax_with_max_loss_pln"] < flat_tax
+    assert r["net_pln"] == pytest.approx(
+        round(r["revenue_pln"] - r["annual"]["tax_with_max_loss_pln"], 2))
+
+
+def test_annual_net_for_quantity_does_not_write_to_database(conn):
+    lots.add_lot(conn, "2020-01-01", "own", 20.0, 3.0, source="manual")
+    before = conn.execute("SELECT COUNT(*) c FROM sales").fetchone()["c"]
+
+    whatif.annual_net_for_quantity(conn, _base_cfg(), 5.0, 8.0)
+
+    after = conn.execute("SELECT COUNT(*) c FROM sales").fetchone()["c"]
+    assert before == after == 0
+
+
+# --- solve_for_net() — jedyna nowa matematyka w E6 (bisekcja nad _plan_fifo) ---
+
+def test_solve_for_net_round_trip_within_one_pln(conn):
+    lots.add_lot(conn, "2020-01-01", "own", 100.0, 3.0, source="manual")
+
+    target = 1500.0
+    result = whatif.solve_for_net(conn, _base_cfg(), target, 8.0, sale_date="2026-07-28")
+    confirm = whatif.annual_net_for_quantity(
+        conn, _base_cfg(), result["quantity"], 8.0, sale_date="2026-07-28")
+
+    assert confirm["net_pln"] == pytest.approx(target, abs=1.0)
+    assert result["net_pln"] == pytest.approx(confirm["net_pln"])
+
+
+def test_solve_for_net_result_never_exceeds_available_quantity(conn):
+    lots.add_lot(conn, "2020-01-01", "own", 30.0, 3.0, source="manual")
+
+    result = whatif.solve_for_net(conn, _base_cfg(), 100.0, 8.0, sale_date="2026-07-28")
+
+    assert result["quantity"] <= 30.0 + lots._EPS
+
+
+def test_solve_for_net_unreachable_target_raises_with_max_in_message(conn):
+    lots.add_lot(conn, "2020-01-01", "own", 5.0, 3.0, source="manual")
+
+    with pytest.raises(whatif.TargetUnreachableError):
+        whatif.solve_for_net(conn, _base_cfg(), 1_000_000.0, 8.0, sale_date="2026-07-28")
+
+
+def test_solve_for_net_insufficient_lots_raises_when_nothing_open(conn):
+    with pytest.raises(lots.InsufficientLotsError):
+        whatif.solve_for_net(conn, _base_cfg(), 100.0, 8.0, sale_date="2026-07-28")
+
+
+def test_solve_for_net_rejects_non_positive_target_or_price(conn):
+    lots.add_lot(conn, "2020-01-01", "own", 30.0, 3.0, source="manual")
+    with pytest.raises(ValueError):
+        whatif.solve_for_net(conn, _base_cfg(), 0.0, 8.0)
+    with pytest.raises(ValueError):
+        whatif.solve_for_net(conn, _base_cfg(), 100.0, 0.0)
+
+
+def test_solve_for_net_handles_fractional_production_like_quantities(conn):
+    # Wzorzec z produkcji: lot ESPP z ułamkową ilością (krok 30, 154.663115).
+    lots.add_lot(conn, "2024-01-10", "own", 154.663115, 5.41, source="manual")
+
+    result = whatif.solve_for_net(conn, _base_cfg(), 300.0, 8.0, sale_date="2026-07-28")
+
+    assert 0 < result["quantity"] < 154.663115
+
+
+def test_solve_for_net_fee_reduces_net_proceeds(conn):
+    lots.add_lot(conn, "2020-01-01", "own", 100.0, 3.0, source="manual")
+
+    no_fee = whatif.solve_for_net(conn, _base_cfg(), 1500.0, 8.0, sale_date="2026-07-28")
+    with_fee = whatif.solve_for_net(
+        conn, _base_cfg(), 1500.0, 8.0, fee_pct=1.0, sale_date="2026-07-28")
+
+    # Ta sama kwota netto docelowa, ale opłata zjada część wpływu -> potrzeba
+    # sprzedać WIĘCEJ akcji, żeby osiągnąć ten sam cel.
+    assert with_fee["quantity"] > no_fee["quantity"]
+
+
+def test_solve_for_net_converges_across_loss_carryforward_threshold(conn):
+    # Skonstruowany przypadek z progiem (wymóg roadmapy E6): strata z lat
+    # ubiegłych węższa niż potencjalny dochód całej sprzedaży, więc funkcja
+    # netto ma załamanie nachylenia w środku zakresu bisekcji, nie na krawędzi.
+    cfg = _base_cfg()
+    lots.add_lot(conn, "2024-01-10", "own", 10.0, 10.0, source="manual")
+    lots.record_sale(conn, "2024-06-01", 10.0, 5.0)  # strata 200 PLN
+    losses.rebuild(conn, cfg)
+    lots.add_lot(conn, "2020-01-01", "own", 100.0, 3.0, source="manual")
+
+    # Cel poniżej wartości progu straty (mało akcji, podatek w pełni zneutralizowany)
+    # i cel powyżej progu (strata wyczerpana w połowie sprzedaży) — obie ścieżki
+    # muszą zbiegać i pozostać monotoniczne.
+    small = whatif.solve_for_net(conn, cfg, 100.0, 8.0, sale_date="2026-07-28")
+    large = whatif.solve_for_net(conn, cfg, 2000.0, 8.0, sale_date="2026-07-28")
+
+    assert small["quantity"] < large["quantity"]
+    confirm_small = whatif.annual_net_for_quantity(
+        conn, cfg, small["quantity"], 8.0, sale_date="2026-07-28")
+    confirm_large = whatif.annual_net_for_quantity(
+        conn, cfg, large["quantity"], 8.0, sale_date="2026-07-28")
+    assert confirm_small["net_pln"] == pytest.approx(100.0, abs=1.0)
+    assert confirm_large["net_pln"] == pytest.approx(2000.0, abs=1.0)

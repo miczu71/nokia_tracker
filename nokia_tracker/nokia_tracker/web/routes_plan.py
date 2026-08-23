@@ -56,10 +56,11 @@ def register_plan_routes(app: Flask, ctx: AppContext) -> None:
                     ("+20%", price_eur * 1.2)]
 
             timing_result = None
+            timing_error = None
             timing_qty_raw = request.args.get("timing_qty")
             timing_price_raw = request.args.get("timing_price")
             if timing_qty_raw and timing_price_raw:
-                timing_result = timing_scenario(
+                timing_result, timing_error = timing_scenario(
                     conn, cfg, eurpln_rate, float(timing_qty_raw), float(timing_price_raw))
 
             exit_result = None
@@ -83,7 +84,8 @@ def register_plan_routes(app: Flask, ctx: AppContext) -> None:
                 espp_result=espp_result, espp_error=espp_error,
                 espp_monthly=monthly_raw, espp_months=months_raw, espp_price=price_raw,
                 espp_scenarios=espp_scenarios,
-                timing_result=timing_result, timing_qty=timing_qty_raw, timing_price=timing_price_raw,
+                timing_result=timing_result, timing_error=timing_error,
+                timing_qty=timing_qty_raw, timing_price=timing_price_raw,
                 exit_result=exit_result, exit_error=exit_error,
                 exit_qty=exit_qty_raw, exit_freq=exit_freq_raw, exit_periods=exit_periods_raw,
                 has_restricted=bool(plan_overview["forfeit"]["items"]),
@@ -138,7 +140,9 @@ def register_plan_routes(app: Flask, ctx: AppContext) -> None:
             cfg = settingsm.get_settings(conn)
             eurpln_rate = latest_eurpln_rate(conn)
 
-            result = timing_scenario(conn, cfg, eurpln_rate, quantity, price_eur)
+            result, error = timing_scenario(conn, cfg, eurpln_rate, quantity, price_eur)
+            if error is not None:
+                return {"ok": False, "error": error}
 
             if result["today"] is None or result["jan2_next_year"] is None:
                 return {"ok": False, "error": "Brak pokrycia lotami dla jednego ze scenariuszy."}

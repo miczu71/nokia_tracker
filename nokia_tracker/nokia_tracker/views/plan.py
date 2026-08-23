@@ -8,9 +8,11 @@ bo się różnią między HTML a JSON i zszycie ich zmieniłoby zachowanie:
 
 - `espp_scenario`: obie trasy łapią dziś TYLKO `ValueError` wokół wywołania
   silnika — bezpieczne do zszycia.
-- `timing_scenario`: ŻADNA trasa nie łapie dziś wyjątku wokół wywołania
-  silnika (świadomie, `InsufficientLotsError` nieobsłużony w obu — patrz
-  E3 §3b, deferred do E6/kalkulatora wypłaty).
+- `timing_scenario`: obie trasy łapią `(taxlots.InsufficientLotsError,
+  taxlots.CostBasisMissingError)` wokół wywołania silnika (E6 krok 6,
+  docs/PLAN_E6_wyplata.md — spłata długu z E3 §3b: `forfeit_for_quantity`
+  wołane wewnątrz `optimize_sale_timing` może rzucić niezależnie od tego, czy
+  `simulate_sale` się powiodło).
 - `exit_scenario`: obie trasy łapią dziś `(ValueError,
   taxlots.InsufficientLotsError)` wokół TEGO SAMEGO wywołania — bezpieczne
   do zszycia."""
@@ -33,9 +35,13 @@ def espp_scenario(cfg: dict, eurpln_rate: float | None, monthly_eur: float,
 
 
 def timing_scenario(conn, cfg: dict, eurpln_rate: float | None,
-                    quantity: float, price_eur: float) -> dict:
-    return advisorm.optimize_sale_timing(
-        conn, cfg, quantity, price_eur, eurpln_rate=eurpln_rate)
+                    quantity: float, price_eur: float) -> tuple[dict | None, str | None]:
+    try:
+        result = advisorm.optimize_sale_timing(
+            conn, cfg, quantity, price_eur, eurpln_rate=eurpln_rate)
+        return result, None
+    except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
+        return None, str(e)
 
 
 def exit_scenario(conn, cfg: dict, eurpln_rate: float | None, price_eur: float | None,

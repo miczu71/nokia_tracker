@@ -251,3 +251,166 @@ def test_shares_tolerance_is_capped_at_two_shares(conn):
         taxlots.add_lot(conn, "2026-01-01", "dividend_drip", 0.1, 6.0,
                          source="holdings_snapshot", natural_key=f"snap:{i}")
     assert reconcile.shares_tolerance(conn, "2026-06-01") == pytest.approx(2.0)
+
+
+# --- reconcile() — silnik uzgodnienia (krok 3) ---
+
+def _snapshot(**overrides):
+    base = {
+        "period_start": "2026-01-01", "period_end": "2026-08-18", "as_of_date": "2026-08-18",
+        "shares_total": None, "restricted_units_total": None,
+        "pending_tranches": [], "dividends": [], "purchases": [],
+        "withhold_type_a": [], "withhold_type_b": [],
+    }
+    base.update(overrides)
+    return base
+
+
+def _position(positions, key):
+    return next(p for p in positions if p.key == key)
+
+
+def test_reconcile_shares_ok_when_within_tolerance(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    positions = reconcile.reconcile(conn, _snapshot(shares_total=100.01))
+    p = _position(positions, "shares")
+    assert p.status == "ok"
+    assert p.database == pytest.approx(100.0)
+
+
+def test_reconcile_shares_mismatch_when_outside_tolerance(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    positions = reconcile.reconcile(conn, _snapshot(shares_total=150.0))
+    p = _position(positions, "shares")
+    assert p.status == "mismatch"
+    assert p.diff == pytest.approx(-50.0)
+
+
+def test_reconcile_shares_no_data_when_statement_value_missing(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    positions = reconcile.reconcile(conn, _snapshot(shares_total=None))
+    assert _position(positions, "shares").status == "no_data"
+
+
+def test_reconcile_shares_no_data_when_allocation_guard_trips(conn):
+    lot_id = taxlots.add_lot(conn, "2026-03-01", "own", 10.0, 5.0)
+    conn.execute(
+        "INSERT INTO sales (sale_date, quantity, price_eur, fee_eur, revenue_pln) "
+        "VALUES ('2026-01-01', 5.0, 6.0, 0.0, 100.0)")
+    sale_id = conn.execute("SELECT id FROM sales WHERE sale_date='2026-01-01'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO sale_allocations (sale_id, lot_id, quantity, cost_pln, revenue_pln) "
+        "VALUES (?, ?, 5.0, 0.0, 100.0)", (sale_id, lot_id))
+    conn.commit()
+    positions = reconcile.reconcile(conn, _snapshot(shares_total=5.0))
+    p = _position(positions, "shares")
+    assert p.status == "no_data"
+    assert p.database is None
+
+
+def test_reconcile_shares_subtracts_pending_unconfirmed_withhold_to_cover(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    _make_wtc_conflict(conn, "2026-01-15", 20.0)
+    positions = reconcile.reconcile(conn, _snapshot(shares_total=80.0))
+    p = _position(positions, "shares")
+    assert p.database == pytest.approx(80.0)
+    assert p.status == "ok"
+
+
+def test_reconcile_restricted_units_ok_when_matching(conn):
+    _make_pending_vest(conn, "2027-01-01", 40.0)
+    positions = reconcile.reconcile(conn, _snapshot(
+        restricted_units_total=40.0, pending_tranches=[{"natural_key": "x", "quantity": 40.0}]))
+    p = _position(positions, "restricted_units")
+    assert p.status == "ok"
+    assert p.database == pytest.approx(40.0)
+
+
+def test_reconcile_restricted_units_mismatch(conn):
+    _make_pending_vest(conn, "2027-01-01", 40.0)
+    positions = reconcile.reconcile(conn, _snapshot(
+        restricted_units_total=10.0, pending_tranches=[{"natural_key": "x", "quantity": 40.0}]))
+    assert _position(positions, "restricted_units").status == "mismatch"
+
+
+def test_reconcile_restricted_units_no_data_when_ambiguous_exceeds_tolerance(conn):
+    # transza overdue-pending o dużej ilości - niepewność przewyższa tolerancję rzędu
+    # setnych części akcji, więc pozycja nie może udawać pewności.
+    _make_pending_vest(conn, "2026-01-01", 500.0, available_from="2026-01-05")
+    positions = reconcile.reconcile(conn, _snapshot(
+        restricted_units_total=0.0, pending_tranches=[]))
+    p = _position(positions, "restricted_units")
+    assert p.status == "no_data"
+    assert "niepewn" in p.note.lower() or "przetermin" in p.note.lower()
+
+
+def test_reconcile_restricted_units_counts_small_ambiguous_within_tolerance(conn):
+    # ambiguous_qty maleńkie (poniżej tolerancji dla 1 wiersza, 0.02) - pozycja liczona
+    # normalnie, z notatką, nie no_data.
+    _make_pending_vest(conn, "2027-01-01", 40.0)
+    _make_pending_vest(conn, "2026-01-01", 0.001, available_from="2026-01-05")
+    positions = reconcile.reconcile(conn, _snapshot(
+        restricted_units_total=40.0, pending_tranches=[{"natural_key": "x", "quantity": 40.0}]))
+    p = _position(positions, "restricted_units")
+    assert p.status == "ok"
+    assert p.database == pytest.approx(40.0)
+
+
+def test_reconcile_total_combines_shares_and_restricted_units(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    _make_pending_vest(conn, "2027-01-01", 40.0)
+    positions = reconcile.reconcile(conn, _snapshot(
+        shares_total=100.0, restricted_units_total=40.0,
+        pending_tranches=[{"natural_key": "x", "quantity": 40.0}]))
+    p = _position(positions, "total")
+    assert p.status == "ok"
+    assert p.database == pytest.approx(140.0)
+    assert p.statement == pytest.approx(140.0)
+
+
+def test_reconcile_total_is_no_data_when_either_side_missing(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    positions = reconcile.reconcile(conn, _snapshot(shares_total=100.0,
+                                                      restricted_units_total=None))
+    assert _position(positions, "total").status == "no_data"
+
+
+def test_reconcile_broker_cash_is_always_no_data(conn):
+    positions = reconcile.reconcile(conn, _snapshot())
+    p = _position(positions, "broker_cash")
+    assert p.status == "no_data"
+    assert p.statement is None
+
+
+def test_reconcile_pending_wtc_sales_is_informational_not_mismatch(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    _make_wtc_conflict(conn, "2026-01-15", 20.0)
+    positions = reconcile.reconcile(conn, _snapshot(shares_total=80.0))
+    p = _position(positions, "pending_wtc_sales")
+    assert p.status not in ("mismatch",)
+    assert len(p.details) == 1
+    assert p.details[0]["quantity"] == 20.0
+
+
+def test_reconcile_dividends_in_period_ok_when_matching(conn, monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    from nokia_tracker.tax import dividends as taxdiv
+    taxdiv.add_dividend(conn, record_date="2026-03-01", entitled_quantity=10.0,
+                         gross_eur=5.0, taxes_eur=1.75)
+    positions = reconcile.reconcile(conn, _snapshot(dividends=[
+        {"record_date": "2026-03-01", "gross_dividend_payment_eur": 5.0}]))
+    p = _position(positions, "dividends_in_period")
+    assert p.status == "ok"
+    assert p.database == pytest.approx(5.0)
+
+
+def test_reconcile_espp_purchases_in_period_ok_when_matching(conn):
+    nk = "purchase:2025-10-24:2026-02-02:19.21982"
+    taxlots.add_lot(conn, "2026-02-02", "own", 19.21982, 5.48, natural_key=nk)
+    positions = reconcile.reconcile(conn, _snapshot(purchases=[
+        {"natural_key": nk, "quantity": 19.21982}]))
+    p = _position(positions, "espp_purchases_in_period")
+    assert p.status == "ok"
+    assert p.database == pytest.approx(19.21982)

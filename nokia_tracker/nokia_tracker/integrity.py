@@ -14,6 +14,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from . import reconcile as reconcilem
 from . import settings as settingsm
 from .tax import pit38 as taxpit38
 
@@ -269,6 +270,54 @@ def _tax_payments_exceed_due(conn: sqlite3.Connection, cfg: dict) -> Finding | N
         len(bad), bad)
 
 
+def _allocation_predates_its_lot(conn: sqlite3.Connection) -> Finding | None:
+    """Krok E7 (docs/PLAN_E7_uzgodnienie.md): alokacja FIFO przypięta do lotu nabytego
+    PO dacie sprzedaży, którą konsumuje. Filtr `acquired_date <= as_of` w
+    `tax/lots.py::open_lots` wymusza ten niezmiennik od kroku 19 — dane zapisane PRZED
+    tą naprawą mogą go łamać (docstring `open_lots`, realny przypadek ze sprzedaży
+    2025-10-27). Naruszenie blokuje rekonstrukcję stanu na dzień D w `reconcile.py`
+    (`shares_as_of` zwraca wtedy `None` — `no_data`, nie błędna liczba)."""
+    rows = conn.execute(
+        "SELECT sa.id AS allocation_id, sa.sale_id AS sale_id, sa.lot_id AS lot_id, "
+        "l.acquired_date AS lot_acquired_date, s.sale_date AS sale_date "
+        "FROM sale_allocations sa "
+        "JOIN sales s ON s.id = sa.sale_id "
+        "JOIN lots l ON l.id = sa.lot_id "
+        "WHERE l.acquired_date > s.sale_date"
+    ).fetchall()
+    if not rows:
+        return None
+    return Finding(
+        "allocation_predates_its_lot", "error",
+        "Alokacja sprzedaży przypięta do lotu nabytego PO dacie tej sprzedaży — "
+        "dane sprzed naprawy z kroku 19, blokuje uzgodnienie z wyciągiem",
+        len(rows), [dict(r) for r in rows])
+
+
+def _statement_mismatch(conn: sqlite3.Connection) -> list[Finding]:
+    """Krok E7: jeden `Finding` na pozycję uzgodnienia z wyciągiem o statusie
+    `mismatch` (`reconcile.reconcile()` na najnowszym `statement_snapshots`).
+    `warning`, nie `error` — rozjazd bywa uzasadniony (np. niepotwierdzona sprzedaż
+    Withhold-to-Cover) i nie jest sam w sobie korupcją danych, ta sama waga co
+    `unresolved_import_conflict`. Brak zapisanego snapshotu ⇒ ZERO findingów, nie
+    finding „brak danych" — ten sam wzorzec co `_tax_payments_exceed_due` („zero
+    wpłat nigdy nie jest błędem")."""
+    snapshot = reconcilem.latest_snapshot(conn)
+    if snapshot is None:
+        return []
+    findings = []
+    for p in reconcilem.reconcile(conn, snapshot):
+        if p.status != "mismatch":
+            continue
+        findings.append(Finding(
+            f"statement_mismatch:{p.key}", "warning",
+            f"Uzgodnienie z wyciągiem ({snapshot.get('as_of_date')}): pozycja "
+            f"'{p.label}' się nie zgadza",
+            1, [{"key": p.key, "label": p.label, "statement": p.statement,
+                 "database": p.database, "diff": p.diff, "tolerance": p.tolerance}]))
+    return findings
+
+
 def check_all(
     conn: sqlite3.Connection, today: str | None = None, cfg: dict | None = None
 ) -> list[Finding]:
@@ -283,6 +332,7 @@ def check_all(
         _unresolved_import_conflicts,
         _dividend_arithmetic_mismatch,
         _missing_or_future_nbp_rate,
+        _allocation_predates_its_lot,
     ):
         f = check(conn)
         if f:
@@ -295,4 +345,5 @@ def check_all(
     tax_payments_finding = _tax_payments_exceed_due(conn, cfg)
     if tax_payments_finding:
         findings.append(tax_payments_finding)
+    findings.extend(_statement_mismatch(conn))
     return findings

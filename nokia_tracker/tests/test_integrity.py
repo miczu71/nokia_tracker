@@ -308,3 +308,93 @@ def test_tax_payments_within_due_not_flagged(conn):
     findings = integrity.check_all(conn)
 
     assert not any(f.check == "tax_payments_exceed_due" for f in findings)
+
+
+# --- new: alokacja FIFO przypięta do lotu z przyszłości względem sprzedaży
+# (E7, docs/PLAN_E7_uzgodnienie.md — blokuje rekonstrukcję as-of w reconcile.py) ---
+
+def test_allocation_predates_its_lot_detected(conn):
+    # Symulacja danych sprzed kroku 19 (open_lots(as_of=) nie istniało jeszcze).
+    lot_id = taxlots.add_lot(conn, "2026-03-01", "own", 10.0, 5.0)
+    conn.execute(
+        "INSERT INTO sales (sale_date, quantity, price_eur, fee_eur, revenue_pln) "
+        "VALUES ('2026-01-01', 5.0, 6.0, 0.0, 100.0)")
+    sale_id = conn.execute("SELECT id FROM sales WHERE sale_date='2026-01-01'").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO sale_allocations (sale_id, lot_id, quantity, cost_pln, revenue_pln) "
+        "VALUES (?, ?, 5.0, 0.0, 100.0)", (sale_id, lot_id))
+    conn.commit()
+
+    findings = integrity.check_all(conn)
+
+    f = next(f for f in findings if f.check == "allocation_predates_its_lot")
+    assert f.severity == "error"
+    assert f.count == 1
+    assert f.details[0]["lot_id"] == lot_id
+    assert f.details[0]["sale_id"] == sale_id
+
+
+def test_allocation_written_by_record_sale_never_flagged(conn):
+    taxlots.add_lot(conn, "2026-01-01", "own", 10.0, 5.0)
+    taxlots.record_sale(conn, "2026-02-01", 4.0, 6.0)
+
+    findings = integrity.check_all(conn)
+
+    assert not any(f.check == "allocation_predates_its_lot" for f in findings)
+
+
+# --- new: rozjazd uzgodnienia z wyciągiem (E7) — jeden Finding per pozycja mismatch ---
+
+def test_statement_mismatch_detected_when_snapshot_disagrees_with_database(conn):
+    import json as _json
+
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    snapshot = {
+        "period_start": "2026-01-01", "period_end": "2026-08-18", "as_of_date": "2026-08-18",
+        "shares_total": 150.0, "restricted_units_total": None,
+        "pending_tranches": [], "dividends": [], "purchases": [],
+        "withhold_type_a": [], "withhold_type_b": [],
+    }
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', ?)", (import_id, _json.dumps(snapshot)))
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)  # tylko 100, wyciąg mówi 150
+    conn.commit()
+
+    findings = integrity.check_all(conn)
+
+    f = next(f for f in findings if f.check == "statement_mismatch:shares")
+    assert f.severity == "warning"
+    assert f.count == 1
+
+
+def test_statement_mismatch_not_flagged_when_no_snapshot_saved_yet(conn):
+    # Brak wyciągu do porównania nigdy nie jest błędem - zero findingów, nie
+    # finding "brak danych" (ten sam wzorzec co _tax_payments_exceed_due).
+    findings = integrity.check_all(conn)
+    assert not any(f.check.startswith("statement_mismatch:") for f in findings)
+
+
+def test_statement_mismatch_not_flagged_when_snapshot_matches_database(conn):
+    import json as _json
+
+    conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-08-18')")
+    import_id = conn.execute("SELECT last_insert_rowid() id").fetchone()["id"]
+    snapshot = {
+        "period_start": "2026-01-01", "period_end": "2026-08-18", "as_of_date": "2026-08-18",
+        "shares_total": 100.0, "restricted_units_total": None,
+        "pending_tranches": [], "dividends": [], "purchases": [],
+        "withhold_type_a": [], "withhold_type_b": [],
+    }
+    conn.execute(
+        "INSERT INTO statement_snapshots (import_id, as_of_date, snapshot_json) "
+        "VALUES (?, '2026-08-18', ?)", (import_id, _json.dumps(snapshot)))
+    taxlots.add_lot(conn, "2026-01-01", "own", 100.0, 5.0)
+    conn.commit()
+
+    findings = integrity.check_all(conn)
+
+    assert not any(f.check.startswith("statement_mismatch:") for f in findings)

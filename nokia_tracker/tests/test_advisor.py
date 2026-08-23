@@ -543,3 +543,40 @@ def test_exit_plan_concentration_after_is_lower_than_before(conn):
     assert r["concentration_after"]["employer_value_pln"] < (
         r["concentration_before"]["employer_value_pln"])
     assert r["concentration_after"]["pct"] < r["concentration_before"]["pct"]
+
+
+# --- E6 krok 2 (docs/PLAN_E6_wyplata.md): _effective_match_rates ---
+
+def test_forfeit_for_quantity_zeroes_rate_past_free_until(conn):
+    # Ten sam wzorzec co test_exit_plan_forfeit_stops_after_known_free_date, ale
+    # bezpośrednio na forfeit_for_quantity: wolne od 2026-08-27, pytamy o przepadek
+    # na 2026-09-01 (PO dacie uwolnienia) — dziś (przed E6 krok 2) `today` w przyszłości
+    # był ignorowany przez `restricted_own_lots` i przepadek wychodził > 0 mimo że lot
+    # zdążyłby się uwolnić.
+    taxlots.add_lot(conn, "2025-10-27", "own", 29.24, 5.41, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+
+    before_free = advisor.forfeit_for_quantity(conn, 29.24, today="2026-08-01")
+    after_free = advisor.forfeit_for_quantity(conn, 29.24, today="2026-09-01")
+
+    assert before_free["forfeit_qty"] > 0
+    assert after_free["forfeit_qty"] == pytest.approx(0.0)
+
+
+def test_optimize_sale_timing_jan2_forfeit_not_overstated_past_free_until(conn):
+    # Lot ograniczony wolny od 2026-08-27 — SPRZED daty scenariusza "2 stycznia 2027".
+    # Przed E6 krokiem 2: jan2_scenario["forfeit_value_pln"] > 0 mimo że dopasowanie
+    # realnie zdążyłoby się uwolnić przed tą datą (bug w optimize_sale_timing, którego
+    # exit_plan nigdy nie miał — patrz PLAN_E6_wyplata.md, znalezisko 2).
+    taxlots.add_lot(conn, "2025-10-27", "own", 29.24, 5.41, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2025-10-27", 29.24, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2026-08-01", 29.24, "espp_vest:x", available_from="2026-08-27")
+
+    r = advisor.optimize_sale_timing(
+        conn, _base_cfg(), 29.24, 8.0, eurpln_rate=4.0, today="2026-07-28")
+
+    assert r["today"]["forfeit_value_pln"] > 0
+    assert r["jan2_next_year"]["forfeit_value_pln"] == pytest.approx(0.0)

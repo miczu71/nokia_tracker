@@ -54,6 +54,22 @@ def forfeit_for_allocations(allocations: list[dict], rates_by_lot_id: dict[int, 
     return {"forfeit_qty": forfeit_qty, "lots_touched": lots_touched}
 
 
+def _effective_match_rates(restricted: list[dict], as_of: str) -> dict[int, float]:
+    """`match_rate` per lot, wyzerowany dla lotów, których `free_until` minęło do
+    `as_of` (E6 krok 2, docs/PLAN_E6_wyplata.md). `grantsm.restricted_own_lots(today=…)`
+    NIE robi tego sama — filtruje wyłącznie po `vests.status='pending'` w bazie, a nie po
+    porównaniu dat, więc dla PRZYSZŁEJ daty (np. scenariusz „2 stycznia" w
+    `optimize_sale_timing`, albo kolejne okresy `exit_plan`) zwraca dopasowanie tak,
+    jakby lot wciąż był ograniczony, nawet gdy do tej daty realnie już się uwolni —
+    zawyżając przepadek. Wydzielone z inline cutoffu, który `exit_plan` już liczył
+    (§B.5 pierwotnego planu kroku 31), żeby `forfeit_for_quantity` miała TĘ SAMĄ
+    regułę zamiast drugiej kopii."""
+    return {
+        item["lot_id"]: (item["match_rate"] if as_of < item["free_until"] else 0.0)
+        for item in restricted
+    }
+
+
 def forfeit_for_quantity(conn: sqlite3.Connection, quantity: float,
                          price_eur: float | None = None, eurpln_rate: float | None = None,
                          today: str | None = None) -> dict:
@@ -82,8 +98,8 @@ def forfeit_for_quantity(conn: sqlite3.Connection, quantity: float,
         acquired_by_lot[lot["id"]] = lot["acquired_date"]
         remaining -= take
 
-    rates = {item["lot_id"]: item["match_rate"]
-            for item in grantsm.restricted_own_lots(conn, today=today)}
+    restricted = grantsm.restricted_own_lots(conn, today=today)
+    rates = _effective_match_rates(restricted, today)
     result = forfeit_for_allocations(allocations, rates)
     for touched in result["lots_touched"]:
         touched["acquired_date"] = acquired_by_lot.get(touched["lot_id"])
@@ -430,10 +446,9 @@ def exit_plan(conn: sqlite3.Connection, cfg: dict, shares_per_period: float,
     # Realne, znane z góry daty uwolnienia — patrz doprecyzowanie w §B.5 planu:
     # `restricted_own_lots(today=...)` NIE zmienia wyniku z przyszłą datą (opiera się
     # na `vests.status` w bazie, nie na porównaniu dat), więc pobieramy raz i sami
-    # naliczamy cutoff po `free_until` per okres.
+    # naliczamy cutoff po `free_until` per okres (E6 krok 2: wspólna reguła z
+    # `forfeit_for_quantity` — `_effective_match_rates`).
     restricted = grantsm.restricted_own_lots(conn, today=start_date)
-    rates_by_lot_id = {item["lot_id"]: item["match_rate"] for item in restricted}
-    free_until_by_lot_id = {item["lot_id"]: item["free_until"] for item in restricted}
 
     active_policy = cfg.get("cost_basis_policy", "own_only")
     allowed_types = taxpolicy.POLICIES[active_policy]
@@ -457,10 +472,7 @@ def exit_plan(conn: sqlite3.Connection, cfg: dict, shares_per_period: float,
             cost_pln = sum(a["cost_pln"] for a in plan if a["lot_type"] in allowed_types)
             income_by_year[year] = income_by_year.get(year, 0.0) + (revenue_pln - cost_pln)
 
-        effective_rates = {
-            lot_id: (rate if sale_date < free_until_by_lot_id.get(lot_id, "0000-00-00") else 0.0)
-            for lot_id, rate in rates_by_lot_id.items()
-        }
+        effective_rates = _effective_match_rates(restricted, sale_date)
         forfeit = forfeit_for_allocations(plan, effective_rates)
         _, forfeit_value_pln = grantsm._value(forfeit["forfeit_qty"], price_eur, eurpln_rate)
 

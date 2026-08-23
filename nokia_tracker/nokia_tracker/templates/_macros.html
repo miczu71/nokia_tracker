@@ -112,6 +112,70 @@
 <p class="muted empty-state">{{ message }}</p>
 {%- endmacro %}
 
+{#
+  traced(bd) / trace_body(bd)
+
+  Krok E8 (docs/PLAN_E8_slad.md): ślad "skąd ta liczba" — owija DOWOLNĄ
+  zawartość wołającego (zwykle `stat(...)`/`cur_block(...)`) w
+  `<details class="trace">`, tak że sama kwota staje się `<summary>`, a pod
+  nią rozwija się tabela składników + formuła + źródła
+  (`nokia_tracker/breakdown.py::Breakdown`). `bd is none` (brak śladu —
+  brak danych ALBO rozjazd domykania złapany w `breakdown.py`) renderuje
+  zawartość wołającego BEZ ZMIAN, bez `<details>` — degradacja, nie błąd.
+
+  Serwerowe `<details>`/`<summary>`, zero nowego JS: klawiatura, czytniki
+  ekranu i dotyk działają od razu (w odróżnieniu od `<abbr title="…">` w
+  `_alloc_detail.html`, niedostępnego na telefonie). `.trace-body` jest
+  `no-print` (krok 6, `app.css`) — ślad jest ekranowy, wydruk pokazuje samą
+  kwotę jak dziś.
+
+  Użycie: `{% call m.traced(traces.get('portfel.total')) %}{{ stat(...) }}{% endcall %}`.
+#}
+{% macro traced(bd) %}
+{%- if bd %}
+<details class="trace">
+  <summary>{{ caller() }}<span class="trace-mark" aria-hidden="true">ⓘ</span></summary>
+  {{ trace_body(bd) }}
+</details>
+{%- else %}
+{{ caller() }}
+{%- endif %}
+{%- endmacro %}
+
+{% macro trace_body(bd) %}
+<div class="trace-body no-print">
+  <div class="table-wrap">
+    <table class="table trace-table">
+      <thead>
+        <tr><th>Składnik</th><th class="num">Wartość</th><th>Źródło</th></tr>
+      </thead>
+      <tbody>
+        {% for c in bd.components %}
+        <tr>
+          <td class="wrap" data-label="Składnik">
+            {{ c.label }}
+            {%- if c.detail %}<div class="muted trace-detail">{{ c.detail }}</div>{% endif -%}
+          </td>
+          <td class="num" data-label="Wartość">
+            {%- if c.value is not none -%}
+              {{ c.value|money(2, signed=True) }} <span class="stat-unit">{{ c.unit or bd.unit }}</span>
+            {%- else -%}&mdash;{%- endif -%}
+          </td>
+          <td class="muted wrap" data-label="Źródło">
+            {%- for s in c.sources -%}
+              {{ s.label }}{% if s.ref %} ({{ s.ref }}){% endif %}{% if not loop.last %}<br>{% endif %}
+            {%- endfor -%}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="trace-formula muted">{{ bd.formula }}</p>
+  {% if bd.note %}<p class="trace-note muted">{{ bd.note }}</p>{% endif %}
+</div>
+{%- endmacro %}
+
 {% macro cur_block(pln, eur, pln_unit='zł', eur_unit='EUR', cls='') -%}
 <div class="cur-wrap{% if cls %} {{ cls }}{% endif %}">
   <div class="cur-block cur-primary-pln">

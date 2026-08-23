@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, cur_block, empty_state %}
+{% from "_macros.html" import stat, cur_block, empty_state, traced %}
 {% block title %}Stan konta — Nokia Tracker{% endblock %}
 
 {% block content %}
@@ -39,9 +39,11 @@
   <div class="pf-hero-row">
     <div class="pf-hero">
       <div class="pf-hero-label">Wartość całkowita</div>
+      {% call traced(traces.get('portfel.total')) %}
       {{ cur_block(buckets.total.value_pln|money if buckets.total.value_pln is not none else none,
                    buckets.total.value_eur|money if buckets.total.value_eur is not none else none,
                    cls='pf-hero-cur') }}
+      {% endcall %}
       <div class="pf-hero-sub">{{ buckets.total.qty|qty }} akcji</div>
     </div>
     {% if buckets.total.qty %}
@@ -53,8 +55,10 @@
     <div class="pf-bucket free">
       <div class="pf-bucket-title"><span class="dot"></span>Wolne</div>
       <div class="pf-bucket-qty">{{ buckets.free.qty|qty }}<span class="stat-unit">akcji</span></div>
+      {% call traced(traces.get('portfel.free')) %}
       {{ cur_block(buckets.free.value_pln|money if buckets.free.value_pln is not none else none,
                    buckets.free.value_eur|money if buckets.free.value_eur is not none else none) }}
+      {% endcall %}
       <div class="pf-note">można sprzedać</div>
     </div>
 
@@ -62,8 +66,10 @@
     <div class="pf-bucket restricted">
       <div class="pf-bucket-title"><span class="dot"></span>Z ograniczeniem</div>
       <div class="pf-bucket-qty">{{ buckets.restricted.qty|qty }}<span class="stat-unit">akcji</span></div>
+      {% call traced(traces.get('portfel.restricted')) %}
       {{ cur_block(buckets.restricted.value_pln|money if buckets.restricted.value_pln is not none else none,
                    buckets.restricted.value_eur|money if buckets.restricted.value_eur is not none else none) }}
+      {% endcall %}
       <div class="pf-note">do {{ buckets.restricted.free_until }} — sprzedaż wcześniej oznacza
         utratę {{ forfeit.forfeit_qty|qty }} akcji dopasowania{% if forfeit.forfeit_value_pln is not none %},
         czyli {{ forfeit.forfeit_value_pln|money }} zł{% endif %} ·
@@ -74,8 +80,10 @@
     <div class="pf-bucket locked">
       <div class="pf-bucket-title"><span class="dot"></span>Zablokowane</div>
       <div class="pf-bucket-qty">{{ buckets.locked.qty|qty }}<span class="stat-unit">akcji</span></div>
+      {% call traced(traces.get('portfel.locked')) %}
       {{ cur_block(buckets.locked.value_pln|money if buckets.locked.value_pln is not none else none,
                    buckets.locked.value_eur|money if buckets.locked.value_eur is not none else none) }}
+      {% endcall %}
       <div class="pf-note">
         {% if buckets.locked.next_date %}
           najbliższe {{ buckets.locked.next_qty|qty }} od {{ buckets.locked.next_date }}
@@ -109,20 +117,28 @@
   {% endif %}
 
   <div class="pf-perf grid stats">
+    {% call traced(traces.get('portfel.cost_basis')) %}
     {{ stat('Koszt bazowy', position.cost_basis_pln|money if position.cost_basis_pln is not none else '—',
             ('zł' if position.cost_basis_pln is not none else none),
             sub=(position.cost_basis_eur|money ~ ' EUR' if position.cost_basis_eur is not none else none)) }}
+    {% endcall %}
+    {% call traced(traces.get('portfel.unrealized')) %}
     {{ stat('Niezrealizowany P&L',
             position.unrealized_pnl_pln|money(signed=True) if position.unrealized_pnl_pln is not none else '—',
             ('zł' if position.unrealized_pnl_pln is not none else none),
             value_cls=('up' if (position.unrealized_pnl_pln or 0) > 0 else 'down'),
             sub=(position.unrealized_pnl_eur|money(signed=True) ~ ' EUR'
                  if position.unrealized_pnl_eur is not none else none)) }}
+    {% endcall %}
+    {% call traced(traces.get('portfel.total_return')) %}
     {{ stat('Całkowity zwrot', position.total_return_pct|pct if position.total_return_pct is not none else '—',
             '%', value_cls=('up' if (position.total_return_pct or 0) > 0 else 'down')) }}
+    {% endcall %}
+    {% call traced(traces.get('portfel.dividends_net')) %}
     {{ stat('Dywidendy netto', dividends_net_pln|money if dividends_net_pln is not none else '—',
             ('zł' if dividends_net_pln is not none else none),
             sub=(dividends.dividends_net_eur|money ~ ' EUR')) }}
+    {% endcall %}
   </div>
   <p class="muted">
     <a class="btn small" href="{{ url_for('portfolio_get') }}">Edytuj stan posiadania</a>
@@ -146,15 +162,21 @@
 <div class="card">
   <div class="card-title">Gotówka i podatek — {{ year }}</div>
   <div class="grid stats">
+    {% call traced(traces.get('cash.broker_balance')) %}
     {{ stat('Saldo u brokera',
             '%.2f'|format(ledger.broker_balance.amount) if ledger.broker_balance else 'brak danych',
             ledger.broker_balance.currency if ledger.broker_balance else none,
             cls='bad' if (ledger.broker_balance and ledger.broker_balance.is_stale) else '',
             sub=(ledger.broker_balance.as_of_date if ledger.broker_balance else none)) }}
+    {% endcall %}
+    {% call traced(traces.get('cash.sale_proceeds')) %}
     {{ stat('Wpływy ze sprzedaży w ' ~ year, '%.2f'|format(ledger.sale_proceeds.by_year.get(year|string, {}).get('pln', 0)), 'PLN') }}
+    {% endcall %}
+    {% call traced(traces.get('cash.tax_outstanding')) %}
     {{ stat('Podatek do zapłaty', '%.2f'|format(ledger.tax_liability.outstanding_pln), 'PLN',
             cls='highlight' if ledger.tax_liability.outstanding_pln > 0 else 'good',
             sub='termin ' ~ ledger.tax_liability.deadline) }}
+    {% endcall %}
     {{ stat('Dywidendy w ' ~ year, ledger.dividend_flow.payout_count,
             sub='bezgotówkowe (DRIP)' if ledger.dividend_flow.payout_count else none) }}
   </div>

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, tax_disclaimer, empty_state %}
+{% from "_macros.html" import stat, tax_disclaimer, empty_state, traced %}
 {% block title %}Wypłata — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -63,17 +63,35 @@
   <p class="disclaimer error">⚠️ {{ error }}</p>
   {% elif result %}
   <div class="grid stats">
+    {% call traced(result.traces.get('wyplata.quantity')) %}
     {{ stat('Ilość akcji', result.quantity|qty, 'szt.', cls='highlight') }}
+    {% endcall %}
+    {% call traced(result.traces.get('wyplata.gross_eur')) %}
     {{ stat('Brutto', result.gross_eur|money(2), 'EUR') }}
+    {% endcall %}
+    {% call traced(result.traces.get('wyplata.revenue_pln')) %}
+    {{ stat('Przychód', result.revenue_pln|money, 'zł') }}
+    {% endcall %}
+    {% call traced(result.traces.get('wyplata.cost_fifo')) %}
     {{ stat('Koszt FIFO', result.cost_fifo_pln|money, 'zł') }}
+    {% endcall %}
+    {% call traced(result.traces.get('wyplata.income')) %}
+    {{ stat('Dochód roku', result.income_pln|money, 'zł') }}
+    {% endcall %}
+    {% call traced(result.traces.get('wyplata.tax')) %}
     {{ stat('Podatek', result.tax_pln|money, 'zł') }}
+    {% endcall %}
+    {% call traced(result.traces.get('wyplata.net')) %}
     {{ stat('Na rękę', result.net_pln|money, 'zł', cls='highlight') }}
+    {% endcall %}
   </div>
 
   {% if result.usable_loss_pln %}
+  {% call traced(result.traces.get('wyplata.usable_loss')) %}
   <p class="muted">
     Wykorzystana strata z lat ubiegłych: {{ result.usable_loss_pln|money }} zł.
   </p>
+  {% endcall %}
   {% endif %}
 
   {% if result.whole_shares %}
@@ -84,11 +102,13 @@
   {% endif %}
 
   {% if result.forfeit_value_pln %}
+  {% call traced(result.traces.get('wyplata.forfeit')) %}
   <p class="disclaimer">
     ⚠️ Ta sprzedaż przepala {{ result.forfeit_qty|qty }} szt. dopasowania ESPP (wartość
     {{ result.forfeit_value_pln|money }} zł) — utrata akcji, NIE odjęta od „na rękę" powyżej
     (to dwie różne rzeczy: gotówka vs utracone dopasowanie).
   </p>
+  {% endcall %}
   {% endif %}
 
   {% if result.concentration_after and result.concentration_after.configured %}

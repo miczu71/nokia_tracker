@@ -113,6 +113,10 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px; margin-bottom: 14px;
+  /* Krok E8: kafelek ze śladem rozwija się w dół (<details>) — bez tego
+     rozwinięcie jednego kafelka rozciągałoby wszystkie sąsiednie w wierszu
+     grida do tej samej wysokości. */
+  align-items: start;
 }
 .stat { display: flex; flex-direction: column; gap: 2px; }
 .stat-label { font-size: 12px; color: var(--muted); }
@@ -279,6 +283,29 @@ body {
 }
 .good { color: var(--good); }
 .bad { color: var(--bad); }
+
+/* Krok E8 (docs/PLAN_E8_slad.md): ślad "skąd ta liczba" — <details> owija
+   kafelek/kwotę, `_macros.html::traced()`. `summary` musi zostać czysto
+   prezentacyjny (nie zmieniać layoutu owiniętej zawartości), stąd display:
+   contents zamiast domyślnego blokowego <summary>. */
+.trace > summary {
+  list-style: none; cursor: pointer;
+  display: block;
+}
+.trace > summary::-webkit-details-marker { display: none; }
+.trace-mark {
+  display: inline-block; margin-left: 4px; font-size: 12px;
+  color: var(--muted); vertical-align: super;
+}
+.trace[open] > summary .trace-mark { color: var(--series-1); }
+.trace-body {
+  margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+  background: var(--grid); font-size: 13px;
+}
+.trace-table th, .trace-table td { font-size: 12px; }
+.trace-detail { font-size: 11px; }
+.trace-formula, .trace-note { margin: 8px 0 0; font-size: 12px; }
+.trace-note { color: var(--muted); }
 
 /* .sale-summary — nadal używane przez /grants (rozwijane rozbicie zrealizowanych
    transz); /sales przeszło na rejestr wiersz+detal (patrz .row-toggle niżej). */

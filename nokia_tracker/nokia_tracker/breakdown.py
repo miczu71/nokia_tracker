@@ -62,11 +62,14 @@ class Source:
 @dataclass(frozen=True)
 class Component:
     """Jeden składnik rozbicia. `value=None` = wiersz informacyjny (np. nota
-    o kursie) — nie wchodzi do sumy w `close_sum`."""
+    o kursie) — nie wchodzi do sumy w `close_sum`. `unit=None` dziedziczy
+    jednostkę z `Breakdown.unit` — ustaw jawnie, gdy składnik jest w innej
+    jednostce niż wynik (np. „ilość" w szt. wewnątrz rozbicia kwoty w EUR)."""
     label: str
     value: float | None
     detail: str | None = None
     sources: tuple[Source, ...] = ()
+    unit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -219,7 +222,7 @@ def _wyplata_quantity(result: dict, target_net_pln: float | None) -> Breakdown:
             "wartość wpisana przez użytkownika", components, recomputed=shown)
 
     components = (
-        Component("cel — kwota netto", target_net_pln),
+        Component("cel — kwota netto", target_net_pln, unit="zł"),
         Component("wynik bisekcji — ilość akcji", shown),
     )
     return close_formula(
@@ -233,8 +236,8 @@ def _wyplata_quantity(result: dict, target_net_pln: float | None) -> Breakdown:
 
 def _wyplata_gross(result: dict) -> Breakdown:
     components = (
-        Component("ilość akcji", result["quantity"]),
-        Component("cena (EUR/akcję)", result["price_eur"]),
+        Component("ilość akcji", result["quantity"], unit="szt."),
+        Component("cena", result["price_eur"], unit="EUR/akcję"),
     )
     recomputed = round(result["quantity"] * result["price_eur"], 2)
     return close_formula(
@@ -491,9 +494,9 @@ def _portfel_total_return(position: dict, dividends: dict) -> Breakdown | None:
         return None
     dividends_net_eur = dividends["dividends_net_eur"]
     components = (
-        Component("niezrealizowany P&L (EUR)", unrealized_pnl_eur),
-        Component("dywidendy netto, całościowo (EUR)", dividends_net_eur),
-        Component("koszt bazowy (EUR)", cost_basis_eur),
+        Component("niezrealizowany P&L", unrealized_pnl_eur, unit="EUR"),
+        Component("dywidendy netto, całościowo", dividends_net_eur, unit="EUR"),
+        Component("koszt bazowy", cost_basis_eur, unit="EUR"),
     )
     recomputed = round((unrealized_pnl_eur + dividends_net_eur) / cost_basis_eur * 100, 2)
     return close_formula(

@@ -584,6 +584,44 @@ def test_reconcile_holdings_auto_resolves_stale_balance_conflict_once_reconciled
     assert stale["resolved"] == 1
 
 
+# --- E7: reconcile_holdings() zdelegowane do reconcile.reconcile() - konflikt powstaje
+# przy rozjeździe KTÓREJKOLWIEK pozycji, nie tylko liczby akcji, i niesie pełną tabelę.
+
+def test_reconcile_holdings_flags_conflict_on_restricted_units_mismatch_alone(
+        conn, monkeypatch):
+    # Liczba akcji się zgadza (0 == 0), ale RSU nie - to musi wystarczyć do zapisania
+    # konfliktu (zmiana zachowania względem sprzed E7, ROADMAP_V3.md §E7).
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    from nokia_tracker.tax import grants as grantsm
+    grant_id = grantsm.add_grant(conn, "espp", "2025-01-01", None, "grant:x")
+    grantsm.add_vest(conn, grant_id, "2027-01-01", 40.0, "vest:x")  # daleko w przyszłości
+
+    cur = conn.execute(
+        "INSERT INTO imports (filename, file_sha256, as_of_date) VALUES ('x','x','2026-06-01')")
+    import_id = cur.lastrowid
+    conn.commit()
+
+    text = (
+        " 0.0                                                           1 266\n"
+        " Shares                                      1.00 PLN            Share  inSuccess  Plan 2019-2026             1.00 PLN\n"
+        " 999.0                                                         1 266\n"
+        " Restricted stock units                     1.00 PLN            Restricted "
+        "Shares                           1.00 PLN\n"
+    )
+    result = cp.reconcile_holdings(conn, text, "2026-06-01", import_id)
+
+    assert result is True
+    conflict = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'balance'").fetchone()
+    assert conflict is not None
+    existing = __import__("json").loads(conflict["existing_json"])
+    positions = {p["key"]: p for p in existing["positions"]}
+    assert positions["restricted_units"]["status"] == "mismatch"
+    assert positions["shares"]["status"] == "ok"
+
+
 # ---- krok 21: available_from zapisywane i uzupełniane przy re-imporcie ----
 
 def test_import_statement_stores_available_from_on_espp_vest(conn, _fake_pdf):

@@ -148,10 +148,17 @@ def test_import_all_five_real_files_covers_the_784_share_sale(conn, monkeypatch)
     for pdf_path in _pdf_files():
         report = cp.import_statement(conn, pdf_path.read_bytes(), pdf_path.name)
         total_conflicts += report["rows_conflict"]
-    # Dokładnie 1 konflikt oczekiwany: Withhold-to-Cover Typ B (sprzedaż 784 akcji) -
-    # zawsze do ręcznego potwierdzenia, nigdy nie księgowany automatycznie (patrz
-    # test_withhold_to_cover_type_b_real_sale_detected_in_2025_statement powyżej).
-    assert total_conflicts == 1
+    # 1 konflikt Withhold-to-Cover Typ B (sprzedaż 784 akcji) - zawsze do ręcznego
+    # potwierdzenia (patrz test_withhold_to_cover_type_b_real_sale_detected_in_2025_
+    # statement powyżej) + 2 konflikty 'balance' (E7, docs/PLAN_E7_uzgodnienie.md, krok 5):
+    # dawna kontrola porównywała bieżący SUM(qty_remaining) z tolerancją FLAT ±2,0 akcji;
+    # reconcile.reconcile() liczy tolerancję z DANYCH (liczba lotów 'holdings_snapshot'
+    # do dnia wyciągu) i na tej konkretnej, lokalnej próbce 5 plików wychodzi dużo ciaśniej
+    # (~0,02-0,15 akcji zamiast 2,0) dla wyciągów 2026-01-01 i 2026-07-26 - odsłaniając
+    # realny rozjazd ~1,61 akcji, który stara, płaska tolerancja po cichu pochłaniała.
+    # To zamierzone zaostrzenie (roadmapa: "jeśli wzór wyjdzie wyżej, lepiej nie rozmywać
+    # alarmu niż zgadywać dalej"), nie regresja - dokładnie po to E7 istnieje.
+    assert total_conflicts == 3
 
     from nokia_tracker.tax import lots as taxlots
     total_available = sum(r["qty_remaining"] for r in taxlots.open_lots(conn))
@@ -218,7 +225,11 @@ def test_import_statement_full_pipeline_on_real_files_reimport_gives_zero_insert
 
     report1 = cp.import_statement(conn, data, pdf_path.name)
     assert report1["rows_inserted"] > 0
-    assert report1["rows_conflict"] == 0
+    # E7 (docs/PLAN_E7_uzgodnienie.md, krok 5): ten konkretny wyciąg (as_of=2026-07-26)
+    # ma realny rozjazd ~1,61 akcji na tej lokalnej próbce, wykryty przez tolerancję
+    # liczoną z danych zamiast starej płaskiej ±2,0 - patrz komentarz w
+    # test_import_all_five_real_files_covers_the_784_share_sale powyżej.
+    assert report1["rows_conflict"] == 1
 
     lots_after_first = conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"]
     grants_after_first = conn.execute("SELECT COUNT(*) c FROM grants").fetchone()["c"]

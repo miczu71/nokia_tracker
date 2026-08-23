@@ -36,11 +36,13 @@ import json
 import logging
 import re
 import sqlite3
+from dataclasses import asdict
 from datetime import datetime
 from io import BytesIO
 
 from pypdf import PdfReader
 
+from .. import reconcile as reconcilem
 from ..tax import dividends as taxdiv
 from ..tax import grants as grantsm
 from ..tax import lots as taxlots
@@ -439,33 +441,31 @@ def statement_snapshot(text: str) -> dict:
 
 def reconcile_holdings(conn: sqlite3.Connection, text: str, as_of_date: str | None,
                         import_id: int) -> bool:
-    """Kontrola krzyżowa BLUEPRINT §3a: SUM(qty_remaining) WSZYSTKICH lotów vs "Shares"
-    ze strony 1 TEGO wyciągu. Zweryfikowane na realnych danych (krok 19): loty 'lti'
-    (RS Award) SĄ wliczane — raz zvestowane (Withhold-to-Cover Typ A) przechodzą z
-    bucketu "Restricted Shares" do zwykłego "Shares", tak samo jak dopasowania ESPP;
-    wcześniejsze założenie, że zostają osobno, było błędne i dawało fałszywe alarmy.
+    """E7 (docs/PLAN_E7_uzgodnienie.md): orkiestracja uzgodnienia z wyciągiem — buduje
+    `statement_snapshot(text)`, deleguje porównanie do `reconcile.reconcile()` (strona
+    bazy zrekonstruowana NA DZIEŃ `as_of_date`, nie odczytana bieżąco — patrz docstring
+    `reconcile.py`), i zapisuje wynik jako JEDEN konflikt `entity_type='balance'`.
 
-    Odejmuje ilości z NIEROZSTRZYGNIĘTYCH konfliktów Withhold-to-Cover Typu B
-    (`entity_type='withhold_to_cover_sale'`) — Computershare pokazuje je jako już
-    sprzedane w swoim saldzie, a nasza baza świadomie NIE księguje ich automatycznie
-    dopóki użytkownik ręcznie nie potwierdzi (patrz `parse_withhold_to_cover`) — bez tego
-    każda nierozstrzygnięta prawdziwa sprzedaż wyglądałaby jak rozjazd danych.
+    `as_of_date` to PARAMETR wywołania (od `import_statement`, z `parse_document_meta`),
+    nie treść `text` — nadpisuje `snapshot['as_of_date']` niezależnie od tego, czy `text`
+    w ogóle ma rozpoznawalny nagłówek (test bezpośrednich wywołań tej funkcji przekazuje
+    fragmenty PDF bez nagłówka).
 
     Uruchamia się tylko, gdy `as_of_date` tego importu jest NAJNOWSZY spośród
     wszystkich dotychczasowych importów (inaczej porównanie starego zdjęcia salda z
     pełną, dzisiejszą bazą byłoby mylące — analogicznie do reguły „kontrola sumy używa
     najnowszego pliku, nie ostatnio wgranego" z BLUEPRINT §3a).
 
-    Tolerancja 2,0 akcji (nie 0,01) — `parse_vested_dividend_shares` (źródło zapasowe
-    dla dywidend 2022-2024) ma udokumentowaną precyzję ~0,01/wiersz, która realnie
-    kumuluje się przez lata; to diagnostyka najlepszego wysiłku, nie księgowość co do
-    grosza (patrz `_check_dividend_arithmetic` dla tej samej filozofii).
+    **Zmiana zachowania względem sprzed E7:** konflikt powstaje, gdy KTÓRAKOLWIEK
+    pozycja uzgodnienia ma status `mismatch` (dawniej wyłącznie liczba akcji) — patrz
+    `ROADMAP_V3.md` §E7. `existing_json`/`incoming_json` zachowują stare klucze
+    (`qty_remaining_total_minus_pending_sales`/`shares_total_from_pdf`/`as_of_date`) dla
+    wstecznej zgodności (m.in. `tax/losses.py` kreator strat liczy tylko istnienie
+    konfliktu, nie jego kształt) i dokładają `positions` — pełną listę `reconcile.Position`
+    (zserializowaną), którą renderuje karta „Uzgodnienie z wyciągiem" na `/imports`.
 
-    Nie blokuje importu — rozjazd trafia do `import_conflicts` (`entity_type='balance'`),
-    widoczny jako pozycja w kolejce konfliktów na /imports. Zwraca True, jeśli zapisano
-    ostrzeżenie."""
-    expected = parse_shares_total(text)
-    if expected is None or as_of_date is None:
+    Nie blokuje importu. Zwraca True, jeśli zapisano NOWY konflikt."""
+    if as_of_date is None:
         return False
 
     latest_known = conn.execute(
@@ -473,52 +473,45 @@ def reconcile_holdings(conn: sqlite3.Connection, text: str, as_of_date: str | No
     if latest_known is not None and as_of_date < latest_known:
         return False
 
-    actual = conn.execute(
-        "SELECT COALESCE(SUM(qty_remaining), 0) t FROM lots").fetchone()["t"]
-    pending_sales = conn.execute(
-        "SELECT incoming_json FROM import_conflicts "
-        "WHERE entity_type = 'withhold_to_cover_sale' AND resolved = 0").fetchall()
-    for row in pending_sales:
-        incoming = json.loads(row["incoming_json"])
-        qty = incoming.get("quantity", 0.0)
-        exec_date = incoming.get("execution_date")
-        # krok 20: jeśli ta sprzedaż JUŻ jest w `sales` (np. zaksięgowana ręcznie
-        # przez /lots/sell zanim istniał przycisk "Zatwierdź jako sprzedaż" — tak
-        # jak sprzedaż z 2025-10-27 w kroku 13.6), qty_remaining już ją odzwierciedla.
-        # Odjęcie tu drugi raz dawało fałszywy alarm salda (znalezione na realnych
-        # danych — patrz docs/PLAN_KROK_20_reported_override.md).
-        already_booked = conn.execute(
-            "SELECT 1 FROM sales WHERE sale_date = ? AND ABS(quantity - ?) < ?",
-            (exec_date, qty, _EPS)).fetchone()
-        if already_booked:
-            continue
-        actual -= qty
+    snapshot = statement_snapshot(text)
+    snapshot["as_of_date"] = as_of_date
+    positions = reconcilem.reconcile(conn, snapshot)
+    mismatches = [p for p in positions if p.status == "mismatch"]
+    shares_pos = next((p for p in positions if p.key == "shares"), None)
 
-    if abs(actual - expected) <= 2.0:
-        # krok 20 (fix): rozjazd z wcześniejszego, błędnego przebiegu (np. sprzed
-        # naprawy podwójnego odejmowania powyżej) nie może zostać w kolejce na
-        # zawsze, skoro TERAZ świeże przeliczenie wykazuje, że saldo się zgadza —
-        # bez tego stary, już nieaktualny alarm wisiałby tam wiecznie. Rozstrzyga
-        # WSZYSTKIE dotychczas nierozstrzygnięte konflikty 'balance', nie tylko
-        # z tego samego as_of_date (świeże, czyste przeliczenie unieważnia
-        # wszelkie starsze podejrzenia rozjazdu).
+    if not mismatches:
+        # krok 20 (fix, zachowane z wersji sprzed E7): rozjazd z wcześniejszego,
+        # błędnego przebiegu nie może zostać w kolejce na zawsze, skoro TERAZ świeże
+        # przeliczenie wykazuje, że wszystko się zgadza — rozstrzyga WSZYSTKIE
+        # dotychczasowe konflikty 'balance', nie tylko z tego samego as_of_date.
         updated = conn.execute(
             "UPDATE import_conflicts SET resolved = 1, resolution = ? "
             "WHERE entity_type = 'balance' AND resolved = 0",
-            (f"saldo zgadza się przy kolejnym imporcie (as_of_date={as_of_date})",)
+            (f"uzgodnienie zgadza się przy kolejnym imporcie (as_of_date={as_of_date})",)
         ).rowcount
         conn.commit()
         if updated:
             logger.info(
-                "Kontrola salda %s: %d starszych konfliktów oznaczonych "
-                "rozwiązanymi - saldo się teraz zgadza", as_of_date, updated)
+                "Uzgodnienie z wyciągiem %s: %d starszych konfliktów oznaczonych "
+                "rozwiązanymi - stan się teraz zgadza", as_of_date, updated)
         return False
 
+    logger.warning(
+        "Uzgodnienie z wyciągiem %s: %d pozycji z rozjazdem (%s)",
+        as_of_date, len(mismatches), ", ".join(p.key for p in mismatches))
+
     nk = f"balance:{as_of_date}"
-    return _record_conflict(
-        conn, import_id, "balance", nk,
-        {"qty_remaining_total_minus_pending_sales": round(actual, 4)},
-        {"shares_total_from_pdf": expected, "as_of_date": as_of_date})
+    existing = {
+        "qty_remaining_total_minus_pending_sales": (
+            round(shares_pos.database, 4) if shares_pos and shares_pos.database is not None
+            else None),
+        "positions": [asdict(p) for p in positions],
+    }
+    incoming = {
+        "shares_total_from_pdf": snapshot.get("shares_total"),
+        "as_of_date": as_of_date,
+    }
+    return _record_conflict(conn, import_id, "balance", nk, existing, incoming)
 
 
 def _record_conflict(conn: sqlite3.Connection, import_id: int, entity_type: str,

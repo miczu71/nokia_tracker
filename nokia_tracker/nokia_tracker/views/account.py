@@ -13,6 +13,7 @@ from datetime import datetime
 
 from .. import account_events as account_eventsm
 from .. import advisor as advisorm
+from .. import breakdown as breakdownm
 from .. import cash as cashm
 from .. import dashboard_insights
 from .. import dividend_outlook
@@ -103,10 +104,21 @@ def account_view(conn, cfg: dict, ids: dict, year: int) -> dict:
         tax_deadline=ledger["tax_liability"].get("deadline"),
         tax_outstanding_pln=ledger["tax_liability"].get("outstanding_pln"))
 
+    # E8 (docs/PLAN_E8_slad.md): ślad "skąd ta liczba" dla Stanu konta.
+    # `account_traces()` zbiera rozjazdy domykania (drugi element krotki)
+    # zamiast po prostu je łykać - `integrity.py` powtarza dokładnie to samo
+    # wywołanie (przez ten widok) i zgłasza je na karcie "Spójność danych".
+    ctx = breakdownm.build_ctx(conn)
+    traces, trace_failures = breakdownm.account_traces(
+        conn, ctx, cfg, year, price_eur=price_eur, eurpln_rate=eurpln_rate,
+        position=position, dividends=dividends, buckets=buckets, restricted=restricted,
+        unvested=unvested, ledger=ledger)
+
     return {
         "position": position, "dividends": dividends, "unvested": unvested,
         "restricted": restricted, "buckets": buckets, "forfeit": forfeit,
         "eurpln_rate": eurpln_rate, "ledger": ledger, "events": events,
         "insights": insights,
         "reconciliation_summary": _reconciliation_summary(conn),
+        "traces": traces, "trace_failures": trace_failures,
     }

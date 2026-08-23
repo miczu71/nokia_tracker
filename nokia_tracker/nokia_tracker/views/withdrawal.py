@@ -15,6 +15,7 @@ odpowiedzialności co `advisor.py`, patrz jego docstring)."""
 from __future__ import annotations
 
 from .. import advisor as advisorm
+from .. import breakdown as breakdownm
 from .. import portfolio as portfoliom
 from ..providers.base import QuoteProviderError
 from ..tax import grants as grantsm
@@ -103,4 +104,11 @@ def withdrawal_view(conn, cfg: dict, direction: str, price_eur: float, fee_pct: 
         "lots_consumed_detailed": engine["lots_consumed_detailed"],
         "timing": timing,
     }
+    # E8 (docs/PLAN_E8_slad.md): ślad "skąd ta liczba" dla każdej kwoty na
+    # /wyplata. `breakdown.withdrawal_traces()` łapie rozjazdy domykania
+    # per klucz wewnętrznie i po prostu pomija ten jeden ślad - nigdy nie
+    # wywala tej funkcji (patrz jej docstring).
+    ctx = breakdownm.build_ctx(conn)
+    result["traces"] = breakdownm.withdrawal_traces(
+        conn, ctx, cfg, result, engine, forfeit, target_net_pln=target_net_pln)
     return result, None

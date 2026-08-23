@@ -356,6 +356,59 @@ Jeden ekran `/wyplata`, przełącznik kierunku.
 
 ---
 
+### E7 — Uzgodnienie z wyciągiem (0.23.0) · WYDANE 2026-08-23
+
+**Wynik:** nowy `reconcile.py` (model odczytu) rekonstruuje stan akcji i transz **NA DZIEŃ
+wyciągu** z append-only logu `lots`/`sale_allocations`/`vests` — nie z bieżącego stanu bazy
+(dzisiejsze `reconcile_holdings` działało tylko dlatego, że odpalało się wyłącznie w momencie
+importu najnowszego pliku; przeliczanie na żądanie wymagało tej rekonstrukcji, inaczej każda
+sprzedaż/import późniejszy dawałby fałszywą niezgodność). Klucz rekonstrukcji transz:
+`vests.lot_id` (data realnego uwolnienia), nie `vests.status` (stan bieżący bez znacznika
+czasu). Zapytanie-strażnik wykrywa dane sprzed kroku 19 → `no_data`, nigdy błędna liczba.
+Tolerancja dla „Akcje" liczona z danych (loty `holdings_snapshot`), nie stała ±2,0.
+
+`reconcile.reconcile()` — silnik 8 pozycji (Akcje, RSU, Suma, Transze-wiersze po
+`natural_key`, Dywidendy w okresie, Zakupy ESPP w okresie, Sprzedaże Withhold-to-Cover
+niepotwierdzone, Gotówka u brokera — zawsze `no_data`, wyciąg nie ma sekcji salda,
+potwierdzone empirycznie na 6 realnych wyciągach). Migracja v12 (`statement_snapshots`) —
+snapshot zapisywany przy każdym imporcie, uzgodnienie przeliczalne na żądanie bez ponownego
+wgrywania PDF. Nowy `views/imports.py` domyka jedyną lukę po E3. Karta „Uzgodnienie
+z wyciągiem" na `/imports` (kolorowanie zgodne/rozjazd/brak danych, dedykowany renderer
+konfliktu `balance`) + jednolinijkowy status na Stanie konta. Dwa nowe niezmienniki
+w `integrity.py`: `allocation_predates_its_lot` (error) i `statement_mismatch:*` (warning,
+zero findingów bez zapisanego snapshotu).
+
+**Odstępstwo od litery planu, ustalone empirycznie przed implementacją:** „gotówka" jako
+wiersz różnicy nie mogła powstać — wyciąg Computershare nie zawiera żadnej sekcji salda,
+sprawdzone na 6 realnych plikach (`grep -i cash` = zero trafień). Pozycja `broker_cash`
+zostaje trwałym `no_data` z wyjaśnieniem, nie próbą uzgodnienia. „Akcje per plan" (litera
+planu) zastąpione przez „per typ" (Shares/RSU) — kubełek planu w PDF to konto custody,
+`lots.lot_type` to pochodzenie; DRIP z jednej dywidendy rozchodzi się na dwa plany naraz,
+więc czystego mapowania nie ma.
+
+**Zmiana zachowania:** konflikt `entity_type='balance'` powstaje teraz przy rozjeździe
+KTÓREJKOLWIEK pozycji uzgodnienia, nie tylko liczby akcji — zgodnie z zapowiedzią wyżej.
+Kryterium twarde dotrzymane: wszystkie 5 istniejących testów `reconcile_holdings` przeszło
+BEZ zmiany ani jednej asercji (jak w E3).
+
+**Zweryfikowane na produkcji (Playwright + `ha_manage_app` proxy, 2026-08-23, po
+`ha_manage_updates` z backupem):** migracja v12 zastosowana bezpiecznie (backup nocny
+`nokia_2026-08-23.zip` sprzed aktualizacji), `/imports`, `/` i `/dane` renderują się
+poprawnie na 390 px i 1920 px, zero błędów konsoli. Karta „Spójność danych" pokazuje „zero
+znalezisk" — oba nowe niezmienniki milczą poprawnie na czystych danych. Karta „Uzgodnienie
+z wyciągiem" pokazuje pusty stan („brak wyciągu do porównania") — produkcyjna baza ma
+importy sprzed 0.23.0, więc `statement_snapshots` jest jeszcze puste; wypełni się przy
+najbliższym ponownym imporcie/auto-imporcie wyciągu.
+
+**Znalezisko przy weryfikacji na lokalnej, bramkowanej próbce 5 realnych plików
+(`/config/akcje_temp`, nigdy nie commitowana):** tolerancja liczona z danych jest ciaśniejsza
+niż dawna płaska ±2,0 i odsłania realny, drobny rozjazd (~1,61 akcji) na dwóch wyciągach w tej
+konkretnej próbce, który stara tolerancja po cichu pochłaniała — zamierzone zaostrzenie
+(„jeśli wzór wyjdzie wyżej, lepiej nie rozmywać alarmu"), nie regresja; zaktualizowano dwie
+asercje w `test_computershare_pdf_real_files.py` z jawnym wyjaśnieniem.
+
+<details><summary>Plan sprzed implementacji (E7)</summary>
+
 ### E7 — Uzgodnienie z wyciągiem (0.23.0) · ~1 dzień
 
 Rozszerzenie dzisiejszego konfliktu `entity_type='balance'` (`computershare_pdf.py:399-454`)
@@ -367,6 +420,11 @@ niezgodność z wyciągiem to kolejny niezmiennik.
 
 **Pliki:** `importers/computershare_pdf.py` (rozszerzenie funkcji uzgadniającej), `integrity.py`, `templates/imports.html`.
 **Ryzyko:** dopóki `broker_cash` z E4 jest ręczne, różnica gotówki będzie fałszywie czerwona. Pozycja bez źródła musi się pokazywać jako „brak danych", nie jako „niezgodność".
+
+Pełny plan implementacyjny (ustalenia empiryczne, SQL rekonstrukcji, lista testów) w
+`docs/PLAN_E7_uzgodnienie.md`.
+
+</details>
 
 ---
 
@@ -395,7 +453,7 @@ Ta sama zasada, którą roadmapa v1 nałożyła na atrybucję — inaczej rozwin
 | 0.23.0 | E7 uzgodnienie |
 | 0.24.0 | E8 ślad |
 
-E2 i E4 mają migracje — **przed każdą pełny eksport ZIP**.
+E2, E4 i E7 mają migracje — **przed każdą pełny eksport ZIP**.
 E1 nie jest wydawany (sama diagnoza).
 **e-Deklaracje** (dawne 0.18.0 z roadmapy v2) przesunięte na po E8, nadal warunkowe, nadal zaczyna się od researchu XSD, nie od kodu.
 **1.0.0** zarezerwowane zgodnie z pierwotną zasadą — po pełnym sezonie rozliczeniowym na tym silniku.

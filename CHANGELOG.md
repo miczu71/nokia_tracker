@@ -1,5 +1,76 @@
 # Changelog
 
+## [0.23.0] - 2026-08-23
+
+Krok E7 roadmapy v3 (`docs/ROADMAP_V3.md`, `docs/PLAN_E7_uzgodnienie.md`) —
+uzgodnienie z wyciągiem Computershare, rozszerzone z jednej liczby (Shares
+vs `SUM(qty_remaining)`) na pełną tabelę pozycji, liczoną przy imporcie
+**i na żądanie** z zapisanego snapshotu, bez ponownego wgrywania PDF.
+
+**Ryzyko centralne, rozwiązane przed czymkolwiek innym:** dawne
+`reconcile_holdings` porównywało wyciąg z BIEŻĄCYM stanem bazy — działało
+tylko dlatego, że odpalało się wyłącznie w momencie importu najnowszego
+pliku. Przeliczanie na żądanie wymagało odtworzenia stanu bazy NA DZIEŃ
+wyciągu, inaczej każda sprzedaż/import późniejszy dawałby fałszywą
+niezgodność.
+
+### Dodano
+- **`reconcile.py`** (nowy moduł, model odczytu) — `shares_as_of()` i
+  `unvested_as_of()` odtwarzają stan akcji/transz NA DZIEŃ D z append-only
+  logu `lots`/`sale_allocations`/`vests`, nie z bieżącego stanu. Klucz
+  rekonstrukcji transz: `vests.lot_id` (data realnego uwolnienia), nie
+  `vests.status` (stan bieżący bez znacznika czasu). Zapytanie-strażnik
+  wykrywa dane sprzed kroku 19 (alokacja przypięta do lotu z przyszłości
+  względem sprzedaży) → `no_data`, nigdy błędna liczba. Tolerancja dla
+  pozycji „Akcje" liczona z danych (liczba lotów `holdings_snapshot`),
+  nie trzymana jako stała ±2,0.
+- **`reconcile.reconcile()`** — silnik uzgodnienia, 8 pozycji: Akcje,
+  Transze oczekujące (RSU), Suma, Transze — wiersze (dopasowanie per
+  `natural_key`), Dywidendy w okresie, Zakupy ESPP w okresie, Sprzedaże
+  Withhold-to-Cover niepotwierdzone (informacyjna), Gotówka u brokera
+  (zawsze `no_data` — wyciąg Computershare nie zawiera sekcji salda
+  gotówkowego, potwierdzone empirycznie na 6 realnych wyciągach). Każda
+  pozycja: wartość z wyciągu, wartość z bazy, różnica, tolerancja,
+  status `ok`/`mismatch`/`no_data`.
+- **Migracja v12 — `statement_snapshots`** — parsowane liczby z każdego
+  importu (`statement_snapshot()`, nowy `parse_restricted_units_total()`
+  symetryczny do `parse_shares_total()`), zapisane jako JSON pod
+  uzgodnienie na żądanie. Dopisana do `backup.py::_CSV_TABLES`.
+- **`views/imports.py`** (nowy) — domyka jedyną lukę po refaktorze E3
+  (`/imports` miało logikę inline w trasie).
+- Karta **„Uzgodnienie z wyciągiem"** na `/imports` — tabela pozycji z
+  kolorowaniem zgodne/rozjazd/brak danych, rozwinięcie wierszy
+  rozbieżnych; dedykowany renderer konfliktu `entity_type='balance'`
+  (zamiast generycznego `k: v`).
+- Jednolinijkowy status uzgodnienia na Stanie konta (`/`) — data wyciągu +
+  liczba rozjeżdżających się pozycji, link do `/imports`; „brak wyciągu do
+  porównania" gdy nic jeszcze nie zaimportowano (nigdy „niezgodność").
+- Dwa nowe niezmienniki w `integrity.py`: `allocation_predates_its_lot`
+  (error — ten sam strażnik dat co w `reconcile.py`, teraz widoczny też
+  na karcie „Spójność danych" i w nocnym alarmie) i `statement_mismatch:*`
+  (warning, jeden per rozjeżdżająca się pozycja; zero findingów, gdy nie
+  wgrano jeszcze żadnego wyciągu).
+
+### Zmieniono
+- **`importers/computershare_pdf.py::reconcile_holdings`** przepięte na
+  orkiestrację nad `reconcile.reconcile()`. Konflikt `entity_type='balance'`
+  powstaje teraz, gdy KTÓRAKOLWIEK pozycja uzgodnienia ma status `mismatch`
+  (dawniej wyłącznie liczba akcji) — rozszerzenie zgodne z zapowiedzią w
+  `ROADMAP_V3.md` §E7, nie regresja. `existing_json`/`incoming_json`
+  zachowują stare klucze dla wstecznej zgodności (m.in. kreator strat
+  liczy istnienie konfliktu `balance`, nie jego kształt) i dokładają pełną,
+  zserializowaną listę pozycji pod kartę na `/imports`.
+
+### Weryfikacja
+1283 testy zielono (+74 od 0.22.1: `reconcile.py`, `views/imports.py`,
+migracja v12, rozszerzenia `integrity.py`/`views/account.py`), kryterium
+twarde zachowane — wszystkie 5 istniejących testów `reconcile_holdings`
+przechodzi BEZ zmiany ani jednej asercji (jak w E3). Znalezisko przy
+weryfikacji na lokalnej, bramkowanej próbce 6 realnych wyciągów: tolerancja
+liczona z danych jest ciaśniejsza niż dawna płaska ±2,0 i odsłania realny,
+drobny rozjazd (~1,6 akcji), który stara tolerancja po cichu pochłaniała —
+zamierzone zaostrzenie, nie regresja.
+
 ## [0.22.1] - 2026-08-23
 
 Poprawka znaleziona w weryfikacji produkcyjnej 0.22.0, tuż po aktualizacji

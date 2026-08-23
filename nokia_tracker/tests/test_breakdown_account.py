@@ -99,6 +99,29 @@ def test_restricted_and_locked_traces_close_with_pending_espp_match(conn):
     assert abs(locked.shown - locked.recomputed) <= 0.011
 
 
+def test_restricted_and_cost_basis_traces_close_with_many_lots(conn):
+    # E8 regresja produkcyjna 2026-08-23: sumowanie WCZEŚNIEJ zaokrąglonych
+    # per-lot składników (round() na każdym) dryfowało o 1-2 grosze względem
+    # kwoty zbiorczej liczonej raz na sumie — łapane przez integrity.py na
+    # koncie z wieloma lotami, nie przez ten test z jednym lotem. Naprawa:
+    # `Component.value` niezaokrąglony, `close_sum` zaokrągla RAZ na końcu.
+    grant_id = grantsm.add_grant(conn, "espp", "2024-03-15", 33.0, natural_key="grant1",
+                                 match_pct=50.0)
+    grantsm.add_vest(conn, grant_id, "2099-03-15", 16.5, natural_key="vest1")
+    for i in range(7):
+        taxlots.add_lot(conn, "2024-03-15", "own", 4.7123, 3.1187, source="manual",
+                        natural_key=f"lot{i}")
+    cfg = settingsm.get_settings(conn)
+    traces, failures = _traces(conn, cfg)
+    assert failures == [], [f.key for f in failures]
+    r = traces["portfel.restricted"]
+    assert abs(r.shown - r.recomputed) <= 0.011
+    assert len(r.components) == 7
+    cb = traces["portfel.cost_basis"]
+    assert abs(cb.shown - cb.recomputed) <= 0.011
+    assert len(cb.components) == 7
+
+
 def test_dividends_net_trace_closes_and_labels_row_neutrally(conn):
     from nokia_tracker.tax import dividends as taxdiv
     taxdiv.add_dividend(conn, "2026-06-01", 10.0, gross_eur=5.0, taxes_eur=1.75)
@@ -109,6 +132,19 @@ def test_dividends_net_trace_closes_and_labels_row_neutrally(conn):
     assert abs(d.shown - d.recomputed) <= 0.011
     assert len(d.components) == 1
     assert d.components[0].sources[0].kind == "dividend"
+
+
+def test_dividends_net_trace_closes_with_many_dividends(conn):
+    from nokia_tracker.tax import dividends as taxdiv
+    for i in range(9):
+        taxdiv.add_dividend(conn, f"2026-0{(i % 9) + 1}-15", 10.3 + i, gross_eur=5.17 + i * 0.31,
+                            taxes_eur=1.81 + i * 0.11, natural_key=f"div{i}")
+    cfg = settingsm.get_settings(conn)
+    traces, failures = _traces(conn, cfg)
+    assert failures == [], [f.key for f in failures]
+    d = traces["portfel.dividends_net"]
+    assert abs(d.shown - d.recomputed) <= 0.011
+    assert len(d.components) == 9
 
 
 def test_cash_traces_close_with_sale_payment_and_broker_balance(conn):

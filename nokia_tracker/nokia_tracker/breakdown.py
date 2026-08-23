@@ -335,8 +335,7 @@ def _wyplata_forfeit(ctx: BreakdownCtx, result: dict, forfeit: dict,
     price_eur = result["price_eur"]
     components = tuple(
         Component(_lot_label(ctx, t["lot_id"]),
-                  round(t["forfeit_qty"] * price_eur * eurpln_rate, 2)
-                  if eurpln_rate else None,
+                  t["forfeit_qty"] * price_eur * eurpln_rate if eurpln_rate else None,
                   detail=f"{t['forfeit_qty']:.4f} szt. utraconego dopasowania "
                          f"({t['match_rate']:.0%} z {t['taken_qty']:.4f} sprzedanych z tego lotu)",
                   sources=provenance(ctx, ctx.lots_by_id.get(t["lot_id"], {})))
@@ -420,7 +419,7 @@ def _portfel_restricted(conn: sqlite3.Connection, ctx: BreakdownCtx, restricted:
         return None
     components = tuple(
         Component(_lot_label(ctx, it["lot_id"], it["acquired_date"]),
-                  round(it["qty_remaining"] * price_eur * eurpln_rate, 2),
+                  it["qty_remaining"] * price_eur * eurpln_rate,
                   detail=f"{it['qty_remaining']:.4f} szt., wolne od {it['free_until']}",
                   sources=provenance(ctx, ctx.lots_by_id.get(it["lot_id"], {})))
         for it in items)
@@ -460,7 +459,7 @@ def _portfel_cost_basis(conn: sqlite3.Connection, ctx: BreakdownCtx, cfg: dict,
     relevant = [r for r in open_rows if r["lot_type"] in allowed]
     components = tuple(
         Component(_lot_label(ctx, r["id"], r["acquired_date"]),
-                  round(r["price_eur"] * r["qty_remaining"] * eurpln_rate, 2),
+                  r["price_eur"] * r["qty_remaining"] * eurpln_rate,
                   detail=f"{r['qty_remaining']:.4f} szt. × {r['price_eur']} EUR/akcję "
                          f"× kurs bieżący {eurpln_rate:.4f}",
                   sources=provenance(ctx, dict(r)))
@@ -540,7 +539,7 @@ def _portfel_dividends_net(conn: sqlite3.Connection, ctx: BreakdownCtx, cfg: dic
                 f"Plik: {meta['filename']} (okres {meta['period_start']} – {meta['period_end']})",
                 ref=meta["as_of_date"]))
         components.append(Component(
-            f"dywidenda {r['pay_date']}", round(net_eur * eurpln_rate, 2),
+            f"dywidenda {r['pay_date']}", net_eur * eurpln_rate,
             detail=f"{r['gross_eur']:.2f} EUR brutto, {withholding_pct:g}% u źródła",
             sources=tuple(div_sources)))
     return close_sum(

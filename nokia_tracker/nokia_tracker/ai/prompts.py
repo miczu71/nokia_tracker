@@ -99,6 +99,17 @@ def daily_analysis_prompt(context: dict) -> str:
     accuracy_line = (f"Trafność poprzednich prognoz (MAPE-bazowana): {accuracy:.1f}%"
                      if accuracy is not None else "Brak jeszcze rozliczonych prognoz.")
 
+    consensus = context.get("analyst_consensus")
+    consensus_line = (
+        f"Konsensus analityków ({consensus['n_analysts']} analityków, źródło "
+        f"{consensus['source']}, dane z {consensus['as_of_date']}): średnia cena docelowa "
+        f"{consensus['mean']} EUR (zakres {consensus['low']}-{consensus['high']} EUR), "
+        f"rating {consensus['rating']}. Odnieś swoją prognozę 12-miesięczną do tego "
+        "konsensusu (zgadzasz się, jesteś wyżej czy niżej i dlaczego) w uzasadnieniu "
+        "rekomendacji."
+        if consensus else "Brak danych o konsensusie analityków."
+    )
+
     return (
         "Jesteś analitykiem rynkowym przygotowującym dzienny briefing dla inwestora "
         "indywidualnego posiadającego akcje Nokia Oyj (NOKIA.HE, Nasdaq Helsinki).\n\n"
@@ -110,7 +121,8 @@ def daily_analysis_prompt(context: dict) -> str:
         f"Beta 60d={context['beta_60d']}, werdykt={context['alpha_verdict']}.\n"
         f"Sentyment newsów 24h: {context['sentiment_score']} ({context['sentiment_label']}), "
         f"{context['news_count_24h']} artykułów:\n{news_lines}\n\n"
-        f"Twoja pozycja: {position}. {accuracy_line}\n\n"
+        f"Twoja pozycja: {position}. {accuracy_line}\n"
+        f"{consensus_line}\n\n"
         "Wygeneruj prognozy ceny na 1 tydzień, 1 miesiąc i 12 miesięcy (z przedziałem ufności "
         "i pewnością), zwięzły briefing po polsku (maks. 600 znaków) i jego wersję do TTS, "
         "listę głównych ryzyk, werdykt czy ruch jest rynkowy czy specyficzny dla spółki, oraz "

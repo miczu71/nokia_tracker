@@ -6,6 +6,8 @@ już pokryta przez `test_web_account.py` (asercje przeniesione z dawnego
 `test_web_dashboard.py`, bez zmiany) i `test_tax_*.py`/`test_cash.py`."""
 from datetime import date
 
+import pytest
+
 from nokia_tracker import settings as settingsm
 from nokia_tracker.views.account import account_view
 from nokia_tracker.views.market_context import instrument_ids
@@ -17,8 +19,45 @@ def test_account_view_on_empty_db_has_all_keys(conn):
     view = account_view(conn, cfg, ids, year=date.today().year)
     for key in ("position", "dividends", "unvested", "restricted", "buckets",
                 "forfeit", "eurpln_rate", "ledger", "events", "insights",
-                "reconciliation_summary"):
+                "reconciliation_summary", "analyst_scenarios"):
         assert key in view
+
+
+def test_account_view_analyst_scenarios_none_without_snapshot(conn):
+    cfg = settingsm.get_settings(conn)
+    ids = instrument_ids(conn)
+    view = account_view(conn, cfg, ids, year=date.today().year)
+    assert view["analyst_scenarios"] is None
+
+
+def test_account_view_analyst_scenarios_reuses_position_values_auto(conn):
+    """Zero nowej matematyki (docs/PLAN_0_26_0_konsensus.md §5b):
+    scenariusz 'mean' musi dać dokładnie taką samą wartość, co ręczne
+    wywołanie position_values_auto() z ceną konsensusu."""
+    conn.execute(
+        "INSERT INTO analyst_targets (as_of_date, fetched_at, low_eur, mean_eur, "
+        "median_eur, high_eur, n_analysts, rating, currency, source) VALUES "
+        "('2026-08-24', '2026-08-24T10:00:00+00:00', 4.65, 10.32455, 10.125, 18.0, "
+        "22, 'hold', 'EUR', 'yahoo')")
+    conn.commit()
+
+    cfg = settingsm.get_settings(conn)
+    cfg["position_qty"] = 100.0
+    cfg["avg_cost_eur"] = 5.0
+    ids = instrument_ids(conn)
+
+    view = account_view(conn, cfg, ids, year=date.today().year)
+    scenarios = view["analyst_scenarios"]
+    assert scenarios is not None
+    assert scenarios["consensus"].mean == pytest.approx(10.32455)
+
+    from nokia_tracker import portfolio as portfoliom
+    expected_mean = portfoliom.position_values_auto(
+        conn, cfg, 10.32455, view["eurpln_rate"],
+        dividends_net_total_eur=view["dividends"]["dividends_net_eur"])
+    assert scenarios["mean"]["market_value_eur"] == expected_mean["market_value_eur"]
+    assert scenarios["low"]["market_value_eur"] is not None
+    assert scenarios["high"]["market_value_eur"] is not None
 
 
 def test_account_view_reconciliation_summary_none_before_first_import(conn):

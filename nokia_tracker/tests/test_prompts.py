@@ -23,6 +23,10 @@ _CONTEXT = {
     "top_news": [{"title": "Nokia wins contract", "sentiment": 0.7, "impact": 2,
                  "thesis_pl": "Zwiększa backlog."}],
     "position_qty": 100.0, "avg_cost_eur": 8.5, "forecast_accuracy_pct": 82.5,
+    "analyst_consensus": {
+        "mean": 10.32455, "low": 4.65, "high": 18.0, "n_analysts": 22,
+        "rating": "hold", "source": "yahoo", "as_of_date": "2026-08-24",
+    },
 }
 
 
@@ -45,6 +49,20 @@ def test_daily_analysis_prompt_handles_no_news_and_no_accuracy_history():
     prompt = daily_analysis_prompt(ctx)
     assert "brak newsów" in prompt
     assert "Brak jeszcze rozliczonych prognoz" in prompt
+
+
+def test_daily_analysis_prompt_includes_analyst_consensus_and_asks_for_reference():
+    prompt = daily_analysis_prompt(_CONTEXT)
+    assert "22 analityków" in prompt
+    assert "10.32" in prompt
+    assert "hold" in prompt
+    assert "konsensus" in prompt.lower()
+
+
+def test_daily_analysis_prompt_handles_missing_analyst_consensus():
+    ctx = dict(_CONTEXT, analyst_consensus=None)
+    prompt = daily_analysis_prompt(ctx)
+    assert "Brak danych o konsensusie analityków" in prompt
 
 
 def test_daily_analysis_schema_has_required_top_level_keys():

@@ -49,6 +49,32 @@ def _reset_active():
     provider._active[0] = "off"
 
 
+def test_build_context_analyst_consensus_none_without_snapshot(conn, ids):
+    primary, ericsson, omxh25, eurpln = ids
+    ctx = analysis._build_context(conn, primary, ericsson, omxh25, eurpln, 100.0, 8.5)
+    assert ctx["analyst_consensus"] is None
+
+
+def test_build_context_includes_analyst_consensus(conn, ids):
+    primary, ericsson, omxh25, eurpln = ids
+    conn.execute(
+        "INSERT INTO analyst_targets (as_of_date, fetched_at, low_eur, mean_eur, "
+        "median_eur, high_eur, n_analysts, rating, currency, source) VALUES "
+        "('2026-08-24', '2026-08-24T10:00:00+00:00', 4.65, 10.32455, 10.125, 18.0, "
+        "22, 'hold', 'EUR', 'yahoo')")
+    conn.commit()
+
+    ctx = analysis._build_context(conn, primary, ericsson, omxh25, eurpln, 100.0, 8.5)
+    c = ctx["analyst_consensus"]
+    assert c["mean"] == pytest.approx(10.32455)
+    assert c["low"] == pytest.approx(4.65)
+    assert c["high"] == pytest.approx(18.0)
+    assert c["n_analysts"] == 22
+    assert c["rating"] == "hold"
+    assert c["source"] == "yahoo"
+    assert c["as_of_date"] == "2026-08-24"
+
+
 def test_run_daily_analysis_no_quote_returns_false(conn):
     primary = quotes.ensure_instrument(conn, "NOKIA.HE", "Nokia", "EUR", "primary")
     ericsson = quotes.ensure_instrument(conn, "ERIC-B.ST", "Ericsson", "SEK", "benchmark")

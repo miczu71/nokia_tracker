@@ -99,6 +99,11 @@ _ENTITIES: list[_Entity] = [
            "mdi:crystal-ball", has_attrs=True),
     _Entity("sensor", "forecast_accuracy_pct", "Forecast Accuracy Pct", "%", None,
            "measurement", "mdi:target"),
+    # Krok 0.26.0 (docs/PLAN_0_26_0_konsensus.md): konsensus analityków obok
+    # prognozy AI — jeden sensor (średnia), reszta (niska/wysoka/liczba
+    # analityków/rating/źródło/data) w json_attributes_topic.
+    _Entity("sensor", "analyst_target_mean_eur", "Analyst Target Mean EUR", "EUR", None,
+           "measurement", "mdi:account-group-outline", has_attrs=True),
     _Entity("sensor", "daily_briefing", "Daily Briefing", None, None, None,
            "mdi:text-box-outline", has_attrs=True),
     _Entity("sensor", "ai_recommendation", "AI Recommendation", None, None, None,

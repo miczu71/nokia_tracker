@@ -13,6 +13,7 @@ from datetime import datetime
 
 from .. import account_events as account_eventsm
 from .. import advisor as advisorm
+from .. import analyst as analystm
 from .. import breakdown as breakdownm
 from .. import cash as cashm
 from .. import dashboard_insights
@@ -38,6 +39,27 @@ def _reconciliation_summary(conn) -> dict | None:
     return {
         "as_of_date": snapshot.get("as_of_date"),
         "mismatch_count": sum(1 for p in positions if p.status == "mismatch"),
+    }
+
+
+def _analyst_scenarios(conn, cfg: dict, eurpln_rate: float | None,
+                       dividends_net_total_eur: float) -> dict | None:
+    """Krok 0.26.0 (docs/PLAN_0_26_0_konsensus.md §5b): wartość pozycji w
+    scenariuszach niska/średnia/wysoka konsensusu analityków — ZERO nowej
+    matematyki, `position_values_auto()` (już użyte wyżej dla dzisiejszej
+    ceny) wywołane trzy razy z ceną konsensusu zamiast dzisiejszej.
+    Scenariusz cenowy, NIE prognoza — dyscyplina disclaimerów jak na /rynek."""
+    consensus = analystm.latest(conn)
+    if consensus is None or consensus.mean is None:
+        return None
+    return {
+        "consensus": consensus,
+        "low": portfoliom.position_values_auto(
+            conn, cfg, consensus.low, eurpln_rate, dividends_net_total_eur),
+        "mean": portfoliom.position_values_auto(
+            conn, cfg, consensus.mean, eurpln_rate, dividends_net_total_eur),
+        "high": portfoliom.position_values_auto(
+            conn, cfg, consensus.high, eurpln_rate, dividends_net_total_eur),
     }
 
 
@@ -69,6 +91,9 @@ def account_view(conn, cfg: dict, ids: dict, year: int) -> dict:
     # Krok 26 (docs/PLAN_KROK_26_doradca.md): kwota przepadującego dopasowania
     # ESPP.
     forfeit = advisorm.forfeit_summary(conn, price_eur, eurpln_rate)
+
+    analyst_scenarios = _analyst_scenarios(
+        conn, cfg, eurpln_rate, dividends["dividends_net_eur"])
 
     # Krok E4: księga gotówki — wpływy ze sprzedaży, dywidendy (bezgotówkowe,
     # DRIP), podatek należny vs zapłacony, saldo u brokera (ręczne, `None` gdy
@@ -121,4 +146,5 @@ def account_view(conn, cfg: dict, ids: dict, year: int) -> dict:
         "insights": insights,
         "reconciliation_summary": _reconciliation_summary(conn),
         "traces": traces, "trace_failures": trace_failures,
+        "analyst_scenarios": analyst_scenarios,
     }

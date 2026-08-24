@@ -340,8 +340,13 @@ celowo osobno.
 
 ## Backlog (świadomie poza falami)
 
-- Kalendarz wyników kwartalnych + konsensus analityków (Finnhub free) obok prognozy AI, z backtestem
-  „kto miał rację” — użytkownik wybrał czat zamiast tego; wraca, jeśli prognozy AI okażą się słabe.
+- Kalendarz wyników kwartalnych — nadal w backlogu, nie realizowane.
+- ~~Konsensus analityków obok prognozy AI~~ — **zrealizowane w 0.26.0**
+  (`docs/PLAN_0_26_0_konsensus.md`). Odstępstwo od litery tej pozycji: źródłem nie jest
+  Finnhub (`/stock/price-target` jest płatny, darmowy tier nie obejmuje Helsinek), tylko Yahoo
+  Finance `quoteSummary` + fallback stockanalysis.com. Backtest „kto miał rację” zrealizowany
+  przez wspólną tabelę `forecasts`/`source` i istniejący `settle_due()`/MAPE, nie osobny
+  mechanizm.
 - Kalendarz i prognoza dywidend (ex-div, przewidywany roczny dochód).
 - Wycena fundamentalna (mnożniki vs Ericsson, prosty DCF).
 - Obsługa splitu/konsolidacji akcji — dziś FIFO by się na tym wywrócił; Nokia nie ma tego w planach,

@@ -11,12 +11,18 @@ from datetime import date, datetime, timezone
 
 def record_forecast(conn: sqlite3.Connection, horizon: str, target_date: str,
                     price_at_creation: float, predicted_price: float, ci_low: float,
-                    ci_high: float, confidence: float, model: str) -> None:
+                    ci_high: float, confidence: float, model: str,
+                    source: str = "ai") -> None:
+    """`source`: 'ai' (domyślnie, prognoza LLM-a) | 'consensus' (wiersz-lustro
+    konsensusu analityków, zapisywany przez analyst.py tylko przy zmianie
+    targetu — patrz docs/PLAN_0_26_0_konsensus.md §4). Ta sama tabela, ten
+    sam settle_due()/accuracy_pct() dla obu — zero drugiej implementacji MAPE."""
     conn.execute(
         "INSERT INTO forecasts (horizon, created_at, target_date, price_at_creation, "
-        "predicted_price, ci_low, ci_high, confidence, model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "predicted_price, ci_low, ci_high, confidence, model, source) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (horizon, datetime.now(timezone.utc).isoformat(), target_date, price_at_creation,
-         predicted_price, ci_low, ci_high, confidence, model))
+         predicted_price, ci_low, ci_high, confidence, model, source))
     conn.commit()
 
 
@@ -38,12 +44,14 @@ def settle_due(conn: sqlite3.Connection, current_price: float) -> int:
     return len(rows)
 
 
-def accuracy_pct(conn: sqlite3.Connection, n: int = 10) -> float | None:
-    """100 - średni błąd % (MAPE) z ostatnich N rozliczonych prognoz (po
-    target_date), albo None, gdy żadna nie została jeszcze rozliczona."""
+def accuracy_pct(conn: sqlite3.Connection, n: int = 10, source: str = "ai") -> float | None:
+    """100 - średni błąd % (MAPE) z ostatnich N rozliczonych prognoz danego
+    `source` (po target_date), albo None, gdy żadna nie została jeszcze
+    rozliczona. Domyślnie tylko 'ai' — bez tego filtra trafność AI po cichu
+    zmieszałaby się z konsensusem analityków (docs/PLAN_0_26_0_konsensus.md §3)."""
     rows = conn.execute(
         "SELECT error_pct FROM forecasts WHERE realized_price IS NOT NULL "
-        "ORDER BY target_date DESC LIMIT ?", (n,)
+        "AND source = ? ORDER BY target_date DESC LIMIT ?", (source, n)
     ).fetchall()
     if not rows:
         return None

@@ -199,6 +199,34 @@ def ai_values(conn: sqlite3.Connection) -> dict:
     }
 
 
+def analyst_values(conn: sqlite3.Connection, price_eur: float | None) -> dict:
+    """Sensor 'Konsensus analityków' (docs/PLAN_0_26_0_konsensus.md §5d):
+    najnowszy snapshot `analyst_targets` niezależnie od źródła (yahoo |
+    stockanalysis), dystans dzisiejszej ceny do średniej, wiek danych.
+    Czyta wyłącznie z bazy — zapis (sieć) robi analyst.py przez osobny job
+    w main.py, zgodnie z zasadą, że views/sensory nigdy nie odpytują
+    providerów (docs/ROADMAP_V3.md E3)."""
+    row = conn.execute(
+        "SELECT * FROM analyst_targets ORDER BY as_of_date DESC, fetched_at DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return {"analyst_target_mean_eur": None, "analyst_target_mean_eur_attrs": {}}
+
+    distance_pct = None
+    if price_eur and row["mean_eur"] is not None:
+        distance_pct = (row["mean_eur"] - price_eur) / price_eur * 100
+
+    return {
+        "analyst_target_mean_eur": row["mean_eur"],
+        "analyst_target_mean_eur_attrs": {
+            "low": row["low_eur"], "median": row["median_eur"], "high": row["high_eur"],
+            "n_analysts": row["n_analysts"], "rating": row["rating"],
+            "currency": row["currency"], "source": row["source"],
+            "as_of_date": row["as_of_date"], "distance_pct": distance_pct,
+        },
+    }
+
+
 def forecast_values(conn: sqlite3.Connection) -> dict:
     """Sensory grupy 'Prognozy i rekomendacja': najnowsza prognoza per
     horyzont (state=cena, attrs=przedział+pewność), historyczna trafność
@@ -207,7 +235,8 @@ def forecast_values(conn: sqlite3.Connection) -> dict:
     for horizon in ("1w", "1m", "12m"):
         row = conn.execute(
             "SELECT predicted_price, ci_low, ci_high, confidence, model, created_at "
-            "FROM forecasts WHERE horizon = ? ORDER BY created_at DESC LIMIT 1", (horizon,)
+            "FROM forecasts WHERE horizon = ? AND source = 'ai' "
+            "ORDER BY created_at DESC LIMIT 1", (horizon,)
         ).fetchone()
         slug = f"forecast_{horizon}_eur"
         out[slug] = row["predicted_price"] if row else None

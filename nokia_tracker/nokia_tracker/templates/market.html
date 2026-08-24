@@ -130,6 +130,43 @@
   </p>
 </div>
 
+{% set ac = values.analyst_target_mean_eur_attrs %}
+<div class="card">
+  <div class="card-title">Konsensus analityków</div>
+  {% if values.analyst_target_mean_eur is not none %}
+  <div class="row3">
+    <div class="stat">
+      <span class="stat-label">Niska</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(ac.low) if ac.low is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+    <div class="stat highlight">
+      <span class="stat-label">Średnia</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(values.analyst_target_mean_eur) }}
+        <span class="stat-unit">EUR</span></span>
+      {% if ac.distance_pct is not none %}
+      <span class="stat-sub">{{ '%+.1f'|format(ac.distance_pct) }}% od dziś</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      <span class="stat-label">Wysoka</span>
+      <span class="stat-value">
+        {{ '%.2f'|format(ac.high) if ac.high is not none else '—' }}
+        <span class="stat-unit">EUR</span></span>
+    </div>
+  </div>
+  <p class="muted">
+    {{ ac.n_analysts or '—' }} analityków · rating {{ (ac.rating or '—')|upper }}
+    · dane {{ ac.source }} z {{ ac.as_of_date }}
+  </p>
+  <p class="disclaimer">⚠️ Cena docelowa analityków to zewnętrzny konsensus, nie prognoza tej aplikacji ani porada inwestycyjna.</p>
+  {% else %}
+    {{ empty_state('Brak jeszcze danych o konsensusie analityków.') }}
+  {% endif %}
+</div>
+
 {% if alerts %}
 <div class="card">
   <div class="card-title">Ostatnie alerty</div>

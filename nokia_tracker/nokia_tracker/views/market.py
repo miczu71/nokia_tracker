@@ -18,6 +18,7 @@ def market_view(conn, ids: dict) -> dict:
         ids["adr"], ids["eurusd"]))
     values.update(sensors.ai_values(conn))
     values.update(sensors.forecast_values(conn))
+    values.update(sensors.analyst_values(conn, values.get("price_eur")))
 
     # Krok 18: metadane kursu EUR/PLN (skąd, kiedy) dla linii rozgraniczającej
     # kurs bieżący (Yahoo/ECB, prezentacyjny) od kursu NBP zamrożonego na

@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.26.0] - 2026-08-24
+
+Konsensus cen docelowych analityków obok prognozy AI (`docs/PLAN_0_26_0_konsensus.md`) —
+dotąd `/rynek` pokazywał wyłącznie prognozy własnego modelu, bez żadnego niezależnego
+punktu odniesienia. Pozycja przeniesiona z backlogu (`docs/ROADMAP.md`), z jedną zmianą
+źródła: nie Finnhub (`/stock/price-target` płatny, darmowy tier nie obejmuje Helsinek),
+tylko Yahoo Finance `quoteSummary` + fallback stockanalysis.com. Liczby zweryfikowane na
+żywo 2026-08-24 (4,65 / 10,32 / 10,13 / 18,00 EUR, 22-23 analityków, rating „Hold") —
+oba źródła zgodne co do centa.
+
+### Dodano
+- **`providers/yahoo_analyst.py`** — Yahoo `quoteSummary` v10 (w odróżnieniu od `/chart`
+  v8 używanego dla cen, wymaga pary cookie+crumb). Każde wywołanie robi pełny handshake
+  (`fc.yahoo.com` → 404 oczekiwany, ustawia cookies → `getcrumb` → `quoteSummary`); crumb
+  odrzucony w trakcie (401) dostaje jeden ponowny pełny handshake, nie zwykły retry.
+- **`providers/stockanalysis.py`** — fallback HTML (BeautifulSoup, zero nowej zależności),
+  aktywny tylko za zgodą `allow_scrape_fallback` (ustawienie istniało od dawna,
+  zarezerwowane, bez konsumenta — ten moduł jest jego pierwszym). Zasada „parser milknie,
+  nie rzuca": zmiana struktury strony → `None` + log warning, nigdy wyjątek.
+- **`analyst.py`** — orkiestracja: Yahoo → stockanalysis (jeśli dozwolone) → dzienny
+  snapshot `analyst_targets` (migracja v14) → warunkowy wiersz-lustro w `forecasts`
+  (`source='consensus'`), zapisywany TYLKO przy zmianie targetu. `forecasts.source`
+  (domyślnie `'ai'`) rozróżnia prognozę AI od konsensusu w TEJ SAMEJ tabeli — zero drugiej
+  implementacji MAPE, `settle_due()`/`accuracy_pct()` rozliczają oba tą samą ścieżką.
+- Karta **„Konsensus analityków”** na `/rynek` (niska/średnia/wysoka, liczba analityków,
+  rating, dystans do dzisiejszej ceny, źródło i wiek danych) i karta **„Portfel w
+  scenariuszach analityków”** na `/` (wartość dzisiejszej pozycji przy cenie
+  niskiej/średniej/wysokiej — zero nowej matematyki, `portfolio.position_values_auto()`
+  wywołane trzykrotnie z ceną konsensusu; jawnie oznaczone jako scenariusz cenowy, nie
+  prognoza). Kolumna „Źródło” (AI / Analityk) na `/forecasts`.
+- Konsensus jako wsad dla promptu AI (`ai/prompts.py::daily_analysis_prompt`) — model
+  proszony o jawne odniesienie się do niego w uzasadnieniu rekomendacji.
+- Sensor MQTT `analyst_target_mean_eur` (atrybuty: `low`/`high`/`n_analysts`/`rating`/
+  `source`/`as_of_date`).
+- Nowy dzienny job `refresh_analyst_consensus_job` (30 min przed `analysis_time`, żeby
+  prompt AI zawsze widział świeży konsensus tego samego dnia) — czysty odczyt w
+  `publish_sensors()`/`views/`, zapis (sieć) tylko w tym jednym miejscu.
+
+### Uwagi
+- 1384 testy zielone (+44), `test_tax_*.py` bez zmian — `tax/` nietknięte.
+- Świadome odstępstwo: `analyst_targets` NIE trafiło do `backup.py::_CSV_TABLES` — ta
+  lista jest zarezerwowana dla danych niemożliwych do odtworzenia z zewnętrznego źródła
+  (loty/sprzedaże/dywidendy); konsensus jest odtwarzalny przy najbliższym pollu, jak
+  `quotes`/`forecasts`, które też są wyłączone.
+
 ## [0.25.0] - 2026-08-24
 
 Fix błędu „dane wewnętrznie sprzeczne" zgłoszonego przez użytkownika — nocny kontroler

@@ -159,6 +159,31 @@
   </p>
 </div>
 
+{% if analyst_scenarios %}
+<div class="card">
+  <div class="card-title">Portfel w scenariuszach analityków</div>
+  <div class="grid stats">
+    {{ stat('Dziś', position.market_value_pln|money if position.market_value_pln is not none else '—',
+            'zł' if position.market_value_pln is not none else none) }}
+    {{ stat('Niska (' ~ ('%.2f'|format(analyst_scenarios.consensus.low)) ~ ' EUR)',
+            analyst_scenarios.low.market_value_pln|money
+            if analyst_scenarios.low.market_value_pln is not none else '—',
+            'zł' if analyst_scenarios.low.market_value_pln is not none else none) }}
+    {{ stat('Średnia (' ~ ('%.2f'|format(analyst_scenarios.consensus.mean)) ~ ' EUR)',
+            analyst_scenarios.mean.market_value_pln|money
+            if analyst_scenarios.mean.market_value_pln is not none else '—',
+            'zł' if analyst_scenarios.mean.market_value_pln is not none else none,
+            cls='highlight') }}
+    {{ stat('Wysoka (' ~ ('%.2f'|format(analyst_scenarios.consensus.high)) ~ ' EUR)',
+            analyst_scenarios.high.market_value_pln|money
+            if analyst_scenarios.high.market_value_pln is not none else '—',
+            'zł' if analyst_scenarios.high.market_value_pln is not none else none) }}
+  </div>
+  <p class="disclaimer">⚠️ Scenariusz cenowy oparty na konsensusie analityków, NIE prognoza — patrz
+    <a href="{{ url_for('rynek_get') }}">Rynek</a> po szczegóły i źródło.</p>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="card-title">Gotówka i podatek — {{ year }}</div>
   <div class="grid stats">

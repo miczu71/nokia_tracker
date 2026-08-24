@@ -67,7 +67,7 @@ def _check_forecast_break(conn: sqlite3.Connection, cfg: dict, values: dict) -> 
     if price is None:
         return None
     row = conn.execute(
-        "SELECT ci_low, ci_high FROM forecasts WHERE horizon = '1w' "
+        "SELECT ci_low, ci_high FROM forecasts WHERE horizon = '1w' AND source = 'ai' "
         "ORDER BY created_at DESC LIMIT 1"
     ).fetchone()
     if not row or row["ci_low"] is None or row["ci_high"] is None:

@@ -13,3 +13,20 @@ class Candle:
     high: float | None = None
     low: float | None = None
     volume: float | None = None
+
+
+@dataclass(frozen=True)
+class AnalystConsensus:
+    """Konsensus cen docelowych analityków, jeden snapshot (docs/PLAN_0_26_0_konsensus.md).
+    `trend` to najnowszy wpis Yahoo `recommendationTrend` (liczba głosów
+    strongBuy/buy/hold/sell/strongSell) albo None — stockanalysis.com (fallback)
+    tego rozkładu nie dostarcza."""
+    low: float | None
+    mean: float | None
+    median: float | None
+    high: float | None
+    n_analysts: int | None
+    rating: str | None
+    currency: str
+    source: str
+    trend: dict | None = None

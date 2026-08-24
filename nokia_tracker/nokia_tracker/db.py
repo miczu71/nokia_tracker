@@ -409,6 +409,29 @@ _MIGRATIONS = [
     """
     ALTER TABLE vests ADD COLUMN pooled_lot_id INTEGER REFERENCES lots(id);
     """,
+    # v14 — konsensus cen docelowych analityków obok prognozy AI
+    # (docs/PLAN_0_26_0_konsensus.md). `analyst_targets` to dzienny snapshot
+    # append-only (UNIQUE as_of_date+source jako UPSERT) — jedyne źródło
+    # prawdy dla karty /rynek, scenariuszy portfela i wsadu do promptu AI.
+    # `forecasts.source` rozróżnia prognozę AI od wiersza-lustra konsensusu
+    # wstawianego do TEJ SAMEJ tabeli (reużycie settle_due()/accuracy_pct(),
+    # zero drugiej implementacji MAPE) — bez tej kolumny wiersz konsensusu
+    # 12m przesłoniłby prognozę AI 12m w sensors.py::forecast_values()
+    # (ORDER BY created_at DESC LIMIT 1 bez filtra).
+    """
+    CREATE TABLE analyst_targets (
+        id INTEGER PRIMARY KEY,
+        as_of_date TEXT NOT NULL,
+        fetched_at TEXT NOT NULL,
+        low_eur REAL, mean_eur REAL, median_eur REAL, high_eur REAL,
+        n_analysts INTEGER, rating TEXT, currency TEXT NOT NULL,
+        source TEXT NOT NULL,          -- 'yahoo' | 'stockanalysis'
+        trend_json TEXT,               -- recommendationTrend, NULL dla fallbacku
+        UNIQUE(as_of_date, source)
+    );
+
+    ALTER TABLE forecasts ADD COLUMN source TEXT NOT NULL DEFAULT 'ai';
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

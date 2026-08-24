@@ -15,7 +15,8 @@ from pathlib import Path
 from apscheduler.schedulers.background import BackgroundScheduler
 from waitress import serve
 
-from . import __version__, alerts, analysis, backup as backupm, data_fixes, db as dbm
+from . import __version__, alerts, analysis, analyst as analystm, backup as backupm
+from . import data_fixes, db as dbm
 from . import forecasts, fx, ha_client
 from . import integrity as integritym
 from . import news, notifier, portfolio, quotes, sensors
@@ -217,6 +218,10 @@ def main() -> None:
                     c, instrument_id, ericsson_id, omxh25_id, eurpln_id, adr_id, eurusd_id))
                 values.update(sensors.ai_values(c))
                 values.update(sensors.forecast_values(c))
+                # Krok 0.26.0 (docs/PLAN_0_26_0_konsensus.md): czysty odczyt z
+                # `analyst_targets` — zapis robi osobny dzienny job
+                # (refresh_analyst_consensus_job, niżej), nie ten handler.
+                values.update(sensors.analyst_values(c, values.get("price_eur")))
 
                 cost_basis_eur = cfg["position_qty"] * cfg["avg_cost_eur"]
                 dividends = sensors.dividends_values(c, cfg, cost_basis_eur)
@@ -561,6 +566,25 @@ def main() -> None:
             finally:
                 c.close()
 
+    def refresh_analyst_consensus_job() -> None:
+        """Codziennie, 30 min przed analysis_time (docs/PLAN_0_26_0_konsensus.md
+        §6) — świeży konsensus trafia do promptu AI tego samego dnia. Nie w
+        publish_sensors(): target zmienia się raz na tydzień, nie raz na
+        poll_interval_minutes."""
+        with dbm.WRITE_LOCK:
+            c = dbm.get_conn(db_path)
+            try:
+                cfg = settingsm.get_settings(c)
+                latest = quotes.latest_quote(c, instrument_id)
+                price_eur = latest["close"] if latest else None
+                analystm.fetch_and_store(
+                    c, _PRIMARY_SYMBOL, price_eur,
+                    allow_scrape_fallback=bool(cfg["allow_scrape_fallback"]))
+            except Exception:
+                logger.exception("Odświeżenie konsensusu analityków nieudane (nie krytyczne)")
+            finally:
+                c.close()
+
     def run_daily_analysis() -> None:
         """Codziennie o analysis_time: rozlicza dojrzałe prognozy (settle_due,
         do current_price) i — jeśli ai_recommendations_enabled — generuje
@@ -643,6 +667,13 @@ def main() -> None:
                       next_run_time=datetime.now())
     scheduler.add_job(fetch_news, "interval", minutes=30,
                       next_run_time=datetime.now())
+    # 30 min przed analysis_time, żeby run_daily_analysis (i jego prompt AI)
+    # zawsze zobaczyły świeży konsensus tego samego dnia, nie wczorajszy
+    # (docs/PLAN_0_26_0_konsensus.md §6).
+    _consensus_dt = (datetime(2000, 1, 1, analysis_hour, analysis_minute)
+                     - timedelta(minutes=30))
+    scheduler.add_job(refresh_analyst_consensus_job, "cron",
+                      hour=_consensus_dt.hour, minute=_consensus_dt.minute)
     scheduler.add_job(run_daily_analysis, "cron", hour=analysis_hour, minute=analysis_minute)
     # day_of_week odtwarza warunek binary_sensor.workday z dawnej automatyzacji
     # HA "Nokia Stock Telegram" bez sięgania po encję HA (digest_time > 19:00

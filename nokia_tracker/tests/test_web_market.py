@@ -72,6 +72,38 @@ def test_forecasts_page_empty_state(client):
     assert "Brak jeszcze".encode() in resp.data
 
 
+def test_forecasts_page_shows_source_column_for_ai_and_consensus_rows(tmp_path):
+    from nokia_tracker import db as dbm
+
+    db_path = str(tmp_path / "forecasts_source.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO forecasts (horizon, created_at, target_date, price_at_creation, "
+        "predicted_price, ci_low, ci_high, confidence, model, source) VALUES "
+        "('1w', '2026-08-24T10:00:00+00:00', '2026-08-31', 8.72, 8.9, 8.5, 9.3, 0.6, "
+        "'local', 'ai')")
+    conn.execute(
+        "INSERT INTO forecasts (horizon, created_at, target_date, price_at_creation, "
+        "predicted_price, ci_low, ci_high, confidence, model, source) VALUES "
+        "('12m', '2026-08-24T10:05:00+00:00', '2027-08-24', 8.72, 10.32, 4.65, 18.0, NULL, "
+        "'consensus:yahoo', 'consensus')")
+    conn.commit()
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/forecasts").get_data(as_text=True)
+        assert ">AI<" in html
+        assert ">Analityk<" in html
+
+
+def test_market_consensus_card_empty_state(client):
+    html = client.get("/rynek").get_data(as_text=True)
+    assert "Konsensus analityków" in html
+    assert "Brak jeszcze danych o konsensusie analityków." in html
+
+
 # --- populated /rynek: catches template errors the empty-state smoke
 # tests can't (formatting real floats, attrs dicts, alert rows, forecasts) ---
 
@@ -113,6 +145,11 @@ def test_market_renders_with_full_populated_data(tmp_path):
     conn.execute(
         "INSERT INTO dividends (pay_date, gross_eur, withholding_pct, withholding_paid_eur, "
         "net_received_eur) VALUES ('2026-06-15', 100.0, 35.0, 35.0, 65.0)")
+    conn.execute(
+        "INSERT INTO analyst_targets (as_of_date, fetched_at, low_eur, mean_eur, median_eur, "
+        "high_eur, n_analysts, rating, currency, source) VALUES "
+        "('2026-07-27', '2026-07-27T10:00:00+00:00', 4.65, 10.32, 10.13, 18.0, 22, 'hold', "
+        "'EUR', 'yahoo')")
     conn.commit()
     conn.close()
 
@@ -124,6 +161,9 @@ def test_market_renders_with_full_populated_data(tmp_path):
         assert "Pełny briefing." in html
         assert "TRZYMAJ" in html
         assert "Tytuł alertu" in html
+        assert "Konsensus analityków" in html
+        assert "22 analityków" in html
+        assert "rating HOLD" in html
 
         assert c.get("/news").status_code == 200
         assert c.get("/forecasts").status_code == 200

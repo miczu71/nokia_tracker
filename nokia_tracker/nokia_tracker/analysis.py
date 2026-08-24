@@ -27,6 +27,16 @@ def _build_context(conn: sqlite3.Connection, instrument_id: int, ericsson_id: in
     market = sensors.market_values(conn, instrument_id)
     bench = sensors.benchmark_values(conn, instrument_id, ericsson_id, omxh25_id, eurpln_id)
     ai = sensors.ai_values(conn)
+    analyst = sensors.analyst_values(conn, market["price_eur"])
+    analyst_consensus = None
+    if analyst["analyst_target_mean_eur"] is not None:
+        attrs = analyst["analyst_target_mean_eur_attrs"]
+        analyst_consensus = {
+            "mean": analyst["analyst_target_mean_eur"], "low": attrs.get("low"),
+            "high": attrs.get("high"), "n_analysts": attrs.get("n_analysts"),
+            "rating": attrs.get("rating"), "source": attrs.get("source"),
+            "as_of_date": attrs.get("as_of_date"),
+        }
     return {
         "price_eur": market["price_eur"],
         "change_pct_day": market["change_pct_day"],
@@ -46,6 +56,7 @@ def _build_context(conn: sqlite3.Connection, instrument_id: int, ericsson_id: in
         "position_qty": position_qty,
         "avg_cost_eur": avg_cost_eur,
         "forecast_accuracy_pct": forecasts.accuracy_pct(conn),
+        "analyst_consensus": analyst_consensus,
     }
 
 

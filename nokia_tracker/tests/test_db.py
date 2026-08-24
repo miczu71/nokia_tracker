@@ -34,7 +34,7 @@ def test_migrate_creates_all_tables(conn):
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 13  # v13: krok E9 - transza wydana w zbiorczym locie
+    assert version == 14  # v14: konsensus cen docelowych analityków (0.26.0)
 
 
 def test_vests_has_pooled_lot_id_column(conn):

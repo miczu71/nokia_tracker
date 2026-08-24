@@ -62,6 +62,31 @@ def test_account_omits_pln_when_no_fx_rate(client):
     assert "kurs EUR/PLN niedostępny" in html
 
 
+def test_account_omits_analyst_scenarios_card_without_snapshot(client):
+    html = client.get("/").get_data(as_text=True)
+    assert "Portfel w scenariuszach analityków" not in html
+
+
+def test_account_shows_analyst_scenarios_card_with_snapshot(tmp_path):
+    app = _make_pln_account_app(tmp_path, filename="analyst_scenarios.db")
+    from nokia_tracker import db as dbm
+
+    conn = dbm.get_conn(str(tmp_path / "analyst_scenarios.db"))
+    conn.execute(
+        "INSERT INTO analyst_targets (as_of_date, fetched_at, low_eur, mean_eur, "
+        "median_eur, high_eur, n_analysts, rating, currency, source) VALUES "
+        "('2026-08-24', '2026-08-24T10:00:00+00:00', 4.65, 10.32455, 10.125, 18.0, "
+        "22, 'hold', 'EUR', 'yahoo')")
+    conn.commit()
+    conn.close()
+
+    with app.test_client() as c:
+        html = c.get("/").get_data(as_text=True)
+        assert "Portfel w scenariuszach analityków" in html
+        assert "Scenariusz cenowy" in html
+        assert "10.32" in html  # etykieta scenariusza "Średnia (10.32 EUR)"
+
+
 # --- krok 21: całkowite zestawienie portfela (uwolnione + z ograniczeniem + zablokowane) ---
 # docs/PLAN_KROK_21_portfel_calkowity.md
 

@@ -19,7 +19,7 @@
   <table class="table">
     <thead>
       <tr>
-        <th>Utworzono</th><th>Horyzont</th>
+        <th>Utworzono</th><th>Horyzont</th><th>Źródło</th>
         <th class="num">Prognoza</th>
         <th class="num">Zrealizowana</th><th class="num">Błąd %</th>
       </tr>
@@ -29,6 +29,7 @@
       <tr>
         <td class="nowrap">{{ f.created_at[:10] }}</td>
         <td>{{ f.horizon }}</td>
+        <td>{{ 'Analityk' if f.source == 'consensus' else 'AI' }}</td>
         <td class="num"
             title="cena bazowa {{ '%.2f'|format(f.price_at_creation) }} EUR · przedział [{{ '%.2f'|format(f.ci_low) }}, {{ '%.2f'|format(f.ci_high) }}] EUR · model {{ f.model }}">
           {{ '%.2f'|format(f.predicted_price) }} EUR

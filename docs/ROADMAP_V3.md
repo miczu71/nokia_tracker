@@ -552,3 +552,12 @@ Release wg `feedback_ha_addon_release`: bump `nokia_tracker/config.yaml` + `__in
 
 **Roadmapa v3 (0.18.0 → 0.24.1) w całości wydana i zweryfikowana na produkcji.** Zostaje
 warunkowe e-Deklaracje (research, nie zaplanowane) i zarezerwowane 1.0.0.
+
+## Poza roadmapą v3: E9 (0.25.0, 2026-08-24)
+
+`docs/PLAN_E9_transza_w_puli.md` — `vests.pooled_lot_id` (transza wydana w ZBIORCZYM
+locie Withhold-to-Cover) + push tylko dla `error`. Kandydat na następny mały krok: cztery
+transze z `vest_date=2026-08-01` uwolnią się 2026-08-27 w JEDNYM wspólnym wierszu
+Withhold-to-Cover — dokładnie ten sam wzorzec, mechanizm (`pooled_lot_id`) już istnieje,
+brakuje tylko przycisku/akcji w `/grants`, żeby nie trzeba było znów ręcznie dopisywać
+naprawy w `data_fixes.py`.

@@ -527,7 +527,14 @@ def main() -> None:
         te same zapytania ręcznie, tu jako stały kontroler. Alert per finding (nie
         zbiorczy), żeby tytuł/treść były konkretne; anty-spam przez allow_fire tym
         samym mechanizmem co inne alerty — bez tego codzienny cron wysyłałby to
-        samo powiadomienie w nieskończoność, dopóki nikt nie naprawi danych."""
+        samo powiadomienie w nieskończoność, dopóki nikt nie naprawi danych.
+
+        Krok E9 (docs/PLAN_E9_transza_w_puli.md): `log_fired` (log alertów, karta
+        „Spójność danych" na /dane) zostaje dla WSZYSTKICH findingów — tylko push
+        na telefon (`ha_client.notify`) jest ograniczony do `integrity.should_notify`
+        (waga `error`). Findingi `warning` (np. `statement_mismatch`) bywają
+        POPRAWNE i TRWAŁE — codzienny push za coś, czego nie da się „naprawić",
+        uczy ignorować powiadomienia."""
         with dbm.WRITE_LOCK:
             c = dbm.get_conn(db_path)
             try:
@@ -540,7 +547,7 @@ def main() -> None:
                             f"Spójność danych: {f.check}", f.message,
                             {"count": f.count})
                         notify_service = cfg.get("notify_service", "")
-                        if notify_service:
+                        if notify_service and integritym.should_notify(f):
                             ha_client.notify(
                                 notify_service.replace(".", "/", 1),
                                 f"Nokia Tracker: problem ze spójnością danych ({f.count}×)",

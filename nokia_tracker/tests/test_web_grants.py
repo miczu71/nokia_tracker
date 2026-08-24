@@ -92,6 +92,35 @@ def test_grants_page_shows_valuation_for_open_and_realized_portions(tmp_path, mo
 
 # --- krok 18: /grants — brak fantomowych wierszy dla niezrealizowanych transz ---
 
+# --- E9 (docs/PLAN_E9_transza_w_puli.md): transza wydana w zbiorczym locie ---
+
+def test_grants_page_shows_pooled_badge_instead_of_unmatched(tmp_path):
+    from nokia_tracker import db as dbm
+    from nokia_tracker.tax import grants as grantsm
+    from nokia_tracker.tax import lots as taxlots
+    from nokia_tracker.web import create_app
+
+    db_path = str(tmp_path / "grants_pooled.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    grant_id = grantsm.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:pool")
+    vest_id = grantsm.add_vest(conn, grant_id, "2025-08-01", 24.42, "espp_vest:pool")
+    pooled_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 101.396662, 3.71, source="pdf_import")
+    conn.execute(
+        "UPDATE vests SET status = 'vested', pooled_lot_id = ? WHERE id = ?",
+        (pooled_lot_id, vest_id))
+    conn.commit()
+    conn.close()
+
+    app = create_app(db_path)
+    with app.test_client() as c:
+        html = c.get("/grants").get_data(as_text=True)
+        assert "wydane w zbiorczym locie" in html
+        assert "niedopasowane — prognoza" not in html
+        assert "zaległe — sprawdź wyciąg" not in html
+
+
 def test_grants_no_phantom_rows_for_unrealized_vests(tmp_path):
     # _make_grants_app tworzy 3 transze (1 ESPP + 2 LTI), żadna nie ma
     # zrealizowanej sprzedaży — przed fixem każda dostawała pusty

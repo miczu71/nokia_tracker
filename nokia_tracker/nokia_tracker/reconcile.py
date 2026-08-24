@@ -21,7 +21,14 @@ BIEŻĄCYM bez znacznika czasu zmiany, ale przejście `pending → vested` zacho
 z przypięciem lotu (`tax/grants.py::reconcile_vesting`, `data_fixes.py`), a ten lot ma
 `acquired_date` = realna data uwolnienia z wyciągu. Transza `vested` była więc nieuwolniona
 na dzień D wtedy i tylko wtedy, gdy `lots.acquired_date > D` — fakt z danych, nie zgadywanie
-ze statusu."""
+ze statusu.
+
+**Trzeci przypadek (E9, docs/PLAN_E9_transza_w_puli.md):** transza wydana w ZBIORCZYM
+locie (`vests.pooled_lot_id`, nie `lot_id`) — Computershare łączy w jeden wiersz
+Withhold-to-Cover kilka transz dopasowania ESPP odblokowanych tego samego dnia, więc taka
+transza nigdy nie dostanie własnego lotu. Data uwolnienia jest wtedy `acquired_date` lotu
+WSKAZANEGO PRZEZ `pooled_lot_id` — identyczna reguła jak dla `lot_id`, `COALESCE(lot_id,
+pooled_lot_id)` w praktyce. `unreconstructable` tylko gdy OBA są `NULL`."""
 from __future__ import annotations
 
 import json
@@ -106,10 +113,10 @@ def unvested_as_of(conn: sqlite3.Connection, as_of: str) -> dict:
       `unvested_summary`): nie wiadomo, po której stronie (RSU/akcje) była transza na dzień D.
       Świadomie NIE wchodzi do `total` — decyzja `no_data` vs policzenie z notatką należy do
       `reconcile()` (porównanie z tolerancją), nie do tej funkcji.
-    - `unreconstructable` — `vested` bez `lot_id` (`integrity.py::_vested_without_lot`) albo
-      `cancelled` (nieosiągalne dziś w produkcji, ale w CHECK schematu) — w obu przypadkach
-      nie ma daty, na podstawie której dałoby się rozstrzygnąć stan na D. Niepuste ⇒
-      `total = None`."""
+    - `unreconstructable` — `vested` bez `lot_id` I bez `pooled_lot_id`
+      (`integrity.py::_vested_without_lot`) albo `cancelled` (nieosiągalne dziś w
+      produkcji, ale w CHECK schematu) — w obu przypadkach nie ma daty, na podstawie
+      której dałoby się rozstrzygnąć stan na D. Niepuste ⇒ `total = None`."""
     rows = conn.execute(
         "SELECT v.id AS vest_id, v.natural_key AS natural_key, v.status AS status, "
         "       v.quantity AS quantity, v.vest_date AS vest_date, "
@@ -117,7 +124,7 @@ def unvested_as_of(conn: sqlite3.Connection, as_of: str) -> dict:
         "       g.program AS program, l.acquired_date AS lot_acquired_date "
         "FROM vests v "
         "JOIN grants g ON g.id = v.grant_id "
-        "LEFT JOIN lots l ON l.id = v.lot_id"
+        "LEFT JOIN lots l ON l.id = COALESCE(v.lot_id, v.pooled_lot_id)"
     ).fetchall()
 
     unreconstructable: list[dict] = []

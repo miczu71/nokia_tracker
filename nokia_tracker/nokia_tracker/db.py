@@ -397,6 +397,18 @@ _MIGRATIONS = [
         UNIQUE(as_of_date)
     );
     """,
+    # v13 — krok E9: transza wydana w ZBIORCZYM locie (docs/PLAN_E9_transza_w_puli.md).
+    # Computershare łączy w jeden wiersz Withhold-to-Cover wszystkie transze dopasowania
+    # ESPP, które stają się dostępne tego samego dnia (audyt 2026-08-24, grant
+    # 2024-10-21) — taka transza NIGDY nie dostanie własnego lotu (`lot_id`), bo nie ma
+    # go w danych źródłowych, a rozbicie zbiorczego lotu na kawałki rozjechałoby jego
+    # `natural_key` z ilością. `pooled_lot_id` odróżnia ten stan od realnej luki
+    # (`integrity.py::_vested_without_lot`/`_stale_pending_vest`): `lot_id` = lot
+    # WYŁĄCZNIE tej transzy, `pooled_lot_id` = lot dzielony z innymi transzami. Oba NULL
+    # przy `status='vested'` zostaje błędem jak dotąd.
+    """
+    ALTER TABLE vests ADD COLUMN pooled_lot_id INTEGER REFERENCES lots(id);
+    """,
 ]
 
 # Liczba migracji = docelowy PRAGMA user_version po pełnym migrate() (krok 24,

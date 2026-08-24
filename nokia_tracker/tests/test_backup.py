@@ -67,6 +67,11 @@ def test_export_zip_contains_manifest_db_and_csvs(seeded_db_path):
         assert "acquired_date" in lots_csv.splitlines()[0]
         assert "2024-01-10" in lots_csv
 
+        # E9 (docs/PLAN_E9_transza_w_puli.md): pooled_lot_id musi być w eksporcie —
+        # bez niego przywrócona kopia traci ślad, że transza jest wydana w puli.
+        vests_csv = zf.read("vests.csv").decode("utf-8")
+        assert "pooled_lot_id" in vests_csv.splitlines()[0]
+
 
 def test_export_zip_db_entry_has_same_data_as_source(seeded_db_path, tmp_path):
     data = backup.export_zip(seeded_db_path)

@@ -32,7 +32,8 @@
   {% if val %}
     <td class="num" data-label="Wartość dziś EUR">
       {{ '%.2f'|format(val.open_value_eur) if val.open_value_eur is not none else '—' }} EUR
-      {% if not val.reconciled %}<span class="badge">niedopasowane — prognoza</span>{% endif %}
+      {% if val.pooled_lot_id %}<span class="badge">wydane w zbiorczym locie</span>
+      {% elif not val.reconciled %}<span class="badge">niedopasowane — prognoza</span>{% endif %}
     </td>
     <td class="num" data-label="Wartość dziś PLN">{{ '%.2f'|format(val.open_value_pln) if val.open_value_pln is not none else '—' }} PLN</td>
     <td class="num" data-label="Zrealizowano PLN">

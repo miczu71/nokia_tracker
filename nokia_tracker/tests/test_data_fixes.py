@@ -284,9 +284,12 @@ def test_revert_is_noop_on_state_that_was_never_broken(conn):
 
 
 def test_apply_all_no_longer_reintroduces_the_lot(conn):
-    """`apply_all()` woła już tylko `revert_...`, nie `fix_missing_...` — na
-    stanie sprzed naprawy (transza wciąż 'pending', bez lotu) musi zostać
-    no-opem, NIE dodawać z powrotem 24.42 szt."""
+    """`apply_all()` woła już tylko `revert_...` + `link_pooled_...`, nie
+    `fix_missing_...` — na stanie sprzed naprawy (transza wciąż 'pending', bez
+    lotu, ale lot zbiorczy `batch2_id` już istnieje) `revert` musi zostać
+    no-opem (nie dodać z powrotem 24.42 szt.), a `link_pooled` domyka transzę
+    przez `pooled_lot_id` (E9) — to jest DOCELOWY stan świeżej instalacji, nie
+    'pending' w nieskończoność."""
     ids = _setup_pre_fix_state(conn)
 
     data_fixes.apply_all(conn)
@@ -295,13 +298,16 @@ def test_apply_all_no_longer_reintroduces_the_lot(conn):
         "SELECT id FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
     ).fetchone() is None
     vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
-    assert vest["status"] == "pending"
+    assert vest["status"] == "vested"
+    assert vest["lot_id"] is None
+    assert vest["pooled_lot_id"] == ids["batch2_id"]
 
 
 def test_apply_all_on_already_broken_production_shape_converges_to_clean(conn):
     """Mirror realnego startu add-onu na bazie, która już ma zastosowaną starą
     naprawę (dokładnie stan produkcyjny sprzed tego wydania) — jedno wywołanie
-    `apply_all()` sprząta za jednym razem."""
+    `apply_all()` sprząta za jednym razem: cofa fantoma I domyka transzę przez
+    `pooled_lot_id` (E9)."""
     ids = _setup_pre_fix_state(conn)
     data_fixes.fix_missing_espp_match_lot_2025_08(conn)
 
@@ -311,8 +317,98 @@ def test_apply_all_on_already_broken_production_shape_converges_to_clean(conn):
         "SELECT id FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
     ).fetchone() is None
     vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
-    assert vest["status"] == "pending"
+    assert vest["status"] == "vested"
     assert vest["lot_id"] is None
+    assert vest["pooled_lot_id"] == ids["batch2_id"]
     total = conn.execute(
         "SELECT SUM(quantity) FROM sale_allocations WHERE sale_id = 1").fetchone()[0]
     assert total == pytest.approx(784.0)
+
+
+# --- 2026-08-24 (krok E9, docs/PLAN_E9_transza_w_puli.md): po cofnięciu naprawy
+# powyżej transza wraca do 'pending'/lot_id=NULL — poprawny stan wg wyciągu, ale
+# nierozróżnialny dla integrity.py od realnej luki (brakujący import). Ta naprawa
+# domyka transzę na `batch2_id` ('vested_release:2025-08-28:3.71:101.396662',
+# ten sam lot zbiorczy) przez `pooled_lot_id`, zamiast dokładać kolejny fantomowy
+# lot — zero zmian w lots/sale_allocations/sales. ---
+
+
+def test_link_pooled_marks_vest_vested_with_pooled_lot_id(conn):
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    data_fixes.link_pooled_espp_match_2025_08(conn)
+
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "vested"
+    assert vest["lot_id"] is None
+    assert vest["pooled_lot_id"] == ids["batch2_id"]
+
+
+def test_link_pooled_touches_nothing_else(conn):
+    """Zero zmian w lots/sale_allocations/sales — wartość tej transzy jest już
+    policzona w locie zbiorczym, nie duplikujemy jej nigdzie."""
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+    lots_before = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM lots").fetchall()}
+    allocs_before = [dict(r) for r in conn.execute(
+        "SELECT * FROM sale_allocations ORDER BY id").fetchall()]
+
+    data_fixes.link_pooled_espp_match_2025_08(conn)
+
+    lots_after = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM lots").fetchall()}
+    allocs_after = [dict(r) for r in conn.execute(
+        "SELECT * FROM sale_allocations ORDER BY id").fetchall()]
+    assert lots_after == lots_before
+    assert allocs_after == allocs_before
+    sale = conn.execute("SELECT * FROM sales WHERE id = ?", (ids["sale_id"],)).fetchone()
+    assert sale["reported_cost_pln"] == pytest.approx(7500.66)
+    assert sale["reported_revenue_pln"] == pytest.approx(17631.72)
+
+
+def test_link_pooled_is_idempotent(conn):
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+    data_fixes.revert_phantom_espp_match_lot_2025_08(conn)
+
+    data_fixes.link_pooled_espp_match_2025_08(conn)
+    data_fixes.link_pooled_espp_match_2025_08(conn)
+
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "vested"
+    assert vest["pooled_lot_id"] == ids["batch2_id"]
+
+
+def test_link_pooled_is_noop_without_the_pooled_lot(conn):
+    """Baza bez batch2_id (nigdy nie zaimportowano wyciągu 2025-08-28) — nie
+    zgadujemy, transza zostaje nietknięta."""
+    ids = _setup_pre_fix_state(conn)
+    conn.execute("DELETE FROM sale_allocations WHERE lot_id = ?", (ids["batch2_id"],))
+    conn.execute("DELETE FROM lots WHERE id = ?", (ids["batch2_id"],))
+    conn.commit()
+
+    data_fixes.link_pooled_espp_match_2025_08(conn)
+
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "pending"
+    assert vest["pooled_lot_id"] is None
+
+
+def test_apply_all_links_pooled_vest_end_to_end(conn):
+    """Mirror realnego startu add-onu 0.25.0 na stanie produkcyjnym sprzed tego
+    wydania (stara błędna naprawa jeszcze zastosowana) — jedno `apply_all()`
+    cofa fantoma I domyka transzę przez pooled_lot_id, w tej kolejności."""
+    ids = _setup_pre_fix_state(conn)
+    data_fixes.fix_missing_espp_match_lot_2025_08(conn)
+
+    data_fixes.apply_all(conn)
+
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (ids["vest_id"],)).fetchone()
+    assert vest["status"] == "vested"
+    assert vest["lot_id"] is None
+    assert vest["pooled_lot_id"] == ids["batch2_id"]
+    assert conn.execute(
+        "SELECT id FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
+    ).fetchone() is None

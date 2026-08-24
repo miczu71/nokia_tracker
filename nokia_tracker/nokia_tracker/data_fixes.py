@@ -165,6 +165,56 @@ def revert_phantom_espp_match_lot_2025_08(conn: sqlite3.Connection) -> None:
         "'pending' i przeliczono alokację sprzedaży #1", existing["id"])
 
 
+_POOLED_MATCH_VEST_KEY = "espp_vest:2024-10-21:2025-08-01:24.42"
+_POOLED_MATCH_LOT_KEY = "vested_release:2025-08-28:3.71:101.396662"
+
+
+def link_pooled_espp_match_2025_08(conn: sqlite3.Connection) -> None:
+    """Krok E9 (docs/PLAN_E9_transza_w_puli.md, 2026-08-24): po
+    `revert_phantom_espp_match_lot_2025_08` powyżej transza grantu 2024-10-21
+    (24,42 szt.) wraca do `status='pending'`, `lot_id=NULL` — poprawny stan wg
+    wyciągu, ale `integrity.py::_stale_pending_vest` nie potrafi go odróżnić od
+    realnej luki (przeterminowana transza bez lotu = „prawdopodobnie brakujący
+    import") i codziennie zgłasza fałszywy błąd.
+
+    Ta transza nigdy nie dostanie WŁASNEGO lotu — Computershare łączy w jeden
+    wiersz Withhold-to-Cover wszystkie transze dopasowania ESPP odblokowane tego
+    samego dnia (dowód arytmetyczny w `revert_phantom_espp_match_lot_2025_08`:
+    101,396666 ≈ 101,396662, różnica 0,000004 = zaokrąglenie druku PDF; grant
+    2024-10-21 jest ostatnim z sześciu zakupów tej paczki). Świadomie NIE
+    dokładamy tu żadnego lotu (powrót do fantomu 0.24.1) ani nie rozbijamy lotu
+    zbiorczego na kawałki (rozjechałby `natural_key` z ilością i wygenerowałby
+    konflikt przy re-imporcie tego samego wyciągu) — zamiast tego `pooled_lot_id`
+    wskazuje na lot zbiorczy, którego jest częścią, żeby czytelnicy
+    (`integrity.py`, `reconcile.py`, `tax/grants.py::valuation`) mogli odróżnić
+    „wydana w puli" od realnej luki.
+
+    Zero zmian w `lots`/`sale_allocations`/`sales` — wartość tej transzy jest
+    już policzona w locie zbiorczym, ta naprawa tylko domyka ślad audytowy w
+    `vests`."""
+    pooled_lot = conn.execute(
+        "SELECT id FROM lots WHERE natural_key = ?",
+        (_POOLED_MATCH_LOT_KEY,)).fetchone()
+    if pooled_lot is None:
+        return
+
+    vest = conn.execute(
+        "SELECT id FROM vests WHERE natural_key = ? AND pooled_lot_id IS NULL",
+        (_POOLED_MATCH_VEST_KEY,)).fetchone()
+    if vest is None:
+        return
+
+    conn.execute(
+        "UPDATE vests SET status = 'vested', pooled_lot_id = ? WHERE id = ?",
+        (pooled_lot["id"], vest["id"]))
+    conn.commit()
+    logger.warning(
+        "Naprawa danych (E9, 2026-08-24): transza grantu 2024-10-21 (24,42 szt., "
+        "vest_id=%d) domknięta jako wydana w zbiorczym locie id=%d "
+        "('vested_release:2025-08-28:3.71:101.396662') — zero zmian w lots/"
+        "sale_allocations/sales", vest["id"], pooled_lot["id"])
+
+
 def apply_all(conn: sqlite3.Connection) -> None:
     """Wołane raz przy starcie (main.py) — bezpieczne przy każdym restarcie,
     każda naprawa jest idempotentna.
@@ -175,5 +225,10 @@ def apply_all(conn: sqlite3.Connection) -> None:
     po to, żeby natychmiast go usunąć (guard `fix_missing` sprawdza wyłącznie
     istnienie `natural_key`, nie to, że revert go właśnie skasował). Funkcja
     zostaje w pliku jako ślad audytowy tego, co kiedyś naprawiono/dlaczego —
-    zgodnie z konwencją tego modułu."""
+    zgodnie z konwencją tego modułu.
+
+    Kolejność ma znaczenie: `link_pooled_espp_match_2025_08` idzie PO revert —
+    revert cofa transzę do `pending`/`lot_id=NULL`, dopiero wtedy jest co
+    domykać przez `pooled_lot_id`."""
     revert_phantom_espp_match_lot_2025_08(conn)
+    link_pooled_espp_match_2025_08(conn)

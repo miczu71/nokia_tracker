@@ -98,15 +98,21 @@ def _vest_referential_integrity(conn: sqlite3.Connection) -> list[Finding]:
 
 
 def _vested_without_lot(conn: sqlite3.Connection) -> Finding | None:
+    """Krok E9 (docs/PLAN_E9_transza_w_puli.md): `pooled_lot_id` jest RÓWNIE
+    dobrym dowodem uwolnienia jak `lot_id` — transza wydana w ramach zbiorczego
+    lotu Withhold-to-Cover (Computershare łączy w jeden wiersz kilka transz
+    odblokowanych tego samego dnia) nigdy nie dostanie WŁASNEGO lotu, patrz
+    `data_fixes.py::link_pooled_espp_match_2025_08`. Luka jest realna tylko gdy
+    OBA są NULL."""
     rows = conn.execute(
         "SELECT id AS vest_id, grant_id, vest_date, quantity FROM vests "
-        "WHERE status = 'vested' AND lot_id IS NULL"
+        "WHERE status = 'vested' AND lot_id IS NULL AND pooled_lot_id IS NULL"
     ).fetchall()
     if not rows:
         return None
     return Finding(
         "vested_without_lot", "error",
-        "Transza oznaczona jako 'vested', ale bez powiązanego lotu",
+        "Transza oznaczona jako 'vested', ale bez lotu własnego ani zbiorczego",
         len(rows), [dict(r) for r in rows])
 
 
@@ -376,3 +382,14 @@ def check_all(
     findings.extend(_statement_mismatch(conn))
     findings.extend(_breakdown_not_closed(conn, cfg, today))
     return findings
+
+
+def should_notify(finding: Finding) -> bool:
+    """Krok E9 (docs/PLAN_E9_transza_w_puli.md): tylko `error` uzasadnia codzienny
+    push (`main.py::integrity_check_job`) — `statement_mismatch`,
+    `unresolved_import_conflict`, `breakdown_not_closed` i `tax_payments_exceed_due`
+    to stany, które bywają POPRAWNE i TRWAŁE (np. znany, udokumentowany rozjazd
+    z tolerancji liczonej z danych, E7). Codzienny push za coś, czego nie da się
+    „naprawić", uczy ignorować powiadomienia — waga `warning` zostaje widoczna
+    na karcie „Spójność danych" (`/dane`) i w `alerts_log`, bez pushu na telefon."""
+    return finding.severity == "error"

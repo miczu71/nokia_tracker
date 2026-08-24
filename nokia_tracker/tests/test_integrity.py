@@ -123,6 +123,22 @@ def test_vested_without_lot_detected(conn):
     assert f.details[0]["vest_id"] == vest_id
 
 
+def test_vested_with_pooled_lot_id_not_flagged(conn):
+    """Krok E9 (docs/PLAN_E9_transza_w_puli.md): transza wydana w ZBIORCZYM
+    locie (`pooled_lot_id`, nie `lot_id`) — stan poprawny, nie luka."""
+    lot_id = taxlots.add_lot(conn, "2025-08-28", "matched", 101.396662, 3.71,
+                              source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2025-01-01", 10.0, "g1")
+    vest_id = grants.add_vest(conn, grant_id, "2025-06-01", 10.0, "v1", status="vested")
+    conn.execute(
+        "UPDATE vests SET pooled_lot_id = ? WHERE id = ?", (lot_id, vest_id))
+    conn.commit()
+
+    findings = integrity.check_all(conn)
+
+    assert not any(f.check == "vested_without_lot" for f in findings)
+
+
 # --- #5 orphaned sale_allocations ---
 
 def test_orphaned_sale_allocation_detected(conn):
@@ -429,3 +445,15 @@ def test_breakdown_not_closed_surfaced_as_warning(conn, monkeypatch):
     assert f.count == 1
     assert f.details[0]["shown"] == 100.0
     assert f.details[0]["recomputed"] == 90.0
+
+
+# --- should_notify (E9, docs/PLAN_E9_transza_w_puli.md): tylko error pushuje ---
+
+def test_should_notify_true_for_error():
+    f = integrity.Finding("qty_remaining_mismatch", "error", "msg", 1)
+    assert integrity.should_notify(f) is True
+
+
+def test_should_notify_false_for_warning():
+    f = integrity.Finding("statement_mismatch:shares", "warning", "msg", 1)
+    assert integrity.should_notify(f) is False

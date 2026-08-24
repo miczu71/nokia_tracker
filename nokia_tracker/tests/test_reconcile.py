@@ -188,6 +188,48 @@ def test_unvested_as_of_matches_unvested_summary_upcoming_qty_for_today(conn):
     assert result["total"] == summary["upcoming_qty"]
 
 
+# --- unvested_as_of: transza wydana w zbiorczym locie (E9, docs/PLAN_E9_transza_w_puli.md) ---
+
+def _make_pooled_vest(conn, vest_date, quantity, pool_acquired_date, program="espp"):
+    """`status='vested'`, `lot_id=NULL`, `pooled_lot_id` = lot ZBIORCZY (dzielony z
+    innymi transzami, np. Withhold-to-Cover) — mirror
+    `data_fixes.py::link_pooled_espp_match_2025_08`."""
+    grant_id = grantsm.add_grant(conn, program, "2025-01-01", None,
+                                  f"grant:{vest_date}:{quantity}:pool")
+    vest_id = grantsm.add_vest(conn, grant_id, vest_date, quantity,
+                               f"vest:{vest_date}:{quantity}:pool")
+    lot_id = taxlots.add_lot(conn, pool_acquired_date, "matched", quantity + 50.0, 0.0)
+    conn.execute(
+        "UPDATE vests SET status = 'vested', pooled_lot_id = ? WHERE id = ?",
+        (lot_id, vest_id))
+    conn.commit()
+    return vest_id
+
+
+def test_unvested_as_of_excludes_pooled_vest_whose_pool_predates_the_date(conn):
+    _make_pooled_vest(conn, "2025-08-01", 24.42, pool_acquired_date="2025-08-28")
+    result = reconcile.unvested_as_of(conn, "2026-08-18")
+    assert result["total"] == 0.0
+    assert result["ambiguous_qty"] == 0.0
+    assert result["unreconstructable"] == []
+
+
+def test_unvested_as_of_counts_pooled_vest_whose_pool_is_later_than_the_date(conn):
+    _make_pooled_vest(conn, "2025-08-01", 24.42, pool_acquired_date="2026-09-01")
+    result = reconcile.unvested_as_of(conn, "2026-08-18")
+    assert result["total"] == 24.42
+
+
+def test_unvested_as_of_is_no_data_when_both_lot_id_and_pooled_lot_id_are_null(conn):
+    grant_id = grantsm.add_grant(conn, "espp", "2025-01-01", None, "grant:bare")
+    vest_id = grantsm.add_vest(conn, grant_id, "2025-08-01", 24.42, "vest:bare")
+    conn.execute("UPDATE vests SET status = 'vested' WHERE id = ?", (vest_id,))
+    conn.commit()
+    result = reconcile.unvested_as_of(conn, "2026-08-18")
+    assert result["total"] is None
+    assert len(result["unreconstructable"]) == 1
+
+
 # --- pending_wtc_sales_as_of ---
 
 def _make_wtc_conflict(conn, execution_date, quantity):

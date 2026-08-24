@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.25.0] - 2026-08-24
+
+Fix błędu „dane wewnętrznie sprzeczne" zgłoszonego przez użytkownika — nocny kontroler
+spójności (`main.py`, 6:35) wysyłał codzienny push o `stale_pending_vest` dla transzy
+ESPP 24,42 szt. (grant 2024-10-21, vest 2025-08-01), którą 0.24.2 świadomie cofnęło do
+`pending`/`lot_id=NULL` (jej akcje są już policzone w zbiorczym locie Withhold-to-Cover
+`vested_release:2025-08-28:3.71:101.396662`, patrz 0.24.2). Kontroler nie umiał odróżnić
+tego POPRAWNEGO stanu od realnej luki. Ten sam brak modelu psuł też: `/imports` (pozycje
+„Transze oczekujące (RSU)" i „Suma" spadały na „brak danych" — 24,42 szt. > tolerancja),
+`/grants` (badge „zaległe — sprawdź wyciąg" mimo że transza jest wydana) i sensor MQTT
+`unvested_qty` (zawyżony o 24,42 szt.).
+
+### Naprawiono
+- **`vests.pooled_lot_id` (nowa kolumna, migracja v13)** — transza wydana w ZBIORCZYM
+  locie ma teraz `status='vested'`, `lot_id=NULL`, `pooled_lot_id` wskazujący na lot
+  dzielony z innymi transzami, zamiast wracać do `pending` bez żadnego śladu uwolnienia.
+  Nowa naprawa danych `data_fixes.py::link_pooled_espp_match_2025_08()` (wołana po
+  `revert_phantom_espp_match_lot_2025_08` w `apply_all()`) domyka konkretnie transzę
+  24,42 szt. — **zero zmian** w `lots`/`sale_allocations`/`sales`.
+- `integrity.py::_vested_without_lot` — luka realna tylko gdy OBA (`lot_id` I
+  `pooled_lot_id`) są `NULL`.
+- `reconcile.py::unvested_as_of` — data uwolnienia transzy w puli liczona z
+  `acquired_date` lotu wskazanego przez `pooled_lot_id`, tak samo jak dla `lot_id`.
+  Skutek: „Transze oczekujące (RSU)" i „Suma (Akcje + RSU)" na `/imports` znów liczone
+  (wcześniej „brak danych").
+- `tax/grants.py::valuation`/`list_espp`/`list_lti_grouped` — niosą `pooled_lot_id`;
+  `/grants` pokazuje badge „wydane w zbiorczym locie" zamiast „niedopasowane —
+  prognoza", status „nabyte" zamiast „zaległe — sprawdź wyciąg".
+- Sensor MQTT `unvested_qty` — spada o 24,4200 szt. (dotąd zawyżony, ta sama transza
+  liczona podwójnie: raz w locie zbiorczym, raz jako „pending").
+- `backup.py` — `pooled_lot_id` dopisany do eksportu CSV `vests.csv`.
+
+### Zmieniono
+- **Codzienny push tylko dla findingów o wadze `error`.** `statement_mismatch`,
+  `unresolved_import_conflict`, `breakdown_not_closed`, `tax_payments_exceed_due`
+  (waga `warning`) bywają POPRAWNE i TRWAŁE — zostają widoczne na karcie „Spójność
+  danych" (`/dane`) i w `alerts_log`, ale bez pushu na telefon
+  (`integrity.py::should_notify`).
+
+### Zbadano (bez zmiany kodu)
+- Rozjazd pozycji „Akcje" -1,6118 szt. (waga `warning`, `statement_mismatch:shares`,
+  znany z E7) — śledztwo (`docs/PLAN_E9_transza_w_puli.md`) potwierdziło: różnica
+  powstała jako JEDNO dyskretne zdarzenie w oknie 2025-01-01→2026-01-01 (rok sprzedaży
+  #1), jest stabilna (nie rośnie) od 2026-01-01, i **żadna** z czterech śledzonych
+  kategorii uzgodnienia (zakupy ESPP, dywidendy, Withhold-to-Cover Typ A/B) jej nie
+  wyjaśnia — wszystkie cztery zgadzają się co do 0,0000 w tym okresie. Przyczyna
+  pozostaje nieznaleziona; tolerancja **nie** została podniesiona.
+
+### Zweryfikowano
+1340 testów (1110 → 1340, przyrost obejmuje też prace niezwiązane z tym wydaniem),
+zero regresji. Weryfikacja Playwright na produkcji po wdrożeniu.
+
 ## [0.24.2] - 2026-08-24
 
 Fix znaleziony przy re-imporcie wszystkich 6 wyciągów Computershare (uzgodnienie E7

@@ -81,6 +81,24 @@ def test_list_espp_empty_when_no_espp_grants(conn):
     assert grants.list_espp(conn) == []
 
 
+def test_list_espp_returns_pooled_lot_id(conn):
+    """Krok E9 (docs/PLAN_E9_transza_w_puli.md): `/grants` musi umieć narysować
+    badge „wydane w zbiorczym locie" — `list_espp` niesie `pooled_lot_id`."""
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:pool")
+    vest_id = grants.add_vest(conn, grant_id, "2025-08-01", 24.42, "espp_vest:pool")
+    pooled_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 101.396662, 3.71, source="pdf_import")
+    conn.execute(
+        "UPDATE vests SET status = 'vested', pooled_lot_id = ? WHERE id = ?",
+        (pooled_lot_id, vest_id))
+    conn.commit()
+
+    rows = grants.list_espp(conn)
+
+    assert rows[0]["pooled_lot_id"] == pooled_lot_id
+
+
 def test_list_lti_grouped_sums_multiple_tranches_and_extracts_description(conn):
     grant_id = grants.add_grant(
         conn, "lti", "2025-07-07", None, "lti_grant:2025 RS AWARD 07-JUL-2025")
@@ -96,6 +114,22 @@ def test_list_lti_grouped_sums_multiple_tranches_and_extracts_description(conn):
 
 def test_list_lti_grouped_empty_when_no_lti_grants(conn):
     assert grants.list_lti_grouped(conn) == []
+
+
+def test_list_lti_grouped_returns_pooled_lot_id_per_vest(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(
+        conn, "lti", "2025-07-07", None, "lti_grant:2025 RS AWARD 07-JUL-2025")
+    vest_id = grants.add_vest(conn, grant_id, "2026-07-09", 634.0, "lti_vest:g:2026-07-09:634.0")
+    pooled_lot_id = taxlots.add_lot(conn, "2026-07-09", "lti", 634.0, 0.0, source="pdf_import")
+    conn.execute(
+        "UPDATE vests SET status = 'vested', pooled_lot_id = ? WHERE id = ?",
+        (pooled_lot_id, vest_id))
+    conn.commit()
+
+    result = grants.list_lti_grouped(conn)
+
+    assert result[0]["vests"][0]["pooled_lot_id"] == pooled_lot_id
 
 
 # --- overdue flag (krok 13.6, docs/PLAN_KROK_13_6_vesting_gap.md) ---
@@ -316,6 +350,51 @@ def test_valuation_partially_sold_lot_splits_open_and_realized(conn, monkeypatch
     assert len(v["realized"]) == 1
     assert v["realized"][0]["sale_date"] == "2026-01-15"
     assert v["realized"][0]["nbp_rate"] == pytest.approx(4.0)
+
+
+def test_valuation_pooled_vest_reports_pooled_lot_id(conn):
+    """Krok E9 (docs/PLAN_E9_transza_w_puli.md): transza wydana w zbiorczym locie
+    (`lot_id=NULL`, `pooled_lot_id` ustawiony) — `reconciled` zostaje `False` (ta
+    sama prognoza po pełnej ilości co dotąd), ale wynik niesie `pooled_lot_id`,
+    żeby szablon odróżnił ją od realnie niedopasowanej transzy."""
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:pool")
+    vest_id = grants.add_vest(conn, grant_id, "2025-08-01", 24.42, "espp_vest:pool")
+    pooled_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 101.396662, 3.71, source="pdf_import")
+    conn.execute(
+        "UPDATE vests SET status = 'vested', pooled_lot_id = ? WHERE id = ?",
+        (pooled_lot_id, vest_id))
+    conn.commit()
+
+    result = grants.valuation(conn, current_price_eur=10.0, current_eurpln=4.0)
+
+    v = result[vest_id]
+    assert v["reconciled"] is False
+    assert v["pooled_lot_id"] == pooled_lot_id
+
+
+def test_valuation_unreconciled_vest_pooled_lot_id_is_none(conn):
+    grant_id = grants.add_grant(conn, "espp", "2026-04-27", 17.37, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2026-08-01", 17.37, "espp_vest:x")
+
+    result = grants.valuation(conn, current_price_eur=10.0, current_eurpln=4.0)
+
+    assert result[vest_id]["pooled_lot_id"] is None
+
+
+def test_valuation_reconciled_vest_pooled_lot_id_is_none(conn, monkeypatch):
+    from nokia_tracker.tax import lots as taxlots
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event", lambda conn, d: (4.0, d))
+    grant_id = grants.add_grant(conn, "espp", "2022-10-26", 7.33, "espp_grant:x")
+    vest_id = grants.add_vest(conn, grant_id, "2023-08-01", 7.33, "espp_vest:x")
+    taxlots.add_lot(conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import")
+    grants.reconcile_vesting(conn, today="2026-07-28")
+
+    result = grants.valuation(conn, current_price_eur=12.0, current_eurpln=4.3)
+
+    assert result[vest_id]["pooled_lot_id"] is None
 
 
 def test_valuation_returns_none_values_when_current_price_missing(conn, monkeypatch):

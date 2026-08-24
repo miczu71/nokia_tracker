@@ -34,7 +34,12 @@ def test_migrate_creates_all_tables(conn):
 
 def test_migrate_sets_user_version(conn):
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    assert version == 12  # v12: krok E7 - uzgodnienie z wyciągiem
+    assert version == 13  # v13: krok E9 - transza wydana w zbiorczym locie
+
+
+def test_vests_has_pooled_lot_id_column(conn):
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(vests)").fetchall()}
+    assert "pooled_lot_id" in cols
 
 
 def test_get_conn_enables_wal_and_busy_timeout(conn):

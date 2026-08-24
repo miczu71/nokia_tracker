@@ -124,7 +124,7 @@ def list_espp(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
         today = datetime.now().strftime("%Y-%m-%d")
     rows = conn.execute(
         "SELECT v.id AS vest_id, g.id AS grant_id, g.grant_date, g.match_pct, "
-        "v.vest_date, v.available_from, v.quantity, v.status "
+        "v.vest_date, v.available_from, v.quantity, v.status, v.pooled_lot_id "
         "FROM grants g JOIN vests v ON v.grant_id = g.id "
         "WHERE g.program = 'espp' ORDER BY g.grant_date"
     ).fetchall()
@@ -185,7 +185,14 @@ def valuation(conn: sqlite3.Connection, current_price_eur: float | None,
     ten sam mechanizm wyżej) nie mają żadnego lotu do podziału na otwarte/zrealizowane,
     więc CAŁA `quantity` transzy trafia do `open_*` z `reconciled=False` — jawnie
     oznaczone jako prognoza, nie realizacja, bo nie potrafimy uczciwie stwierdzić,
-    czy i ile z niej zostało już sprzedane."""
+    czy i ile z niej zostało już sprzedane.
+
+    `pooled_lot_id` (E9, docs/PLAN_E9_transza_w_puli.md) w wyniku KAŻDEJ transzy
+    (`None` gdy nie dotyczy) — transza wydana w ZBIORCZYM locie Withhold-to-Cover ma
+    `lot_id=NULL`, więc bez tego pola wygląda identycznie jak realnie niedopasowana
+    (`reconciled=False`, ta sama prognoza po pełnej ilości); szablon używa
+    `pooled_lot_id`, żeby pokazać „wydane w zbiorczym locie #X" zamiast „niedopasowane
+    — prognoza"."""
     result: dict[int, dict] = {}
     for v in conn.execute("SELECT * FROM vests").fetchall():
         if v["lot_id"] is None:
@@ -202,6 +209,7 @@ def valuation(conn: sqlite3.Connection, current_price_eur: float | None,
                 "realized_qty": 0.0,
                 "realized_value_eur": 0.0,
                 "realized_value_pln": 0.0,
+                "pooled_lot_id": v["pooled_lot_id"],
             }
             continue
 
@@ -248,6 +256,7 @@ def valuation(conn: sqlite3.Connection, current_price_eur: float | None,
             "realized_qty": round(realized_qty, 4),
             "realized_value_eur": round(realized_eur_total, 2),
             "realized_value_pln": round(realized_pln_total, 2),
+            "pooled_lot_id": None,
         }
     return result
 

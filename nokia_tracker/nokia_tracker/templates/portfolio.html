@@ -1,16 +1,15 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, POLICY_LABELS %}
+{% from "_macros.html" import stat, empty_state, POLICY_LABELS %}
 {% block title %}Portfel — Nokia Tracker{% endblock %}
 {% block content %}
 
 <div class="page-head">
   <h1>Portfel</h1>
-  {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
 </div>
 
 {% if lots_position %}
 <div class="card">
-  <div class="card-title">Stan posiadania — z lotów (aktywne źródło)</div>
+  <div class="card-title">Stan posiadania — z lotów</div>
   <p class="muted">
     Liczone automatycznie z tabeli lotów (<a href="{{ url_for('lots_get') }}">Loty</a>) wg
     aktywnej polityki kosztu ({{ POLICY_LABELS.get(cfg.cost_basis_policy, cfg.cost_basis_policy) }}).
@@ -37,51 +36,14 @@
             value_cls=('up' if (lots_position.total_return_pct or 0) > 0 else 'down')) }}
   </div>
 </div>
-{% endif %}
-
+{% else %}
 <div class="card">
-  {% if lots_position %}
-  <details class="no-print">
-    <summary class="card-title" style="display:inline">Stan posiadania — ręczny (zapasowy, nieaktywny)</summary>
-    <p class="muted">
-      Nie wpływa na liczby powyżej, dopóki istnieje choć jeden lot — edytuj stan przez
-      <a href="{{ url_for('lots_get') }}">Loty</a>.
-    </p>
-    <form class="form" method="post" action="{{ url_for('portfolio_post') }}">
-      <div class="row2">
-        <label>Ilość akcji
-          <input type="number" step="0.0001" name="position_qty" value="{{ cfg.position_qty }}" required>
-        </label>
-        <label>Średni koszt zakupu (EUR/akcję)
-          <input type="number" step="0.0001" name="avg_cost_eur" value="{{ cfg.avg_cost_eur }}" required>
-        </label>
-      </div>
-      <div class="form-actions">
-        <button class="btn primary" type="submit">Zapisz</button>
-      </div>
-    </form>
-  </details>
-  {% else %}
-  <div class="card-title">Stan posiadania — ręczny</div>
+  <div class="card-title">Stan posiadania</div>
+  {{ empty_state('Brak lotów — wgraj pierwszy wyciąg przez Importy.') }}
   <p class="muted">
-    Prosty stan posiadania (ilość + średni koszt) — używany, dopóki nie dodasz pierwszego lotu
-    przez <a href="{{ url_for('lots_get') }}">Loty</a> albo import PDF przez
-    <a href="{{ url_for('imports_get') }}">Importy</a>.
+    <a href="{{ url_for('imports_get') }}">Importy</a>
   </p>
-  <form class="form" method="post" action="{{ url_for('portfolio_post') }}">
-    <div class="row2">
-      <label>Ilość akcji
-        <input type="number" step="0.0001" name="position_qty" value="{{ cfg.position_qty }}" required>
-      </label>
-      <label>Średni koszt zakupu (EUR/akcję)
-        <input type="number" step="0.0001" name="avg_cost_eur" value="{{ cfg.avg_cost_eur }}" required>
-      </label>
-    </div>
-    <div class="form-actions">
-      <button class="btn primary" type="submit">Zapisz</button>
-    </div>
-  </form>
-  {% endif %}
 </div>
+{% endif %}
 
 {% endblock %}

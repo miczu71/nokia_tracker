@@ -881,7 +881,7 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
             rows_conflict += 1
             logger.warning(
                 "Withhold-to-Cover Typ B (prawdziwa sprzedaż): %s, %.4f akcji, %.2f EUR "
-                "netto — wymaga ręcznego potwierdzenia przez /lots/sell",
+                "netto — wymaga potwierdzenia przyciskiem \"Zatwierdź jako sprzedaż\" na /imports",
                 row["execution_date"], row["quantity"], row["net_proceeds_eur"])
 
     save_statement_snapshot(conn, import_id, statement_snapshot(text))

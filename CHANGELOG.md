@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.28.0] - 2026-08-28
+
+Cztery zgłoszenia użytkownika w jednym wydaniu — patrz `docs/PLAN_0_28_0_ui_porzadki.md`.
+Cel wspólny dla wszystkich czterech: aplikacja czyta dane wyłącznie z wyciągów
+Computershare, wszystko poza tym jest symulacją bez zapisu — bez formularzy, które mogą
+po cichu rozjechać saldo z wyciągiem (trzy takie incydenty w historii: 0.24.2, E9/0.25.0,
+0.27.0).
+
+### Zmieniono
+- **„Stan konta" — ślad „Dywidendy netto" od najnowszej wypłaty.** Po rozwinięciu kafelka
+  lista szła dotąd od najstarszej dywidendy; `breakdown.py::_portfel_dividends_net()`
+  sortuje teraz `ORDER BY pay_date DESC, id DESC`. Kolejność wierszy nie wpływa na
+  wyświetlaną sumę (liczoną niezależnie z `dividends_net_eur`).
+- **`/loty` i `/pit38` tłumaczą, dlaczego trzy polityki kosztu bywają identyczne.** Gdy
+  sprzedaż ma ręcznie wpisaną „Zgłoszoną wartość" (krok 20, `/sales`), silnik wnosi tę
+  samą kwotę kosztu do wszystkich trzech polityk — arkusz użytkownika nie ma trzech
+  wariantów. Nowa `tax/policy.py::reported_override_summary()` + wspólne makro
+  `policy_override_note()` (`_macros.html`) pokazują to jednym zdaniem z linkiem do
+  Sprzedaży, zamiast zostawiać trzy identyczne liczby bez wyjaśnienia. Dane pozostają
+  nietknięte — deklaracja jest już złożona.
+- **`/pit38` bez karty „Co jeśli sprzedam teraz".** Dublowała `/wyplata` gorszą
+  matematyką (uproszczony podatek pojedynczej sprzedaży zamiast modelu rocznego ze
+  stratą z lat ubiegłych). Zastąpiona jedną linią z linkiem do Wypłaty.
+
+### Usunięto
+- **Formularze ręcznego wpisu danych: „Dodaj lot", „Zarejestruj sprzedaż" (`/loty`),
+  ręczny „Stan posiadania" (`/portfolio`), „Dodaj wypłatę dywidendy" (`/dywidendy`)** —
+  wraz z ich trasami zapisu (`POST /lots`, `POST /lots/sell`, `POST /portfolio`,
+  `POST /dividends`) i podglądami JSON (`/api/preview/lot`, `/sale`, `/dividend`). Jedynym
+  źródłem prawdy dla lotów, sprzedaży i dywidend są teraz wyciągi Computershare
+  (`/imports`) — sprzedaż wykrytą w PDF księguje jednym klikiem przycisk „Zatwierdź jako
+  sprzedaż". `/sales` (cofnięcie sprzedaży, „Zgłoszona wartość") i harmonogram dywidend
+  WZA (`/dywidendy`) zostają — to narzędzia korekty i prognozy, nie wprowadzania nowych
+  danych z zewnątrz. Silnik (`tax/lots.py`, `tax/dividends.py`) bez zmian, nadal używany
+  przez importer.
+
 ## [0.27.2] - 2026-08-28
 
 Znalezione przy odpowiadaniu na pytanie „dlaczego podatek od dywidend na Gotówce jest

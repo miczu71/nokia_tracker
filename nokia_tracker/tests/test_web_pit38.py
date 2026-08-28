@@ -1,5 +1,9 @@
 """Trasy /pit38 (+eksporty CSV/XLSX) i /pit38/kreator. Wydzielone z
-`test_web.py` (E3 — docs/ROADMAP_V3.md); fixture `client` w conftest.py."""
+`test_web.py` (E3 — docs/ROADMAP_V3.md); fixture `client`/`seed` w conftest.py.
+
+Etap 3+4 (docs/PLAN_0_28_0_ui_porzadki.md): `POST /lots`/`POST /lots/sell`
+usunięte (zasiew przez `seed`), karta „Co jeśli sprzedam teraz" usunięta z
+/pit38 (dublowała /wyplata gorszą matematyką) — testy `whatif_*` skasowane."""
 import re
 from datetime import datetime
 
@@ -30,15 +34,22 @@ def test_pit38_page_empty_state_shows_disclaimer(client):
     assert "kalkulator pomocniczy" in html
 
 
-def test_pit38_page_shows_three_policies_and_section_g(client, _fake_nbp_rate_pit38):
-    client.post("/lots", data={
-        "acquired_date": "2024-01-10", "lot_type": "own",
-        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
-    })
-    client.post("/lots/sell", data={
-        "sale_date": "2024-06-01", "sale_quantity": "10",
-        "sale_price_eur": "8.0", "sale_fee_eur": "0",
-    })
+def test_pit38_page_shows_policy_override_note_when_reported_value_set(
+        client, seed, _fake_nbp_rate_pit38):
+    seed.lot("2024-01-10", 10, 5.0)
+    seed.sale("2024-06-01", 10, 8.0)
+    client.post("/sales/1/report", data={
+        "reported_revenue_pln": "999.0", "reported_cost_pln": "111.0"})
+
+    html = client.get("/pit38?year=2024").get_data(as_text=True)
+
+    assert "Zgłoszoną wartość" in html
+
+
+def test_pit38_page_shows_three_policies_and_section_g(client, seed, _fake_nbp_rate_pit38):
+    seed.lot("2024-01-10", 10, 5.0)
+    seed.sale("2024-06-01", 10, 8.0)
+
     resp = client.get("/pit38?year=2024")
     html = resp.get_data(as_text=True)
     assert "Tylko własne" in html
@@ -48,72 +59,45 @@ def test_pit38_page_shows_three_policies_and_section_g(client, _fake_nbp_rate_pi
     assert "PIT/ZG" in html
 
 
-def test_pit38_page_year_selector_filters_sale_trace(client, _fake_nbp_rate_pit38):
-    client.post("/lots", data={
-        "acquired_date": "2023-01-10", "lot_type": "own",
-        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
-    })
-    client.post("/lots/sell", data={
-        "sale_date": "2023-06-01", "sale_quantity": "5",
-        "sale_price_eur": "8.0", "sale_fee_eur": "0",
-    })
+def test_pit38_page_year_selector_filters_sale_trace(client, seed, _fake_nbp_rate_pit38):
+    seed.lot("2023-01-10", 5, 5.0)
+    seed.sale("2023-06-01", 5, 8.0)
+
     resp_2023 = client.get("/pit38?year=2023")
     resp_2024 = client.get("/pit38?year=2024")
     assert "2023-01-10" in resp_2023.get_data(as_text=True)
     assert "2023-01-10" not in resp_2024.get_data(as_text=True)
 
 
-def test_pit38_year_selector_lists_years_with_data(client, _fake_nbp_rate_pit38):
+def test_pit38_year_selector_lists_years_with_data(client, seed, _fake_nbp_rate_pit38):
     # Krok 16 (§8.3): selektor to lista lat z rzeczywistymi zdarzeniami, nie
     # gołe pole liczbowe — 2023 (sprzedaż) i bieżący rok muszą się pojawić.
-    client.post("/lots", data={
-        "acquired_date": "2023-01-10", "lot_type": "own",
-        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
-    })
-    client.post("/lots/sell", data={
-        "sale_date": "2023-06-01", "sale_quantity": "5",
-        "sale_price_eur": "8.0", "sale_fee_eur": "0",
-    })
+    seed.lot("2023-01-10", 5, 5.0)
+    seed.sale("2023-06-01", 5, 8.0)
+
     html = client.get("/pit38").get_data(as_text=True)
     assert '<option value="2023"' in html
     assert f'<option value="{datetime.now().year}"' in html
 
 
-def test_pit38_shows_total_due(client, _fake_nbp_rate_pit38):
+def test_pit38_shows_total_due(client, seed, _fake_nbp_rate_pit38):
     # Krok 17: karta "Do wpisania w deklarację" pokazuje RAZEM DO ZAPŁATY =
     # podatek poz. C (wg aktywnej polityki) + dopłata sekcji G. Bez dywidend
     # w tym roku sekcja G = 0, więc razem = sam podatek poz. C: revenue
     # 10*8*4=320 - koszt 10*5*4=200 = 120 dochodu * 19% = 22.80.
-    client.post("/lots", data={
-        "acquired_date": "2024-01-10", "lot_type": "own",
-        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
-    })
-    client.post("/lots/sell", data={
-        "sale_date": "2024-06-01", "sale_quantity": "10",
-        "sale_price_eur": "8.0", "sale_fee_eur": "0",
-    })
+    seed.lot("2024-01-10", 10, 5.0)
+    seed.sale("2024-06-01", 10, 8.0)
+
     resp = client.get("/pit38?year=2024")
     html = resp.get_data(as_text=True)
     assert "RAZEM DO ZAPŁATY" in html
     assert "22.80" in html or "22,80" in html
 
 
-def test_pit38_page_whatif_query_params_render_result(client, _fake_nbp_rate_pit38):
-    client.post("/lots", data={
-        "acquired_date": "2024-01-10", "lot_type": "own",
-        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
-    })
-    resp = client.get("/pit38?whatif_qty=5&whatif_price=8.0")
-    html = resp.get_data(as_text=True)
-    assert resp.status_code == 200
-    # revenue (5*8*4=160) - cost (5*5*4=100) = 60 dochodu * 19% ~ 11.40
-    assert "11.40" in html or "11,40" in html
-
-
-def test_pit38_page_whatif_insufficient_lots_shows_error_not_500(client, _fake_nbp_rate_pit38):
-    resp = client.get("/pit38?whatif_qty=999&whatif_price=8.0")
-    assert resp.status_code == 200
-    assert "Brak pokrycia" in resp.get_data(as_text=True)
+def test_pit38_page_links_to_wyplata_instead_of_whatif(client):
+    html = client.get("/pit38").get_data(as_text=True)
+    assert "whatif_qty" not in html
+    assert 'href="/wyplata"' in html
 
 
 def test_pit38_print_mode_marks_page_for_print(client):
@@ -122,11 +106,9 @@ def test_pit38_print_mode_marks_page_for_print(client):
     assert "print-mode" in html
 
 
-def test_pit38_export_csv_returns_csv_attachment(client, _fake_nbp_rate_pit38):
-    client.post("/lots", data={
-        "acquired_date": "2024-01-10", "lot_type": "own",
-        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
-    })
+def test_pit38_export_csv_returns_csv_attachment(client, seed, _fake_nbp_rate_pit38):
+    seed.lot("2024-01-10", 10, 5.0)
+
     resp = client.get("/pit38/export.csv?year=2024")
     assert resp.status_code == 200
     assert resp.mimetype == "text/csv"
@@ -134,11 +116,9 @@ def test_pit38_export_csv_returns_csv_attachment(client, _fake_nbp_rate_pit38):
     assert "pit38_2024.csv" in resp.headers["Content-Disposition"]
 
 
-def test_pit38_export_xlsx_returns_xlsx_attachment(client, _fake_nbp_rate_pit38):
-    client.post("/lots", data={
-        "acquired_date": "2024-01-10", "lot_type": "own",
-        "quantity": "10", "price_eur": "5.0", "fee_eur": "0",
-    })
+def test_pit38_export_xlsx_returns_xlsx_attachment(client, seed, _fake_nbp_rate_pit38):
+    seed.lot("2024-01-10", 10, 5.0)
+
     resp = client.get("/pit38/export.xlsx?year=2024")
     assert resp.status_code == 200
     assert resp.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -319,5 +299,3 @@ def test_pit38_page_shows_no_loss_message_when_none_available(client):
 def test_pit38_section_g_hidden_when_no_dividends(client):
     html = client.get("/pit38").get_data(as_text=True)
     assert "Brak dywidend w" in html
-
-

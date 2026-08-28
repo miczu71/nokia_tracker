@@ -173,3 +173,74 @@ def test_compute_all_policies_mixes_reported_and_real_sales_in_same_year(conn):
     real_cost = 10 * 5.0 * 4.0
     assert result["own_only"]["revenue_pln"] == pytest.approx(real_revenue + 500.0)
     assert result["own_only"]["cost_pln"] == pytest.approx(real_cost + 50.0)
+
+
+# ---- Etap 2 (docs/PLAN_0_28_0_ui_porzadki.md): dlaczego polityki bywają identyczne ----
+
+def test_reported_override_summary_no_sales(conn):
+    summary = policy.reported_override_summary(conn, _base_cfg())
+    assert summary == {"total": 0, "overridden": 0, "flattens_comparison": False,
+                        "sale_dates": []}
+
+
+def test_reported_override_summary_no_override(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    lots.record_sale(conn, "2024-06-01", 10, 8.0)
+
+    summary = policy.reported_override_summary(conn, _base_cfg())
+
+    assert summary["total"] == 1
+    assert summary["overridden"] == 0
+    assert summary["flattens_comparison"] is False
+    assert summary["sale_dates"] == []
+
+
+def test_reported_override_summary_partial_override_does_not_flatten(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale1 = lots.record_sale(conn, "2024-03-01", 10, 8.0)
+    lots.add_lot(conn, "2024-02-10", "own", 5, 6.0)
+    lots.record_sale(conn, "2024-06-01", 5, 9.0)  # zostaje bez nadpisania
+    conn.execute(
+        "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ? WHERE id = ?",
+        (500.0, 50.0, sale1))
+    conn.commit()
+
+    summary = policy.reported_override_summary(conn, _base_cfg())
+
+    assert summary["total"] == 2
+    assert summary["overridden"] == 1
+    assert summary["flattens_comparison"] is False
+    assert summary["sale_dates"] == ["2024-03-01"]
+
+
+def test_reported_override_summary_full_override_flattens(conn):
+    lots.add_lot(conn, "2024-01-10", "own", 10, 5.0)
+    sale_id = lots.record_sale(conn, "2025-10-27", 10, 8.0)
+    conn.execute(
+        "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ? WHERE id = ?",
+        (999.0, 111.0, sale_id))
+    conn.commit()
+
+    summary = policy.reported_override_summary(conn, _base_cfg())
+
+    assert summary["total"] == 1
+    assert summary["overridden"] == 1
+    assert summary["flattens_comparison"] is True
+    assert summary["sale_dates"] == ["2025-10-27"]
+
+
+def test_reported_override_summary_filters_by_year(conn):
+    lots.add_lot(conn, "2023-01-10", "own", 10, 5.0)
+    sale_2023 = lots.record_sale(conn, "2023-06-01", 10, 8.0)
+    lots.add_lot(conn, "2024-01-10", "own", 5, 5.0)
+    sale_2024 = lots.record_sale(conn, "2024-06-01", 5, 8.0)
+    conn.execute(
+        "UPDATE sales SET reported_revenue_pln = ?, reported_cost_pln = ? WHERE id = ?",
+        (999.0, 111.0, sale_2023))
+    conn.commit()
+
+    summary_2024 = policy.reported_override_summary(conn, _base_cfg(), year=2024)
+
+    assert summary_2024["total"] == 1
+    assert summary_2024["overridden"] == 0
+    assert summary_2024["flattens_comparison"] is False

@@ -1,17 +1,20 @@
-"""Trasy dywidend: /dividends, /dividends/harmonogram, /api/preview/dividend."""
+"""Trasy dywidend: /dividends, /dividends/harmonogram.
+
+Etap 3 (docs/PLAN_0_28_0_ui_porzadki.md): dywidendy trafiają do bazy
+wyłącznie z wyciągów Computershare (`importers/computershare_pdf.py`) —
+ręczny formularz (`POST /dividends`, `GET /api/preview/dividend`) został
+usunięty. Harmonogram (`/dividends/harmonogram`) zostaje — to prognoza z
+ogłoszenia WZA, nie dane z wyciągu."""
 from __future__ import annotations
 
 from flask import Flask, redirect, render_template, request, url_for
 
 from ._context import AppContext
-from ._helpers import _is_future_date
 from .. import __version__
 from .. import db as dbm
 from .. import dividend_outlook as outlookm
 from .. import settings as settingsm
-from ..providers import fx_nbp
 from ..tax import dividends as taxdiv
-from ..tax import trace as taxtrace
 from ..views.dividends import dividends_view
 from ..views.market_context import latest_eurpln_rate
 
@@ -112,124 +115,5 @@ def register_dywidendy_routes(app: Flask, ctx: AppContext) -> None:
             with dbm.WRITE_LOCK:
                 outlookm.delete_instalment(conn, schedule_id)
             return redirect(url_for("dividends_get", saved="1"))
-        finally:
-            conn.close()
-
-    @app.post("/dividends")
-    def dividends_post():
-        """Krok 16: przechodzi przez `taxdiv.add_dividend()` — jedyne miejsce
-        zapisu dywidend (import PDF i formularz ręczny razem), więc kurs NBP
-        zamrożony na Record Date i (opcjonalny) lot DRIP powstają identycznie
-        niezależnie od źródła wpisu. Formularz nadal przyjmuje procent u
-        źródła (nie kwotę), więc przeliczamy go na `taxes_eur` przed
-        wywołaniem — `add_dividend` sam odtworzy ten sam procent z
-        `taxes_eur/gross_eur`."""
-        conn = _conn()
-        try:
-            pay_date = request.form.get("pay_date") or ""
-            if _is_future_date(pay_date):
-                return redirect(url_for(
-                    "dividends_get", error="Data wypłaty nie może być w przyszłości "
-                                           "(NBP nie publikuje kursów na przyszłe daty)"))
-            drip_purchase_date = request.form.get("drip_purchase_date") or None
-            if drip_purchase_date and _is_future_date(drip_purchase_date):
-                return redirect(url_for(
-                    "dividends_get", error="Data reinwestycji nie może być w przyszłości"))
-
-            cfg = settingsm.get_settings(conn)
-            gross_eur = float(request.form.get("gross_eur") or 0)
-            quantity = float(request.form.get("quantity") or 0) or None
-            gross_per_share = float(request.form.get("gross_per_share_eur") or 0) or None
-            withholding_raw = request.form.get("withholding_pct")
-            withholding_pct = (float(withholding_raw) if withholding_raw
-                               else cfg["finnish_withholding_pct"])
-            taxes_eur = gross_eur * withholding_pct / 100
-
-            drip_price_raw = request.form.get("drip_price_eur")
-            drip_shares_raw = request.form.get("drip_shares")
-            purchase_price_eur = float(drip_price_raw) if drip_price_raw else None
-            purchased_shares = float(drip_shares_raw) if drip_shares_raw else None
-
-            # Klucz deterministyczny na treści formularza (nie na czasie zapisu):
-            # przypadkowy podwójny submit tego samego wpisu jest teraz idempotentny
-            # (poprawa względem starego surowego INSERT-a, który dublował wiersz).
-            natural_key = f"manual:{pay_date}:{gross_eur}:{quantity or 0}:{withholding_pct}"
-
-            with dbm.WRITE_LOCK:
-                taxdiv.add_dividend(
-                    conn, record_date=pay_date, entitled_quantity=quantity or 0.0,
-                    gross_eur=gross_eur, taxes_eur=taxes_eur,
-                    gross_per_share_eur=gross_per_share,
-                    purchase_date=drip_purchase_date, purchase_price_eur=purchase_price_eur,
-                    purchased_shares=purchased_shares, natural_key=natural_key)
-            return redirect(url_for("dividends_get", saved="1"))
-        finally:
-            conn.close()
-
-    @app.get("/api/preview/dividend")
-    def preview_dividend():
-        conn = _conn()
-        try:
-            pay_date = request.args.get("pay_date") or ""
-            if not pay_date:
-                return {"ok": False, "error": "Podaj datę wypłaty."}
-            if _is_future_date(pay_date):
-                return {"ok": False, "error": "Data wypłaty nie może być w przyszłości "
-                                              "(NBP nie publikuje kursów na przyszłe daty)."}
-            try:
-                gross_eur = float(request.args.get("gross_eur") or 0)
-            except ValueError:
-                return {"ok": False, "error": "Niepoprawna liczba."}
-            if gross_eur <= 0:
-                return {"ok": False, "error": "Podaj kwotę brutto większą od zera."}
-
-            cfg = settingsm.get_settings(conn)
-            withholding_raw = request.args.get("withholding_pct")
-            withholding_pct = (float(withholding_raw) if withholding_raw
-                               else cfg["finnish_withholding_pct"])
-
-            rate = fx_nbp.rate_for_event(conn, pay_date)
-            if rate is None:
-                return {"ok": False,
-                        "error": f"Brak kursu NBP dla dnia {pay_date} (spróbuj ponownie później)."}
-            nbp_rate, nbp_rate_date = rate
-            gross_pln = gross_eur * nbp_rate
-            tax = taxdiv.compute_dividend_tax_pln(
-                {"gross_pln": gross_pln, "withholding_pct": withholding_pct}, cfg)
-            deriv = taxtrace.fx_derivation(conn, pay_date, nbp_rate, nbp_rate_date, "dywidenda")
-
-            lines = [
-                {"label": "Brutto", "value": round(gross_pln, 2), "unit": "PLN"},
-                {"label": "Pobrane u źródła", "value": tax["withholding_paid_pln"], "unit": "PLN"},
-                {"label": "Belka (19%)", "value": tax["belka_pln"], "unit": "PLN"},
-                {"label": "Dopłata w PL", "value": tax["pl_tax_due_pln"], "unit": "PLN",
-                 "emphasis": True},
-                {"label": "Do odzyskania z Vero", "value": tax["reclaimable_from_finland_pln"],
-                 "unit": "PLN"},
-            ]
-
-            drip_shares_raw = request.args.get("drip_shares")
-            drip_price_raw = request.args.get("drip_price_eur")
-            drip_date = request.args.get("drip_purchase_date")
-            if drip_shares_raw and drip_price_raw and drip_date:
-                try:
-                    drip_shares = float(drip_shares_raw)
-                    drip_price = float(drip_price_raw)
-                    lines.append({
-                        "label": "Powstanie lot",
-                        "value": f"{drip_shares:.4f} akcji @ {drip_price:.4f} EUR ({drip_date})",
-                        "unit": None,
-                    })
-                except ValueError:
-                    pass
-
-            return {
-                "ok": True,
-                "nbp_rate": nbp_rate,
-                "nbp_rate_date": nbp_rate_date,
-                "explanation_pl": deriv["explanation_pl"],
-                "table_urls": deriv.get("urls"),
-                "lines": lines,
-            }
         finally:
             conn.close()

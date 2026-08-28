@@ -1,10 +1,13 @@
-"""Trasy /dividends (+harmonogram) i /api/preview/dividend. Wydzielone z
-`test_web.py` (E3 — docs/ROADMAP_V3.md); fixture `client` w conftest.py.
+"""Trasy /dividends (odczyt) i /dividends/harmonogram. Wydzielone z
+`test_web.py` (E3 — docs/ROADMAP_V3.md); fixture `client`/`seed` w conftest.py.
 
-`_fake_nbp_rate` (baza) i `_fake_nbp_rate_dividends` (stawka + data specyficzna
-dla tego pliku) współistnieją — dokładnie jak w oryginalnym `test_web.py`,
-gdzie obie były zdefiniowane osobno i używane przez różne testy w tym samym
-obszarze."""
+Etap 3 (docs/PLAN_0_28_0_ui_porzadki.md): `POST /dividends` i
+`GET /api/preview/dividend` usunięte — dywidendy pochodzą wyłącznie z
+wyciągów Computershare. Zasiew danych przechodzi przez `seed.dividend()`
+(woła bezpośrednio `tax/dividends.py::add_dividend`, tę samą funkcję, którą
+wołała usunięta trasa) — asercje o skutkach (kwoty PLN, DRIP, kalendarz)
+zostają bez zmiany. `/dividends/harmonogram` (formularz WZA) zostaje —
+to prognoza, nie dane z wyciągu."""
 import pytest
 
 
@@ -13,13 +16,6 @@ def _fake_nbp_rate(monkeypatch):
     monkeypatch.setattr(
         "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
         lambda conn, event_date: (4.0, "stub"))
-
-
-def test_dividends_post_rejects_future_pay_date(client):
-    resp = client.post("/dividends", data={"pay_date": "2099-01-01", "gross_eur": "100.0"})
-    assert resp.status_code == 302
-    resp2 = client.get(resp.headers["Location"])
-    assert "przyszłości" in resp2.get_data(as_text=True)
 
 
 # --- dividends (krok 16: jedno źródło prawdy przez add_dividend, kwoty w PLN) ---
@@ -31,14 +27,10 @@ def _fake_nbp_rate_dividends(monkeypatch):
         lambda conn, event_date: (4.0, "2026-06-12"))
 
 
-def test_dividends_post_computes_tax_and_stores_row(client, _fake_nbp_rate_dividends):
-    resp = client.post("/dividends", data={
-        "pay_date": "2026-06-15", "gross_eur": "100.0", "withholding_pct": "35.0",
-    })
-    assert resp.status_code == 302
+def test_dividends_shows_computed_tax_and_stored_row(client, seed, _fake_nbp_rate_dividends):
+    seed.dividend("2026-06-15", 100.0, withholding_pct=35.0)
 
-    resp2 = client.get("/dividends")
-    html = resp2.get_data(as_text=True)
+    html = client.get("/dividends").get_data(as_text=True)
     assert "2026-06-15" in html
     assert "400.00" in html  # gross_pln = 100 EUR * kurs 4.0
     # przykład BLUEPRINT skalowany kursem 4.0: 4 PLN dopłaty -> 16.00, 20 -> 80.00
@@ -46,29 +38,29 @@ def test_dividends_post_computes_tax_and_stores_row(client, _fake_nbp_rate_divid
     assert "80.00" in html
 
 
-def test_dividends_post_uses_default_withholding_when_blank(client, _fake_nbp_rate_dividends):
-    resp = client.post("/dividends", data={"pay_date": "2026-06-15", "gross_eur": "100.0"})
-    assert resp.status_code == 302
-    resp2 = client.get("/dividends")
+def test_dividends_uses_default_withholding_when_not_set(client, seed, _fake_nbp_rate_dividends):
+    seed.dividend("2026-06-15", 100.0)
+
+    html = client.get("/dividends").get_data(as_text=True)
     # domyślne finnish_withholding_pct=35 -> ten sam wynik co jawne 35.0 powyżej
-    assert "400.00" in resp2.get_data(as_text=True)
+    assert "400.00" in html
 
 
-def test_dividends_post_with_drip_creates_lot_and_shows_reinvestment(
-        client, _fake_nbp_rate_dividends):
-    resp = client.post("/dividends", data={
-        "pay_date": "2026-06-15", "gross_eur": "100.0", "withholding_pct": "35.0",
-        "drip_purchase_date": "2026-06-20", "drip_price_eur": "3.50", "drip_shares": "18.5714",
-    })
-    assert resp.status_code == 302
+def test_dividend_with_drip_creates_lot_and_shows_reinvestment(
+        client, seed, _fake_nbp_rate_dividends):
+    seed.dividend(
+        "2026-06-15", 100.0, withholding_pct=35.0,
+        drip_purchase_date="2026-06-20", drip_price_eur=3.50, drip_shares=18.5714)
+
     html = client.get("/dividends").get_data(as_text=True)
     assert "18.5714" in html
     assert "2026-06-20" in html
     assert "gotówka" not in html
 
 
-def test_dividends_post_without_drip_shows_cash(client, _fake_nbp_rate_dividends):
-    client.post("/dividends", data={"pay_date": "2026-06-15", "gross_eur": "100.0"})
+def test_dividend_without_drip_shows_cash(client, seed, _fake_nbp_rate_dividends):
+    seed.dividend("2026-06-15", 100.0)
+
     html = client.get("/dividends").get_data(as_text=True)
     assert "gotówka" in html
 
@@ -80,21 +72,23 @@ def test_dividends_page_shows_disclaimer(client):
     assert "nie doradztwo podatkowe" in html
 
 
+def test_dividends_page_has_no_manual_entry_form(client):
+    html = client.get("/dividends").get_data(as_text=True)
+    assert 'method="post" action="/dividends"' not in html
+
+
 # --- kalendarz i harmonogram dywidend (krok 30, 0.14.0) ---
 
-def _seed_four_real_dividends(client, monkeypatch):
+def _seed_four_real_dividends(seed, monkeypatch):
     monkeypatch.setattr(
         "nokia_tracker.tax.dividends.fx_nbp.rate_for_event",
         lambda conn, event_date: (4.0, "stub"))
     for pay_date in ["2025-02-20", "2025-05-15", "2025-08-14", "2025-11-13"]:
-        client.post("/dividends", data={
-            "pay_date": pay_date, "gross_eur": "4.0", "quantity": "100.0",
-            "withholding_pct": "35.0",
-        })
+        seed.dividend(pay_date, 4.0, quantity=100.0, withholding_pct=35.0)
 
 
-def test_dividends_page_shows_calendar_and_schedule_cards(client, monkeypatch):
-    _seed_four_real_dividends(client, monkeypatch)
+def test_dividends_page_shows_calendar_and_schedule_cards(client, seed, monkeypatch):
+    _seed_four_real_dividends(seed, monkeypatch)
     html = client.get("/dividends").get_data(as_text=True)
     assert "Kalendarz dywidend" in html
     assert "Ogłoszony harmonogram" in html
@@ -190,8 +184,8 @@ def test_dividend_schedule_delete_removes_row(client):
     assert "2026-02-18" not in html2
 
 
-def test_dividends_lata_query_param_changes_horizon(client, monkeypatch):
-    _seed_four_real_dividends(client, monkeypatch)
+def test_dividends_lata_query_param_changes_horizon(client, seed, monkeypatch):
+    _seed_four_real_dividends(seed, monkeypatch)
     html_1y = client.get("/dividends?lata=1").get_data(as_text=True)
     html_5y = client.get("/dividends?lata=5").get_data(as_text=True)
     assert "1 rok</strong>" in html_1y
@@ -204,11 +198,11 @@ def test_dividends_lata_invalid_value_falls_back_to_default(client):
     assert "3 lata</strong>" in resp.get_data(as_text=True)
 
 
-def test_dividends_totals_unchanged_by_schedule_rows(client, monkeypatch):
+def test_dividends_totals_unchanged_by_schedule_rows(client, seed, monkeypatch):
     """A4 (docs/PLAN_KROK_30_dywidendy.md): projekcja NIGDY nie wchodzi do `totals`
     liczonych z zaksięgowanej historii — dodanie harmonogramu nie może zmienić
     kafelków podsumowania na górze strony."""
-    _seed_four_real_dividends(client, monkeypatch)
+    _seed_four_real_dividends(seed, monkeypatch)
     before = client.get("/dividends").get_data(as_text=True)
     before_summary = before.split("Kalendarz dywidend")[0]
 
@@ -224,11 +218,10 @@ def test_dividends_totals_unchanged_by_schedule_rows(client, monkeypatch):
 
 # --- krok 18: jedna matematyka dywidendowa (PLN na kursie NBP zamrożonym) ---
 
-def test_dividends_totals_use_frozen_nbp_not_current_rate(client, _fake_nbp_rate):
-    client.post("/dividends", data={
-        "pay_date": "2024-06-15", "gross_eur": "100", "withholding_pct": "35"})
-    client.post("/dividends", data={
-        "pay_date": "2024-07-15", "gross_eur": "50", "withholding_pct": "35"})
+def test_dividends_totals_use_frozen_nbp_not_current_rate(client, seed, _fake_nbp_rate):
+    seed.dividend("2024-06-15", 100, withholding_pct=35)
+    seed.dividend("2024-07-15", 50, withholding_pct=35)
+
     html = client.get("/dividends").get_data(as_text=True)
     # Kafelek "Brutto" musi być sumą wierszy tabeli (400.00 + 200.00), oba na
     # zamrożonym kursie NBP 4.0 z fixture'a — nie osobną kalkulacją EUR na
@@ -238,19 +231,14 @@ def test_dividends_totals_use_frozen_nbp_not_current_rate(client, _fake_nbp_rate
     assert '<span class="stat-value">600<span class="stat-unit">PLN</span></span>' in html
 
 
-def test_dividends_yield_on_cost_uses_lots_not_manual_settings(client, _fake_nbp_rate):
+def test_dividends_yield_on_cost_uses_lots_not_manual_settings(client, seed, _fake_nbp_rate):
     import re
-    client.post("/lots", data={
-        "acquired_date": "2024-01-10", "lot_type": "own",
-        "quantity": "100", "price_eur": "3.5", "fee_eur": "0",
-    })
-    client.post("/dividends", data={
-        "pay_date": "2024-06-15", "gross_eur": "100", "withholding_pct": "35"})
+    seed.lot("2024-01-10", 100, 3.5)
+    seed.dividend("2024-06-15", 100, withholding_pct=35)
+
     html = client.get("/dividends").get_data(as_text=True)
     m = re.search(r'Yield on cost</span>\s*<span class="stat-value">([^<]+)', html)
     assert m is not None
     value = m.group(1).strip()
     assert value != "—"
     float(value)  # musi się dać sparsować jako liczba, nie pozostać myślnikiem
-
-

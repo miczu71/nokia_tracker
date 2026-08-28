@@ -111,3 +111,34 @@ def compute_all_policies(conn: sqlite3.Connection, cfg: dict, year: int | None =
         data["delta_vs_active_pln"] = round(data["tax_pln"] - active_tax_pln, 2)
 
     return result
+
+
+def reported_override_summary(conn: sqlite3.Connection, cfg: dict,
+                               year: int | None = None) -> dict:
+    """Etap 2 (docs/PLAN_0_28_0_ui_porzadki.md): wyjaśnienie, DLACZEGO trzy
+    polityki kosztu bywają identyczne — gdy każda sprzedaż w zakresie ma
+    ręcznie ustawione `reported_cost_pln` (krok 20, "Zgłoszona wartość" na
+    /sales), `compute_all_policies()` wnosi tę SAMĄ kwotę kosztu do
+    wszystkich trzech polityk (linie 90-95 wyżej) — arkusz użytkownika nie ma
+    trzech wariantów, więc silnik nie zgaduje. Ten sam filtr roku co
+    `compute_all_policies()`, zero nowej matematyki — tylko odczyt, ile
+    sprzedaży ma nadpisanie."""
+    if year is None:
+        year = cfg.get("tax_year") or None
+
+    query = "SELECT sale_date, reported_cost_pln FROM sales"
+    params: tuple = ()
+    if year:
+        query += " WHERE strftime('%Y', sale_date) = ?"
+        params = (str(year),)
+    rows = conn.execute(query, params).fetchall()
+
+    total = len(rows)
+    overridden_rows = [r for r in rows if r["reported_cost_pln"] is not None]
+    overridden = len(overridden_rows)
+    return {
+        "total": total,
+        "overridden": overridden,
+        "flattens_comparison": overridden > 0 and overridden == total,
+        "sale_dates": [r["sale_date"] for r in overridden_rows],
+    }

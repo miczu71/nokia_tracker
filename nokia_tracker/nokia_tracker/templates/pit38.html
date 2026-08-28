@@ -1,5 +1,6 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, tax_disclaimer, empty_state, LOT_TYPE_LABELS, POLICY_LABELS %}
+{% from "_macros.html" import stat, tax_disclaimer, empty_state, LOT_TYPE_LABELS, POLICY_LABELS,
+                             policy_override_note %}
 {% block title %}PIT-38 — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -48,6 +49,7 @@
 
 <div class="card">
   <div class="card-title">Polityka kosztu — porównanie</div>
+  {{ policy_override_note(override_summary) }}
   <div class="grid stats">
     {% for name, data in report.policies.items() %}
     <div class="stat">
@@ -129,49 +131,12 @@
 </div>
 
 <div class="card no-print">
-  <div class="card-title">„Co jeśli sprzedam teraz"</div>
-  <form class="inline-form" id="whatif-form" method="get" action="{{ url_for('pit38_get') }}">
-    <input type="hidden" name="year" value="{{ year }}">
-    <label>Ilość akcji
-      <input type="number" step="0.0001" name="whatif_qty"
-             value="{{ whatif_qty or '' }}" required>
-    </label>
-    <label>Cena (EUR/akcję)
-      <input type="number" step="0.0001" name="whatif_price"
-             value="{{ whatif_price or current_price or '' }}" required>
-    </label>
-    <button class="btn primary" type="submit">Symuluj</button>
-  </form>
-  <div class="preview-box" id="whatif-preview" hidden></div>
-
-  {% if whatif_error %}
-  <p class="disclaimer error">⚠️ {{ whatif_error }}</p>
-  {% endif %}
-
-  {% if whatif_result %}
-  {% set whatif_active = whatif_result.policies[whatif_result.active_policy] %}
-  <div class="grid stats">
-    <div class="stat">
-      <span class="stat-label">Podatek (aktywna polityka)</span>
-      <span class="stat-value">{{ '%.2f'|format(whatif_active.tax_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Na rękę</span>
-      <span class="stat-value">{{ '%.2f'|format(whatif_result.net_proceeds_pln) }}<span class="stat-unit">PLN</span></span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Efektywna stopa</span>
-      <span class="stat-value">
-        {{ '%.1f'|format(whatif_active.tax_pln / whatif_result.revenue_pln * 100) if whatif_result.revenue_pln else '—' }}
-        <span class="stat-unit">%</span></span>
-    </div>
-  </div>
-  <details class="no-print">
-    <summary>Z których lotów idzie sprzedaż — pełne rozbicie do numeru tabeli NBP</summary>
-    {% set detail = whatif_result.lots_consumed_detailed %}
-    {% include "_alloc_detail.html" %}
-  </details>
-  {% endif %}
+  <div class="card-title">Symulacja sprzedaży</div>
+  <p class="muted">
+    Ile zostanie na rękę i ile akcji sprzedać na daną kwotę: <a class="btn primary"
+    href="{{ url_for('wyplata_get') }}">Wypłata</a> — liczona modelem rocznym, ze stratą
+    z lat ubiegłych (dokładniej niż uproszczony podatek pojedynczej sprzedaży powyżej).
+  </p>
 </div>
 
 <div class="card">
@@ -218,12 +183,6 @@
 {% endblock %}
 {% block scripts %}
 <script>
-NT.initFormPreview({
-  formId: "whatif-form", boxId: "whatif-preview",
-  url: {{ url_for('preview_sale')|tojson }},
-  requiredFields: ["whatif_qty", "whatif_price"],
-  fields: [["whatif_qty", "quantity"], ["whatif_price", "price_eur"]],
-});
 {% if waterfall_pit38.revenue %}
 NT.initWaterfallChart("pit38-waterfall", {{ waterfall_pit38|tojson }});
 {% endif %}

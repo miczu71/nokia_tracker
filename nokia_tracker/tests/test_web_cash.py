@@ -18,11 +18,12 @@ def test_cash_page_shows_no_broker_balance_as_missing_not_zero(client):
     assert "brak danych" in html.lower()
 
 
-def test_cash_page_year_selector_filters(client):
-    client.post("/lots", data={
-        "acquired_date": "2023-01-10", "lot_type": "own",
-        "quantity": "5", "price_eur": "5.0", "fee_eur": "0",
-    })
+def test_cash_page_year_selector_filters(client, seed, monkeypatch):
+    monkeypatch.setattr(
+        "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
+        lambda conn, event_date: (4.0, "stub"))
+    seed.lot("2023-01-10", 5, 5.0)
+
     resp = client.get("/gotowka?year=2023")
     assert resp.status_code == 200
 

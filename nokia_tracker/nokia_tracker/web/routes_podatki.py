@@ -14,17 +14,14 @@ from ._helpers import _is_future_date
 from .. import __version__
 from .. import cash as cashm
 from .. import db as dbm
-from .. import sensors
 from .. import settings as settingsm
 from ..exports import pit38 as exports_pit38
 from ..providers import fx_nbp
 from ..tax import dividends as taxdiv
 from ..tax import losses as taxlosses
-from ..tax import lots as taxlots
 from ..tax import pit38 as taxpit38
-from ..tax import whatif as taxwhatif
+from ..tax import policy as taxpolicy
 from ..views.cash import cash_view
-from ..views.market_context import instrument_ids as _ids
 from ..views.pit38 import waterfall
 
 
@@ -64,26 +61,14 @@ def register_podatki_routes(app: Flask, ctx: AppContext) -> None:
         try:
             cfg, year, report = _pit38_report_for_request(conn)
 
-            whatif_result = None
-            whatif_error = None
-            qty_raw = request.args.get("whatif_qty")
-            price_raw = request.args.get("whatif_price")
-            if qty_raw and price_raw:
-                try:
-                    whatif_result = taxwhatif.simulate_sale(
-                        conn, cfg, float(qty_raw), float(price_raw))
-                except (taxlots.InsufficientLotsError, taxlots.CostBasisMissingError) as e:
-                    whatif_error = str(e)
-
-            current_price = sensors.market_values(conn, _ids(conn)["primary"]).get("price_eur")
             waterfall_pit38 = waterfall(report, cfg)
+            override_summary = taxpolicy.reported_override_summary(conn, cfg, year=year)
 
             return render_template(
                 "pit38.html", active="pit38", version=__version__,
                 year=year, report=report, cfg=cfg,
-                whatif_result=whatif_result, whatif_error=whatif_error,
-                whatif_qty=qty_raw, whatif_price=price_raw,
-                current_price=current_price, waterfall_pit38=waterfall_pit38,
+                waterfall_pit38=waterfall_pit38,
+                override_summary=override_summary,
                 print_mode=request.args.get("print") == "1")
         finally:
             conn.close()

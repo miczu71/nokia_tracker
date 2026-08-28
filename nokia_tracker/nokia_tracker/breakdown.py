@@ -509,9 +509,13 @@ def _portfel_dividends_net(conn: sqlite3.Connection, ctx: BreakdownCtx, cfg: dic
     if eurpln_rate is None:
         return None
     shown = round(dividends["dividends_net_eur"] * eurpln_rate, 2)
+    # Etap 1 (docs/PLAN_0_28_0_ui_porzadki.md): od najnowszej — użytkownik czyta
+    # rozwinięty ślad na Stanie konta i chce najpierw ostatnią wypłatę, nie
+    # najstarszą. `shown` liczone niezależnie z `dividends_net_eur` (nie sumą
+    # `components`), więc kolejność wierszy nie wpływa na domykanie sumy.
     rows = conn.execute(
         "SELECT pay_date, gross_eur, withholding_pct, natural_key FROM dividends "
-        "ORDER BY pay_date").fetchall()
+        "ORDER BY pay_date DESC, id DESC").fetchall()
     if not rows:
         return None
     components = []

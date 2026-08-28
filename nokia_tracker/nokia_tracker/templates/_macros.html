@@ -86,6 +86,36 @@
                         'all_at_acquisition': 'Wszystkie w wartości nabycia'} %}
 
 {#
+  policy_override_note(summary)
+
+  Etap 2 (docs/PLAN_0_28_0_ui_porzadki.md): wyjaśnienie na /loty i /pit38,
+  DLACZEGO trzy polityki kosztu bywają identyczne — `summary` to wynik
+  `tax/policy.py::reported_override_summary()`. Jedno wspólne miejsce, żeby
+  obie strony nigdy nie rozjechały się tekstem. Nic nie renderuje, gdy żadna
+  sprzedaż nie ma nadpisania (`overridden == 0` — dziś stan domyślny).
+#}
+{% macro policy_override_note(summary) %}
+{% if summary.overridden %}
+{% set sprzedaz_slowo = 'sprzedaż' if summary.overridden == 1 else 'sprzedaże' %}
+{% set ma_slowo = 'ma' if summary.overridden == 1 else 'mają' %}
+<p class="disclaimer">
+  ℹ️
+  {%- if summary.flattens_comparison %}
+  Wszystkie trzy polityki pokazują tę samą kwotę, bo {{ sprzedaz_slowo }}
+  ({{ summary.sale_dates|join(', ') }}) {{ ma_slowo }} ręcznie wpisaną
+  <strong>Zgłoszoną wartość</strong> — ta sama kwota kosztu wchodzi wtedy do każdej polityki,
+  {%- else %}
+  {{ summary.overridden }} z {{ summary.total }} sprzedaży ({{ summary.sale_dates|join(', ') }})
+  ma ręcznie wpisaną <strong>Zgłoszoną wartość</strong> — ta sama kwota kosztu wchodzi wtedy do
+  tej sprzedaży w każdej polityce,
+  {%- endif %}
+  bo ręczny arkusz nie ma trzech wariantów kosztu jak silnik. Zdejmij nadpisanie na
+  <a href="{{ url_for('sales_get') }}">Sprzedażach</a>, żeby zobaczyć, jak liczy silnik.
+</p>
+{% endif %}
+{% endmacro %}
+
+{#
   cur_block(pln, eur, pln_unit='zł', eur_unit='EUR', cls='')
 
   Krok 28.1 (docs/PLAN_KROK_28_ux_mobile.md): globalny przełącznik waluty w nagłówku.

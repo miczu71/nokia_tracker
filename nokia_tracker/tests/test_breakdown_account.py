@@ -147,6 +147,21 @@ def test_dividends_net_trace_closes_with_many_dividends(conn):
     assert len(d.components) == 9
 
 
+def test_dividends_net_trace_lists_newest_first(conn):
+    # Etap 1 (docs/PLAN_0_28_0_ui_porzadki.md): kafelek "Dywidendy netto" na
+    # Stanie konta rozwija ślad od najnowszej wypłaty, nie najstarszej.
+    from nokia_tracker.tax import dividends as taxdiv
+    for i in range(9):
+        taxdiv.add_dividend(conn, f"2026-0{(i % 9) + 1}-15", 10.3 + i, gross_eur=5.17 + i * 0.31,
+                            taxes_eur=1.81 + i * 0.11, natural_key=f"div{i}")
+    cfg = settingsm.get_settings(conn)
+    traces, failures = _traces(conn, cfg)
+    assert failures == [], [f.key for f in failures]
+    d = traces["portfel.dividends_net"]
+    pay_dates = [c.label.removeprefix("dywidenda ") for c in d.components]
+    assert pay_dates == sorted(pay_dates, reverse=True)
+
+
 def test_cash_traces_close_with_sale_payment_and_broker_balance(conn):
     taxlots.add_lot(conn, "2020-01-01", "own", 100.0, 3.0, source="manual")
     taxlots.record_sale(conn, "2026-07-28", 10.0, 8.0)

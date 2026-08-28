@@ -11,13 +11,14 @@ from nokia_tracker import cash
 
 def _add_lot(conn, acquired_date, quantity, price_eur, lot_type="own",
              nbp_rate=4.0, nbp_rate_date=None):
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO lots (acquired_date, lot_type, quantity, price_eur, fee_eur, "
         "nbp_rate, nbp_rate_date, cost_pln, qty_remaining) "
         "VALUES (?,?,?,?,0,?,?,?,?)",
         (acquired_date, lot_type, quantity, price_eur, nbp_rate,
          nbp_rate_date or acquired_date, quantity * price_eur * nbp_rate, quantity))
     conn.commit()
+    return cur.lastrowid
 
 
 def _add_sale(conn, sale_date, quantity, price_eur, fee_eur=0.0, nbp_rate=4.0,
@@ -34,15 +35,19 @@ def _add_sale(conn, sale_date, quantity, price_eur, fee_eur=0.0, nbp_rate=4.0,
 
 
 def _add_dividend(conn, pay_date, gross_eur, net_received_eur, reinvested_lot_id=None,
-                   quantity=1.0):
+                   quantity=1.0, gross_pln=None, withholding_pct=None):
     # quantity > 0 i notes puste to dokładnie kryterium "realnego" wiersza w
     # tax/dividends.py::payouts() (real_row_count) — testy tu odtwarzają
     # transakcyjny wiersz z wyciągu, nie odtworzony szacunek.
+    # gross_pln/withholding_pct domyślnie None (zachowanie sprzed 0.27.2) —
+    # bez gross_pln sekcja G PIT-38 pomija wiersz (tax/pit38.py::_section_g),
+    # więc testy tax_liability() potrzebujące realnej dopłaty muszą je podać.
     conn.execute(
         "INSERT INTO dividends (pay_date, gross_eur, withholding_paid_eur, "
-        "net_received_eur, reinvested_lot_id, quantity) VALUES (?,?,?,?,?,?)",
+        "net_received_eur, reinvested_lot_id, quantity, gross_pln, withholding_pct) "
+        "VALUES (?,?,?,?,?,?,?,?)",
         (pay_date, gross_eur, gross_eur - net_received_eur, net_received_eur,
-         reinvested_lot_id, quantity))
+         reinvested_lot_id, quantity, gross_pln, withholding_pct))
     conn.commit()
 
 
@@ -177,6 +182,55 @@ def test_add_and_delete_tax_payment(conn):
 
 def test_delete_tax_payment_missing_id_returns_false(conn):
     assert cash.delete_tax_payment(conn, 9999) is False
+
+
+def test_tax_liability_exposes_reclaimable_from_finland(conn):
+    # Finlandia pobiera 35% u źródła, umowa PL-FI przewiduje 15% — Polska
+    # zalicza tylko stawkę traktatową, więc credit = min(35%, 15%) = 15 PLN,
+    # dopłata w PL = 19% Belki - 15% zaliczenia = 4 PLN, nadwyżka 35-15=20 PLN
+    # jest do odzyskania z Vero, nie z PIT-38 (0.27.2 fix).
+    cfg = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0,
+           "treaty_withholding_pct": 15.0}
+    _add_dividend(conn, "2026-05-01", gross_eur=10.0, net_received_eur=6.5,
+                  gross_pln=100.0, withholding_pct=35.0)
+    result = cash.tax_liability(conn, cfg, 2026)
+    assert result["reclaimable_from_finland_pln"] == pytest.approx(20.0)
+    assert result["due_from_dividends_pln"] == pytest.approx(4.0)
+    assert result["due_pln"] == pytest.approx(4.0)
+
+
+def test_tax_liability_reclaimable_does_not_reduce_outstanding(conn):
+    cfg = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0,
+           "treaty_withholding_pct": 15.0}
+    _add_dividend(conn, "2026-05-01", gross_eur=10.0, net_received_eur=6.5,
+                  gross_pln=100.0, withholding_pct=35.0)
+    cash.add_tax_payment(conn, 2026, "2026-06-01", 1.0, "częściowa wpłata")
+    result = cash.tax_liability(conn, cfg, 2026)
+    assert result["reclaimable_from_finland_pln"] == pytest.approx(20.0)
+    assert result["outstanding_pln"] == pytest.approx(result["due_pln"] - 1.0)
+
+
+def test_tax_liability_due_splits_into_sales_and_dividends(conn):
+    # compute_all_policies() liczy dochód z sale_allocations (koszt per lot),
+    # nie z surowych sales/lots (patrz tax/policy.py:70) — _add_sale/_add_lot
+    # tego nie tworzą (celowo, żeby nie zależeć od fx_nbp w tym pliku), więc
+    # tu wstawiamy alokację wprost: przychód 2000 PLN - koszt 1200 PLN = 800
+    # dochodu, 19% = 152 PLN należnego z poz. C.
+    cfg = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0,
+           "treaty_withholding_pct": 15.0}
+    sale_id = _add_sale(conn, "2026-06-01", 100.0, 5.0, revenue_pln=2000.0)
+    lot_id = _add_lot(conn, "2024-01-01", 100.0, 3.0)
+    conn.execute(
+        "INSERT INTO sale_allocations (sale_id, lot_id, quantity, cost_pln, "
+        "revenue_pln) VALUES (?,?,100.0,1200.0,2000.0)", (sale_id, lot_id))
+    conn.commit()
+    _add_dividend(conn, "2026-05-01", gross_eur=10.0, net_received_eur=6.5,
+                  gross_pln=100.0, withholding_pct=35.0)
+    result = cash.tax_liability(conn, cfg, 2026)
+    assert result["due_from_sales_pln"] == pytest.approx(152.0)
+    assert result["due_from_dividends_pln"] == pytest.approx(4.0)
+    assert (result["due_from_sales_pln"] + result["due_from_dividends_pln"]
+            == pytest.approx(result["due_pln"]))
 
 
 # --- broker_balance / broker_history / record_broker_balance ---

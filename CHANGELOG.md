@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.27.2] - 2026-08-28
+
+Znalezione przy odpowiadaniu na pytanie „dlaczego podatek od dywidend na Gotówce jest
+dodatni, skoro część została już zapłacona w Finlandii i można ją odzyskać".
+
+### Dodano
+- **`/gotowka` pokazuje odzysk z Vero i skład podatku.** Karta „Podatek PIT-38"
+  dostaje kafelek „Do odzyskania z Vero" (nadwyżka podatku pobranego w Finlandii
+  ponad stawkę traktatową — Polska zalicza na poczet Belki tylko 15%, więc np. przy
+  35% pobranym u źródła 20 pp nigdy nie trafia do polskiego zobowiązania i wraca
+  wnioskiem do fińskiego Vero, nie przez PIT-38) oraz podpis pod kafelkiem „Należny"
+  rozbijający kwotę na sprzedaż vs dywidendy. `cash.py::tax_liability()` dokłada trzy
+  pola (`due_from_sales_pln`, `due_from_dividends_pln`, `reclaimable_from_finland_pln`)
+  czytane z już policzonego `tax/pit38.py::annual_report` — zero nowej matematyki.
+  Twarda zasada: kwota do odzyskania z Vero NIGDY nie pomniejsza „Do zapłaty" — to
+  inny urząd, inne zobowiązanie.
+
 ## [0.27.1] - 2026-08-28
 
 Znalezione przy odpowiadaniu na pytanie „skąd wartość podatku na ekranie Gotówka za

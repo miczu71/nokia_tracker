@@ -86,6 +86,27 @@ def test_dividend_flow_shown_as_cashless(client):
     assert "bezgotówk" in html.lower()
 
 
+def test_cash_page_shows_vero_reclaimable_when_dividend_withheld_above_treaty(tmp_path):
+    # Regresja 0.27.2: podatek dywidendowy pobrany w Finlandii powyżej stawki
+    # traktatowej (typowo 35% zamiast 15%) generuje nadwyżkę do odzyskania
+    # z Vero, nie z PIT-38 — /gotowka musi to pokazać, nie tylko /pit38.
+    db_path = str(tmp_path / "cash_vero.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO dividends (pay_date, gross_eur, withholding_paid_eur, "
+        "net_received_eur, quantity, gross_pln, withholding_pct) VALUES "
+        "('2026-05-01', 10.0, 3.5, 6.5, 1.0, 100.0, 35.0)")
+    conn.commit()
+    conn.close()
+    app = create_app(db_path)
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        html = c.get("/gotowka?year=2026").get_data(as_text=True)
+        assert "Vero" in html
+        assert "20.00" in html  # nadwyżka do odzyskania: 35% - 15% z 100 PLN
+
+
 def test_cash_page_shows_cumulative_proceeds_for_year_without_sales(tmp_path):
     # Regresja 0.27.1: kafelek „Łącznie (wszystkie lata)" musi pokazać sumę
     # sprzedaży z ROKU POPRZEDNIEGO, nawet gdy wybrany rok nie ma żadnej —

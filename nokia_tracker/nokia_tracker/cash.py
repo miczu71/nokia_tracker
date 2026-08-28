@@ -143,7 +143,17 @@ def tax_liability(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
     """Saldo zobowiązania PIT-38: `total_due_pln` z
     `tax/pit38.py::annual_report` (zero nowej matematyki) minus suma
     `tax_payments` faktycznie zapłaconych za `year`. Termin 30.04 roku
-    następnego (ustawowy termin złożenia PIT-38 i zapłaty)."""
+    następnego (ustawowy termin złożenia PIT-38 i zapłaty).
+
+    0.27.2: dokłada trzy pola czytane z tego samego już policzonego
+    `report` — `due_from_sales_pln`/`due_from_dividends_pln` (rozbicie
+    `due_pln`, z definicji sumują się do niego, patrz `tax/pit38.py:133`)
+    i `reclaimable_from_finland_pln` (nadwyżka ponad stawkę traktatową,
+    którą Finlandia pobrała u źródła — `tax/dividends.py::compute_dividend_tax_pln`).
+    TWARDA ZASADA: `reclaimable_from_finland_pln` NIGDY nie pomniejsza
+    `outstanding_pln` — to zwrot od Vero (fiński urząd), zupełnie inne
+    zobowiązanie niż polski PIT-38; ten sam rozdział, którego pilnuje
+    `dividend_outlook.py` (patrz jego docstring, linia ~194)."""
     report = taxpit38.annual_report(conn, cfg, year)
     due_pln = report["total_due_pln"]
 
@@ -157,6 +167,9 @@ def tax_liability(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
     return {
         "year": year,
         "due_pln": due_pln,
+        "due_from_sales_pln": report["loss_carryforward"]["tax_after_loss_pln"],
+        "due_from_dividends_pln": report["section_g"]["pl_tax_due_pln"],
+        "reclaimable_from_finland_pln": report["section_g"]["reclaimable_from_finland_pln"],
         "paid_pln": round(paid_pln, 2),
         "outstanding_pln": round(due_pln - paid_pln, 2),
         "deadline": deadline,

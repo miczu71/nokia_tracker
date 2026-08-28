@@ -100,13 +100,29 @@
 <div class="card">
   <div class="card-title">Podatek PIT-38 — {{ year }}</div>
   <div class="grid stats">
-    {{ stat('Należny', '%.2f'|format(tax_liability.due_pln), 'PLN') }}
+    {{ stat('Należny', '%.2f'|format(tax_liability.due_pln), 'PLN',
+            sub='w tym dywidendy %.2f · sprzedaż %.2f'|format(
+              tax_liability.due_from_dividends_pln, tax_liability.due_from_sales_pln)) }}
     {{ stat('Zapłacony', '%.2f'|format(tax_liability.paid_pln), 'PLN') }}
     {{ stat('Do zapłaty', '%.2f'|format(tax_liability.outstanding_pln), 'PLN',
             cls='highlight' if tax_liability.outstanding_pln > 0 else 'good') }}
     {{ stat('Termin', tax_liability.deadline,
             sub=(tax_liability.days_to_deadline|string) + ' dni') }}
+    {% if tax_liability.reclaimable_from_finland_pln > 0 %}
+    {{ stat('Do odzyskania z Vero', '%.2f'|format(tax_liability.reclaimable_from_finland_pln), 'PLN',
+            cls='muted', sub='z Vero, nie z PIT-38') }}
+    {% endif %}
   </div>
+
+  {% if tax_liability.reclaimable_from_finland_pln > 0 %}
+  <p class="muted">
+    Finlandia pobiera u źródła więcej niż przewiduje umowa PL–FI (zwykle 35% bez
+    certyfikatu rezydencji zamiast 15%) — Polska zalicza na poczet Belki (19%)
+    tylko stawkę traktatową, więc różnica ({{ '%.2f'|format(tax_liability.reclaimable_from_finland_pln) }} PLN)
+    nie pomniejsza podatku należnego w PL. Odzyskuje się ją wnioskiem do fińskiego
+    Vero, nie przez PIT-38. Pełne rozbicie: <a href="{{ url_for('pit38_get', year=year) }}">/pit38</a>.
+  </p>
+  {% endif %}
 
   {% if tax_payments %}
   <div class="table-wrap">

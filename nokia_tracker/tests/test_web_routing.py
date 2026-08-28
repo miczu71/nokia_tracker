@@ -65,7 +65,8 @@ def test_template_scan_is_not_vacuous():
 def _parameterless_get_paths(app) -> list[str]:
     return sorted(
         rule.rule for rule in app.url_map.iter_rules()
-        if rule.endpoint not in ("static", "assistant_api")
+        if rule.endpoint not in (
+            "static", "assistant_api", "wyplata_document_html", "wyplata_document_pdf")
         and not rule.arguments
         and "GET" in (rule.methods or set()))
 
@@ -76,7 +77,14 @@ def test_every_parameterless_get_route_renders(app):
     rozwiązywane. Lista tras pochodzi z `app.url_map`, nie z ręcznego
     wykazu — nowa trasa jest objęta testem automatycznie, w dniu dodania.
     `assistant_api` pominięty: bez `?q=` i tak woła żywe AI
-    (`ai_chat.ask(conn, cfg, "")`)."""
+    (`ai_chat.ask(conn, cfg, "")`). `wyplata_document_html`/`wyplata_document_pdf`
+    (E10, docs/PLAN_E10_dokumenty.md) pominięte z innego powodu niż oba
+    wyżej: renderują `doc_base.html`, NIE `base.html` — nie dotyczy ich
+    inwariant tego testu (NAV_GROUPS) w ogóle — a bez parametrów symulacji
+    świadomie zwracają 400, nie 200 (nie ma czego udokumentować); to
+    zachowanie ma własne testy w `test_web_documents.py`
+    (`test_wyplata_document_html_400_without_input`,
+    `test_wyplata_document_pdf_400_without_input`)."""
     with app.test_client() as c:
         results = [(p, c.get(p).status_code) for p in _parameterless_get_paths(app)]
     broken = [(p, code) for p, code in results if code != 200]

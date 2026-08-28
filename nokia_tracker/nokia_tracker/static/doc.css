@@ -1,0 +1,131 @@
+/* Dokumenty dowodowe (E10, docs/PLAN_E10_dokumenty.md) — wklejane jako
+   <style> w doc_base.html, NIGDY serwowane pod /static/doc.css bezpośrednio
+   (dokument ma być samodzielnym plikiem). Świadomie osobne od app.css:
+   - jeden, jasny motyw — dokument dowodowy wydrukowany w trybie ciemnym
+     wygląda jak błąd, nie jak funkcja;
+   - font-stack dopasowany do tego, co Etap 4 instaluje w kontenerze
+     (Alpine + font-dejavu) — HTML i przyszły PDF mają wyglądać identycznie;
+   - @page/liczniki stron mają sens wyłącznie tutaj (dokument), nie na
+     żadnej stronie aplikacji. */
+
+:root {
+  --ink: #1a1a1a;
+  --muted: #5a5a5a;
+  --border: #c9c9c9;
+  --grid: #f0f0ee;
+  --good: #1a7a3c;
+  --bad: #a3231a;
+  --warn-bg: #fdf3e3;
+  --warn-border: #d9a441;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0; padding: 24px 32px 48px;
+  background: #ffffff; color: var(--ink);
+  font-family: "Liberation Sans", "DejaVu Sans", Arial, sans-serif;
+  font-size: 13px; line-height: 1.5;
+}
+
+h1, h2, h3 {
+  font-family: "Liberation Serif", "DejaVu Serif", Georgia, serif;
+  font-weight: 700; margin: 0 0 8px;
+}
+h1 { font-size: 22px; }
+h2 { font-size: 16px; margin-top: 28px; }
+h3 { font-size: 13px; margin-top: 16px; }
+
+p { margin: 6px 0; }
+.muted { color: var(--muted); }
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+
+.doc-header {
+  border-bottom: 2px solid var(--ink); padding-bottom: 14px; margin-bottom: 20px;
+}
+.doc-brand {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--muted);
+}
+.doc-scope { font-size: 14px; margin: 2px 0 12px; }
+
+.doc-meta {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 24px; margin: 0; font-size: 12px;
+}
+.doc-meta > div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dotted var(--border); padding: 2px 0; }
+.doc-meta dt { color: var(--muted); }
+.doc-meta dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+
+.doc-legal-basis { font-size: 12px; margin-top: 10px; }
+
+.disclaimer {
+  background: var(--grid); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 12px; font-size: 12px; margin: 12px 0 0;
+}
+
+.doc-callout {
+  background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 4px;
+  padding: 10px 14px; margin: 12px 0; font-size: 12px;
+}
+.doc-callout strong { display: block; margin-bottom: 4px; }
+
+.doc-section { margin: 0 0 24px; break-inside: avoid; }
+
+table.doc-table {
+  width: 100%; border-collapse: collapse; font-size: 12px; margin: 8px 0;
+}
+table.doc-table thead { display: table-header-group; }
+table.doc-table th, table.doc-table td {
+  border: 1px solid var(--border); padding: 5px 8px; text-align: left;
+  vertical-align: top;
+}
+table.doc-table th { background: var(--grid); font-weight: 700; }
+table.doc-table td.num, table.doc-table th.num {
+  text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+table.doc-table tr.doc-new-sale td { border-top: 2px solid var(--ink); }
+
+.doc-stats {
+  /* flex, nie grid auto-fit/auto-fill — WeasyPrint nie wspiera tych dwóch
+     słów kluczowych repeat() (ostrzeżenie w logu, cichy fallback na jedną
+     kolumnę); flex-wrap daje ten sam efekt wizualny i działa identycznie
+     w przeglądarce i w PDF. */
+  display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0;
+}
+.doc-stat {
+  flex: 1 1 140px; border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px;
+}
+.doc-stat .doc-stat-label { display: block; font-size: 11px; color: var(--muted); }
+.doc-stat .doc-stat-value { display: block; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.doc-stat.highlight { border-color: var(--ink); }
+
+.doc-trace {
+  border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px;
+  margin: 10px 0; break-inside: avoid;
+}
+.doc-trace-title { font-weight: 700; margin-bottom: 4px; }
+.doc-trace-formula, .doc-trace-note { font-size: 11px; color: var(--muted); margin: 6px 0 0; }
+
+.doc-fail {
+  border: 1px solid var(--bad); border-radius: 4px; padding: 6px 10px;
+  margin: 6px 0; font-size: 12px; color: var(--bad);
+}
+
+footer.doc-footer {
+  margin-top: 32px; padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: 11px; color: var(--muted);
+}
+
+@page {
+  size: A4; margin: 18mm 15mm 20mm;
+  @bottom-left { content: "Nokia Tracker — dokument dowodowy"; font-size: 9px; color: #666; }
+  @bottom-right { content: "Strona " counter(page) " z " counter(pages); font-size: 9px; color: #666; }
+}
+
+@media print {
+  body { padding: 0; font-size: 11.5px; }
+  .doc-section, .doc-trace, table.doc-table tr { break-inside: avoid; }
+}

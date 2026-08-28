@@ -1,0 +1,11 @@
+# E10 (docs/PLAN_E10_dokumenty.md), Etap 4: silnik PDF dla dokumentów
+# dowodowych. Osobny plik od requirements.txt — instalowany z
+# --only-binary=:all: (Dockerfile), żeby na architekturze bez gotowych kół
+# (armv7) pip padał NATYCHMIAST zamiast kompilować Pillow/cffi/brotli/zopfli
+# pod QEMU (30-60 min). Nieudana instalacja tego pliku degraduje dodatek do
+# eksportu HTML-only (exports/pdf.py::available() == False), nie wywala buildu.
+#
+# Tylko bezpośrednia zależność przypięta — transitywne (pydyf, cffi,
+# tinyhtml5, tinycss2, cssselect2, Pyphen, Pillow, fonttools) rozwiązują się
+# same, tak jak już dziś robi to anthropic==0.120.0 w requirements.txt.
+weasyprint==69.0

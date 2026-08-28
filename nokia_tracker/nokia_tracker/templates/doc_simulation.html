@@ -1,0 +1,101 @@
+{% extends "doc_base.html" %}
+{% from "_doc_macros.html" import doc_trace %}
+
+{% block doc_extra_notice %}
+<div class="doc-callout">
+  <strong>To projekcja, nie zdarzenie zgłoszone.</strong>
+  Symulacja odzwierciedla stan lotów i kurs NBP na dzień wygenerowania tego
+  dokumentu. Po zaksięgowaniu nowych zdarzeń (nowa sprzedaż, nowy grant,
+  aktualizacja kursu) ten sam adres pod `/wyplata` może dać inny wynik — ten
+  dokument NIE jest dowodem zdarzenia, które się wydarzyło, tylko zapisem
+  „co by było, gdyby sprzedać na tych warunkach dzisiaj".
+</div>
+{% endblock %}
+
+{% block doc_content %}
+<section class="doc-section">
+  <h2>Parametry symulacji</h2>
+  <table class="doc-table">
+    <tbody>
+      <tr><td>Kierunek</td><td class="num">
+        {{ 'Kwota docelowa netto' if params.direction == 'target' else 'Ilość akcji' }}</td></tr>
+      {% if params.direction == 'target' %}
+      <tr><td>Cel — kwota netto</td><td class="num">{{ '%.2f'|format(params.target_net_pln) }} PLN</td></tr>
+      {% else %}
+      <tr><td>Wpisana ilość akcji</td><td class="num">{{ '%.4f'|format(params.quantity) }} szt.</td></tr>
+      {% endif %}
+      <tr><td>Cena</td><td class="num">{{ '%.4f'|format(params.price_eur) }} EUR/akcję</td></tr>
+      <tr><td>Prowizja</td><td class="num">{{ '%.2f'|format(params.fee_pct) }}%</td></tr>
+      <tr><td>Data sprzedaży</td><td class="num">{{ params.sale_date }}</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">
+    Odtworzenie tego wyniku pod `/wyplata` (stan lotów na dzień odtworzenia może
+    dać inną liczbę — patrz zastrzeżenie wyżej):<br>
+    <code>{{ replay_query }}</code>
+  </p>
+</section>
+
+<section class="doc-section">
+  <h2>Wynik</h2>
+  <div class="doc-stats">
+    <div class="doc-stat"><span class="doc-stat-label">Ilość akcji</span>
+      <span class="doc-stat-value">{{ '%.4f'|format(result.quantity) }} szt.</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Brutto</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(result.gross_eur) }} EUR</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Przychód</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(result.revenue_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Koszt FIFO</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(result.cost_fifo_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Dochód roku</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(result.income_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Wykorzystana strata</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(result.usable_loss_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Podatek</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(result.tax_pln) }} PLN</span></div>
+    <div class="doc-stat highlight"><span class="doc-stat-label">Na rękę</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(result.net_pln) }} PLN</span></div>
+  </div>
+  {% if result.forfeit_value_pln %}
+  <p class="muted">
+    Przepadek dopasowania ESPP: {{ '%.4f'|format(result.forfeit_qty) }} szt.
+    ({{ '%.2f'|format(result.forfeit_value_pln) }} PLN) — patrz ślad „Przepadek
+    dopasowania ESPP" poniżej.
+  </p>
+  {% endif %}
+</section>
+
+<section class="doc-section">
+  <h2>Ślad obliczeń — skąd każda liczba</h2>
+  {{ doc_trace(result.traces.get('wyplata.quantity')) }}
+  {{ doc_trace(result.traces.get('wyplata.gross_eur')) }}
+  {{ doc_trace(result.traces.get('wyplata.revenue_pln')) }}
+  {{ doc_trace(result.traces.get('wyplata.cost_fifo')) }}
+  {{ doc_trace(result.traces.get('wyplata.income')) }}
+  {{ doc_trace(result.traces.get('wyplata.usable_loss')) }}
+  {{ doc_trace(result.traces.get('wyplata.tax')) }}
+  {{ doc_trace(result.traces.get('wyplata.net')) }}
+  {{ doc_trace(result.traces.get('wyplata.forfeit')) }}
+</section>
+
+{% if result.timing and result.timing.today and result.timing.jan2_next_year %}
+<section class="doc-section">
+  <h2>Ta sama sprzedaż dziś vs 2 stycznia kolejnego roku</h2>
+  <table class="doc-table">
+    <thead>
+      <tr><th></th><th class="num">Dziś ({{ result.timing.today.sale_date }})</th>
+          <th class="num">2 stycznia ({{ result.timing.jan2_next_year.sale_date }})</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Podatek po wykorzystaniu straty</td>
+        <td class="num">{{ '%.2f'|format(result.timing.today.tax_with_max_loss_pln) }} PLN</td>
+        <td class="num">{{ '%.2f'|format(result.timing.jan2_next_year.tax_with_max_loss_pln) }} PLN</td></tr>
+      <tr><td>Przepadek dopasowania ESPP</td>
+        <td class="num">{{ '%.2f'|format(result.timing.today.forfeit_value_pln or 0) }} PLN</td>
+        <td class="num">{{ '%.2f'|format(result.timing.jan2_next_year.forfeit_value_pln or 0) }} PLN</td></tr>
+    </tbody>
+  </table>
+  <p class="muted">{{ result.timing.recommendation_pl }}</p>
+</section>
+{% endif %}
+{% endblock %}

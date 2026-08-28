@@ -239,10 +239,30 @@ def test_alloc_detail_renders_sale_fx_once(client, seed, _fake_nbp_rate):
     # Regresja: przed krokiem 17 wyprowadzenie kursu sprzedaży powtarzało się
     # w osobnym wierszu prozy PRZY KAŻDYM LOCIE (_alloc_detail.html/alloc-fx-row).
     # Sprzedaż konsumująca FIFO z dwóch lotów (3+1 z pierwszego, 3 z drugiego)
-    # ma pokazać zdanie o kursie sprzedaży RAZ, nad tabelą alokacji.
+    # ma pokazać zdanie o kursie sprzedaży NAD TABELĄ ALOKACJI dokładnie raz,
+    # niezależnie od liczby lotów.
+    #
+    # E10 (docs/PLAN_E10_dokumenty.md, Etap 1): od `breakdown.sale_traces()`
+    # to samo zdanie dochodzi DRUGI raz jako `note` śladu „Przychód PLN” na
+    # wierszu podsumowania (`sales.html`) — ten sam wzorzec, który już
+    # istniał na `/wyplata` (`wyplata.revenue_pln` + `_alloc_detail.html`
+    # razem na jednej stronie, nikt tego nie flagował). Dwa źródła, ZERO
+    # skalowania z liczbą lotów — to jest właściwy niezmiennik do pilnowania.
     seed.lot("2024-01-05", 3, 5.0)
     seed.lot("2024-02-05", 3, 5.0)
     seed.sale("2024-06-01", 4, 8.0)
 
     html = client.get("/sales").get_data(as_text=True)
-    assert html.count("sprzedaż: 2024-06-01") == 1
+    assert html.count("sprzedaż: 2024-06-01") == 2
+
+
+def test_alloc_detail_sale_fx_does_not_scale_with_lot_count(client, seed, _fake_nbp_rate):
+    # Trzeci lot w FIFO nie dokłada trzeciego wystąpienia — obie lokalizacje
+    # (fx-line + ślad E10) liczą kurs sprzedaży RAZ, nie per lot.
+    seed.lot("2024-01-05", 2, 5.0)
+    seed.lot("2024-02-05", 2, 5.0)
+    seed.lot("2024-03-05", 2, 5.0)
+    seed.sale("2024-06-01", 6, 8.0)
+
+    html = client.get("/sales").get_data(as_text=True)
+    assert html.count("sprzedaż: 2024-06-01") == 2

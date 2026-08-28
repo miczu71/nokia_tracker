@@ -561,3 +561,11 @@ transze z `vest_date=2026-08-01` uwolnią się 2026-08-27 w JEDNYM wspólnym wie
 Withhold-to-Cover — dokładnie ten sam wzorzec, mechanizm (`pooled_lot_id`) już istnieje,
 brakuje tylko przycisku/akcji w `/grants`, żeby nie trzeba było znów ręcznie dopisywać
 naprawy w `data_fixes.py`.
+
+## Poza roadmapą v3: E10 (0.29.0, 2026-08-28)
+
+`docs/PLAN_E10_dokumenty.md` — dokumenty dowodowe HTML/PDF dla symulacji i zrealizowanych
+sprzedaży: `breakdown.sale_traces()`, trzy trasy `/sales/<id>/dokument.*`,
+`/wyplata/dokument.*`, `/pit38/dokumentacja.*`, WeasyPrint (`exports/pdf.py`) z leniwym
+importem i degradacją do HTML-only, strażnik rozmiaru dla dużego roku, zbiorcza notka dla
+nieznanego pliku wyciągu zamiast powtórzeń per lot.

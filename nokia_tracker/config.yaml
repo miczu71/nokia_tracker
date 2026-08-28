@@ -1,5 +1,5 @@
 name: Nokia Tracker
-version: "0.28.0"
+version: "0.29.0"
 slug: nokia_tracker
 description: >-
   Osobisty asystent inwestycyjny dla akcji Nokia (NOKIA.HE, Nasdaq Helsinki).
@@ -11,7 +11,6 @@ url: "https://github.com/miczu71/nokia_tracker"
 arch:
   - aarch64
   - amd64
-  - armv7
 init: false
 homeassistant_api: true
 services:

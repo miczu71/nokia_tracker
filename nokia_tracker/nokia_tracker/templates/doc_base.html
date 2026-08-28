@@ -1,0 +1,48 @@
+{#
+  Szkielet dokumentów dowodowych (E10, docs/PLAN_E10_dokumenty.md) —
+  CELOWO nie `{% extends "base.html" %}`. Ten plik jest renderowany przez
+  WŁASNE środowisko Jinja (`exports/documents.py`), nie `app.jinja_env`
+  Flaska — nie ma tu `url_for`, nawigacji, ani linku do `/static/app.css`.
+  CSS wklejony inline (`css` przekazane przez `render_html`), żeby wynikowy
+  plik HTML żył samodzielnie poza aplikacją (zapis na dysk, e-mail, wydruk
+  za rok). `doc_sale.html`/`doc_simulation.html`/`doc_dossier.html`
+  dziedziczą stąd i wypełniają `{% block doc_content %}`.
+#}
+{%- from "_macros.html" import tax_disclaimer, POLICY_LABELS -%}
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ meta.title }} — Nokia Tracker</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📈</text></svg>">
+<style>{{ css }}</style>
+</head>
+<body>
+<header class="doc-header">
+  <div class="doc-brand">Nokia Tracker — dokument dowodowy</div>
+  <h1>{{ meta.title }}</h1>
+  <p class="doc-scope">Zakres: {{ meta.scope }}</p>
+  <dl class="doc-meta">
+    <div><dt>Wygenerowano</dt><dd>{{ meta.generated_at }}</dd></div>
+    <div><dt>Wersja aplikacji</dt><dd>Nokia Tracker {{ meta.app_version }}</dd></div>
+    <div><dt>Schemat bazy</dt><dd>v{{ meta.schema_version }}</dd></div>
+    <div><dt>Aktywna polityka kosztu</dt>
+      <dd>{{ POLICY_LABELS.get(meta.active_policy, meta.active_policy) }}</dd></div>
+    <div><dt>Stawka podatku</dt><dd>{{ '%.0f'|format(meta.tax_rate_pct) }}%</dd></div>
+    <div><dt>Suma kontrolna danych</dt><dd>sha256:{{ meta.data_hash }}</dd></div>
+  </dl>
+  <p class="doc-legal-basis muted">{{ meta.active_policy_legal_basis }}</p>
+  {{ tax_disclaimer('default') }}
+  {% block doc_extra_notice %}{% endblock %}
+</header>
+<main>
+{% block doc_content %}{% endblock %}
+</main>
+<footer class="doc-footer">
+  Nokia Tracker {{ meta.app_version }} · dokument wygenerowany automatycznie na
+  podstawie danych zapisanych w aplikacji · suma kontrolna danych
+  sha256:{{ meta.data_hash }} · nie stanowi porady podatkowej.
+</footer>
+</body>
+</html>

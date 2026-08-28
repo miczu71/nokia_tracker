@@ -1,0 +1,73 @@
+{% extends "doc_base.html" %}
+{% from "_doc_macros.html" import doc_trace, doc_trace_failures %}
+{% from "_macros.html" import LOT_TYPE_LABELS, POLICY_LABELS %}
+
+{% block doc_content %}
+<section class="doc-section">
+  <h2>Dane sprzedaży</h2>
+  <div class="doc-stats">
+    <div class="doc-stat"><span class="doc-stat-label">Data sprzedaży</span>
+      <span class="doc-stat-value">{{ sale.sale_date }}</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Ilość</span>
+      <span class="doc-stat-value">{{ '%.4f'|format(sale.quantity) }} szt.</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Cena</span>
+      <span class="doc-stat-value">{{ '%.4f'|format(sale.price_eur) }} EUR/akcję</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Prowizja</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(sale.fee_eur or 0.0) }} EUR</span></div>
+    <div class="doc-stat highlight"><span class="doc-stat-label">Na rękę (wg aktywnej polityki)</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(detail.net_pln) }} PLN</span></div>
+  </div>
+  {% if sale.notes %}<p class="muted">Notatka: {{ sale.notes }}</p>{% endif %}
+</section>
+
+{% if detail.is_reported_override %}
+<div class="doc-callout">
+  <strong>Zgłoszona wartość różni się od tego, co wyliczyłby silnik z realnych lotów</strong>
+  Ślady poniżej pokazują realny ślad FIFO (co się faktycznie stało z akcjami) oraz
+  jawną korektę do wartości ZGŁOSZONEJ (np. z ręcznego rozliczenia sprzed importu).
+  Silnik wyliczyłby przychód {{ '%.2f'|format(detail.revenue_pln_engine) }} PLN, koszt
+  {{ '%.2f'|format(detail.policies[detail.active_policy].cost_pln_engine) }} PLN
+  (wg aktywnej polityki).
+</div>
+{% endif %}
+
+{{ doc_trace_failures(trace_failures) }}
+
+<section class="doc-section">
+  <h2>Ślad obliczeń — skąd każda liczba</h2>
+  {{ doc_trace(traces.get('sprzedaz.quantity')) }}
+  {{ doc_trace(traces.get('sprzedaz.gross_eur')) }}
+  {{ doc_trace(traces.get('sprzedaz.revenue_eur')) }}
+  {{ doc_trace(traces.get('sprzedaz.revenue_pln')) }}
+  {{ doc_trace(traces.get('sprzedaz.cost')) }}
+  {{ doc_trace(traces.get('sprzedaz.reported_override')) }}
+  {{ doc_trace(traces.get('sprzedaz.income')) }}
+  {{ doc_trace(traces.get('sprzedaz.tax')) }}
+  {{ doc_trace(traces.get('sprzedaz.net')) }}
+</section>
+
+<section class="doc-section">
+  <h2>Trzy polityki kosztu — porównanie</h2>
+  <p class="muted">Przychód {{ '%.2f'|format(detail.revenue_pln) }} PLN — ten sam dla
+    wszystkich polityk (różnią się tylko tym, które loty liczą jako koszt).</p>
+  <table class="doc-table">
+    <thead>
+      <tr>
+        <th>Polityka</th><th class="num">Koszt PLN</th>
+        <th class="num">Dochód PLN</th><th class="num">Podatek PLN</th><th>Podstawa prawna</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for name, data in detail.policies.items() %}
+      <tr>
+        <td>{{ POLICY_LABELS.get(name, name) }}{% if name == detail.active_policy %} (aktywna){% endif %}</td>
+        <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
+        <td class="muted">{{ data.legal_basis_pl }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

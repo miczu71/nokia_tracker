@@ -378,6 +378,227 @@ def withdrawal_traces(conn: sqlite3.Connection, ctx: BreakdownCtx, cfg: dict,
 
 
 # ============================================================
+# /sales — zrealizowana sprzedaż (E10, docs/PLAN_E10_dokumenty.md, 8 śladów)
+# ============================================================
+# Budowniczy dostają wyłącznie liczby, które `views/sales.py::sale_detail`
+# (`tax/trace.py::enrich_allocations`) już policzył — zero nowej matematyki
+# finansowej poza algebrą przeliczeniową w `close_formula`. `shown` zawsze
+# to, co REALNIE widać w UI/PIT-38 (`detail["revenue_pln"]`/
+# `policies[aktywna]["cost_pln"]` — obie mogą być nadpisane przez
+# `reported_revenue_pln`/`reported_cost_pln`, krok 20), NIE
+# `*_engine` — inaczej ślad tłumaczyłby liczbę, której nikt nie widzi.
+# Gdy nadpisanie jest aktywne, `revenue_pln`/`cost` przechodzą z
+# `close_sum` na `close_formula` z jawnym składnikiem "korekta do wartości
+# zgłoszonej" (realny ślad FIFO per lot ZOSTAJE widoczny, tak jak w
+# `_alloc_detail.html`) — cichy `close_sum` tutaj zawsze by wybuchał.
+#
+# W odróżnieniu od `/wyplata` (dane z formularza, nic ustalonego do
+# powtórzenia) sprzedaż jest w pełni odtwarzalna z bazy — jak
+# `account_traces`, awarie domykania są ZBIERANE, nie tylko pomijane.
+
+
+def _sprzedaz_quantity(ctx: BreakdownCtx, sale: dict, detail: dict) -> Breakdown:
+    components = tuple(
+        Component(_lot_label(ctx, a["lot_id"], a["acquired_date"]), a["qty_taken"],
+                  unit="szt.", sources=provenance(ctx, ctx.lots_by_id.get(a["lot_id"], {})))
+        for a in detail["allocations"])
+    return close_sum(
+        "sprzedaz.quantity", "Ilość sprzedana", sale["quantity"], "szt.",
+        "Σ ilość pobrana z lotów (alokacja FIFO)", components)
+
+
+def _sprzedaz_gross_eur(sale: dict) -> Breakdown:
+    quantity = sale["quantity"]
+    price_eur = sale["price_eur"]
+    shown = round(quantity * price_eur, 2)
+    components = (
+        Component("ilość akcji", quantity, unit="szt."),
+        Component("cena sprzedaży", price_eur, unit="EUR/akcję"),
+    )
+    return close_formula(
+        "sprzedaz.gross_eur", "Brutto (przed prowizją)", shown, "EUR",
+        "ilość × cena sprzedaży", components, recomputed=shown)
+
+
+def _sprzedaz_revenue_eur(sale: dict) -> Breakdown:
+    gross_eur = round(sale["quantity"] * sale["price_eur"], 2)
+    fee_eur = sale["fee_eur"] or 0.0
+    shown = round(gross_eur - fee_eur, 2)
+    components = (
+        Component("brutto", gross_eur, unit="EUR"),
+        Component("prowizja maklerska", round(-fee_eur, 2), unit="EUR"),
+    )
+    return close_sum(
+        "sprzedaz.revenue_eur", "Przychód (EUR)", shown, "EUR",
+        "brutto − prowizja maklerska", components)
+
+
+def _sprzedaz_revenue_pln(ctx: BreakdownCtx, detail: dict) -> Breakdown:
+    sale_fx = detail["sale_fx"]
+    engine_total = detail["revenue_pln_engine"]
+    shown = detail["revenue_pln"]
+    nbp_source: tuple[Source, ...] = ()
+    if sale_fx.get("table_no"):
+        nbp_source = (Source(
+            "nbp", f"Tabela NBP {sale_fx['table_no']} z {sale_fx['effective_date']}",
+            ref=(sale_fx.get("urls") or {}).get("nbp")),)
+    lot_components = tuple(
+        Component(_lot_label(ctx, a["lot_id"], a["acquired_date"]), a["revenue_pln"],
+                  detail=f"{a['qty_taken']:.4f} szt. sprzedanych z tego lotu",
+                  sources=provenance(ctx, ctx.lots_by_id.get(a["lot_id"], {})) + nbp_source)
+        for a in detail["allocations"])
+
+    if not detail["is_reported_override"]:
+        return close_sum(
+            "sprzedaz.revenue_pln", "Przychód (PLN)", shown, "zł",
+            "Σ przychód PLN per lot (kurs NBP D-1 sprzedaży)", lot_components,
+            note=sale_fx["explanation_pl"])
+
+    correction = round(shown - engine_total, 2)
+    components = lot_components + (
+        Component("korekta do wartości zgłoszonej", correction,
+                  detail="różnica między przychodem zgłoszonym a wyliczonym przez "
+                         "silnik z realnych lotów"),)
+    return close_formula(
+        "sprzedaz.revenue_pln", "Przychód (PLN)", shown, "zł",
+        "Σ przychód PLN per lot + korekta do wartości zgłoszonej", components,
+        recomputed=round(engine_total + correction, 2),
+        note=f"Wartość ZGŁOSZONA różni się od wyliczonej przez silnik "
+             f"({engine_total:.2f} zł). {sale_fx['explanation_pl']}")
+
+
+def _sprzedaz_cost(ctx: BreakdownCtx, detail: dict) -> Breakdown:
+    active_policy = detail["active_policy"]
+    policy_data = detail["policies"][active_policy]
+    engine_total = policy_data["cost_pln_engine"]
+    shown = policy_data["cost_pln"]
+    policy_pl = taxpolicy.LEGAL_BASIS_PL.get(active_policy, active_policy)
+    relevant = [a for a in detail["allocations"] if active_policy in a["counted_in"]]
+    lot_components = tuple(
+        Component(_lot_label(ctx, a["lot_id"], a["acquired_date"]), a["cost_pln"],
+                  detail=(f"{a['qty_taken']:.4f} szt. × {a['lot_price_eur']} EUR/akcję"
+                          + (f" × kurs {a['lot_fx']['rate']:.4f}"
+                             if a["lot_fx"].get("rate") is not None else "")),
+                  sources=provenance(ctx, ctx.lots_by_id.get(a["lot_id"], {})))
+        for a in relevant)
+
+    if not detail["is_reported_override"]:
+        return close_sum(
+            "sprzedaz.cost", "Koszt uzyskania przychodu", shown, "zł",
+            "Σ koszt PLN per lot uznany w aktywnej polityce kosztu", lot_components,
+            note=f"Polityka: {active_policy} — {policy_pl}")
+
+    correction = round(shown - engine_total, 2)
+    components = lot_components + (
+        Component("korekta do wartości zgłoszonej", correction,
+                  detail="różnica między kosztem zgłoszonym a wyliczonym przez "
+                         "silnik z realnych lotów"),)
+    return close_formula(
+        "sprzedaz.cost", "Koszt uzyskania przychodu", shown, "zł",
+        "Σ koszt PLN per lot + korekta do wartości zgłoszonej", components,
+        recomputed=round(engine_total + correction, 2),
+        note=f"Wartość ZGŁOSZONA różni się od wyliczonej przez silnik "
+             f"({engine_total:.2f} zł). Polityka: {active_policy} — {policy_pl}")
+
+
+def _sprzedaz_income(detail: dict) -> Breakdown:
+    active_policy = detail["active_policy"]
+    policy_data = detail["policies"][active_policy]
+    components = (
+        Component("przychód", detail["revenue_pln"]),
+        Component("koszt", -policy_data["cost_pln"]),
+    )
+    return close_sum(
+        "sprzedaz.income", "Dochód", policy_data["income_pln"], "zł",
+        "przychód − koszt", components)
+
+
+def _sprzedaz_tax(cfg: dict, detail: dict) -> Breakdown:
+    active_policy = detail["active_policy"]
+    policy_data = detail["policies"][active_policy]
+    income = policy_data["income_pln"]
+    tax_rate_pct = cfg.get("pl_capital_gains_tax_pct", 19.0)
+    components = (
+        Component("dochód z tej sprzedaży", income),
+        Component(f"stawka podatku ({tax_rate_pct:g}%)", None),
+    )
+    recomputed = round(max(0.0, income) * tax_rate_pct / 100, 2)
+    return close_formula(
+        "sprzedaz.tax", "Podatek", policy_data["tax_pln"], "zł",
+        "dochód × stawka podatku", components, recomputed=recomputed,
+        note="Podatek od TEJ sprzedaży w oderwaniu od reszty roku. Realne "
+             "zobowiązanie liczy się od dochodu rocznego po odliczeniu strat z lat "
+             "ubiegłych — patrz dokumentacja roczna PIT-38.")
+
+
+def _sprzedaz_net(detail: dict) -> Breakdown:
+    active_policy = detail["active_policy"]
+    tax_pln = detail["policies"][active_policy]["tax_pln"]
+    components = (
+        Component("przychód", detail["revenue_pln"]),
+        Component("podatek", -tax_pln),
+    )
+    return close_sum(
+        "sprzedaz.net", "Na rękę", detail["net_pln"], "zł",
+        "przychód − podatek", components)
+
+
+def _sprzedaz_reported_override(detail: dict) -> Breakdown | None:
+    if not detail["is_reported_override"]:
+        return None
+    active_policy = detail["active_policy"]
+    policy_data = detail["policies"][active_policy]
+    revenue_delta = round(detail["revenue_pln"] - detail["revenue_pln_engine"], 2)
+    cost_delta = round(policy_data["cost_pln"] - policy_data["cost_pln_engine"], 2)
+    shown = round(revenue_delta - cost_delta, 2)
+    components = (
+        Component("korekta przychodu (zgłoszone − wyliczone)", revenue_delta),
+        Component("korekta kosztu (zgłoszone − wyliczone, ujemna = koszt wyższy)",
+                  -cost_delta),
+    )
+    return close_sum(
+        "sprzedaz.reported_override", "Wpływ korekty na dochód", shown, "zł",
+        "korekta przychodu − korekta kosztu", components,
+        note="Zgłoszona wartość różni się od tego, co wyliczyłby silnik z realnych "
+             "lotów (np. ręczne rozliczenie sprzed importu). Ślad per lot w pozycjach "
+             "„Przychód” i „Koszt” pokazuje realny FIFO oraz korektę do wartości "
+             "zgłoszonej; ta pozycja pokazuje łączny wpływ korekty na dochód.")
+
+
+def sale_traces(conn: sqlite3.Connection, ctx: BreakdownCtx, cfg: dict, sale: dict,
+                detail: dict) -> tuple[dict[str, Breakdown], list[BreakdownNotClosedError]]:
+    """Wszystkie ślady dla jednej zrealizowanej sprzedaży (rejestr `/sales`,
+    dokument dowodowy E10). `sale`: wiersz `sales`. `detail`:
+    `tax/trace.py::enrich_allocations(...)` dla tej sprzedaży — dokładnie to,
+    co `views/sales.py::sale_detail` już policzył. Awarie domykania są
+    ZBIERANE (drugi element krotki), nie tylko połykane — `integrity.py`
+    może powtórzyć to samo wywołanie na dzisiejszych danych i zgłosić
+    rozjazd jako finding, tak jak dziś robi `account_traces`."""
+    builders: dict[str, object] = {
+        "sprzedaz.quantity": lambda: _sprzedaz_quantity(ctx, sale, detail),
+        "sprzedaz.gross_eur": lambda: _sprzedaz_gross_eur(sale),
+        "sprzedaz.revenue_eur": lambda: _sprzedaz_revenue_eur(sale),
+        "sprzedaz.revenue_pln": lambda: _sprzedaz_revenue_pln(ctx, detail),
+        "sprzedaz.cost": lambda: _sprzedaz_cost(ctx, detail),
+        "sprzedaz.income": lambda: _sprzedaz_income(detail),
+        "sprzedaz.tax": lambda: _sprzedaz_tax(cfg, detail),
+        "sprzedaz.net": lambda: _sprzedaz_net(detail),
+        "sprzedaz.reported_override": lambda: _sprzedaz_reported_override(detail),
+    }
+    traces: dict[str, Breakdown] = {}
+    failures: list[BreakdownNotClosedError] = []
+    for key, build in builders.items():
+        try:
+            trace = build()
+        except BreakdownNotClosedError as e:
+            failures.append(e)
+            continue
+        if trace is not None:
+            traces[key] = trace
+    return traces, failures
+
+
+# ============================================================
 # / — Stan konta (11 śladów)
 # ============================================================
 

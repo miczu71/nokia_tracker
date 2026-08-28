@@ -503,6 +503,33 @@ def test_breakdown_not_closed_surfaced_as_warning(conn, monkeypatch):
     assert f.details[0]["recomputed"] == 90.0
 
 
+def test_breakdown_not_closed_surfaced_for_sale(conn, monkeypatch):
+    # E10 (docs/PLAN_E10_dokumenty.md): `_breakdown_not_closed` powtarza też
+    # `sales_view(..., with_traces=True)` dla bieżącego roku podatkowego i
+    # zgłasza KAŻDY `trace_failures` zebrany per sprzedaż, z `sale_id` w
+    # `details` (w odróżnieniu od `/` gdzie nie ma czego identyfikować per
+    # pozycja) — kontrakt sprawdzony bez konstruowania realnego rozjazdu.
+    from nokia_tracker import breakdown as bd
+
+    fake_failure = bd.BreakdownNotClosedError("sprzedaz.tax", 50.0, 45.0)
+
+    def _fake_sales_view(conn, cfg, year, *, with_traces=False):
+        return {"sales": [{"sale": {"id": 7}, "detail": {},
+                           "trace_failures": [fake_failure]}],
+                "totals": {}}
+
+    monkeypatch.setattr("nokia_tracker.integrity.sales_view", _fake_sales_view)
+
+    findings = integrity.check_all(conn)
+
+    f = next(f for f in findings if f.check == "breakdown_not_closed:sprzedaz.tax")
+    assert f.severity == "warning"
+    assert f.count == 1
+    assert f.details[0]["sale_id"] == 7
+    assert f.details[0]["shown"] == 50.0
+    assert f.details[0]["recomputed"] == 45.0
+
+
 # --- should_notify (E9, docs/PLAN_E9_transza_w_puli.md): tylko error pushuje ---
 
 def test_should_notify_true_for_error():

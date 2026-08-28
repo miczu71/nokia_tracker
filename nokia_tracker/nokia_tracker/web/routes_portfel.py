@@ -10,9 +10,10 @@ zostaje — usuwanie sprzedaży i „Zgłoszona wartość" to narzędzia korekty
 nie wprowadzania nowych danych."""
 from __future__ import annotations
 
-from flask import Flask, redirect, render_template, request, url_for
+from flask import Flask, abort, redirect, render_template, request, url_for
 
 from ._context import AppContext
+from ._documents import document_response
 from .. import __version__
 from .. import db as dbm
 from .. import portfolio as portfoliom
@@ -21,6 +22,7 @@ from .. import settings as settingsm
 from ..tax import grants as grantsm
 from ..tax import lots as taxlots
 from ..tax import policy as taxpolicy
+from ..views.documents import sale_document
 from ..views.market_context import instrument_ids as _ids
 from ..views.market_context import latest_price_and_rate
 from ..views.results import results_view
@@ -74,10 +76,46 @@ def register_portfel_routes(app: Flask, ctx: AppContext) -> None:
         try:
             cfg = settingsm.get_settings(conn)
             year = request.args.get("year", type=int)
-            view = sales_view(conn, cfg, year)
+            view = sales_view(conn, cfg, year, with_traces=True)
             return render_template(
                 "sales.html", active="sales", version=__version__, cfg=cfg,
                 year=year, deleted=request.args.get("deleted") == "1", **view)
+        finally:
+            conn.close()
+
+    @app.get("/sales/<int:sale_id>/dokument.html")
+    def sale_document_html(sale_id: int):
+        """E10 (docs/PLAN_E10_dokumenty.md): dokument dowodowy jednej
+        zrealizowanej sprzedaży — samodzielny HTML (patrz
+        `exports/documents.py` dlaczego osobne środowisko Jinja)."""
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            doc = sale_document(conn, cfg, sale_id)
+            if doc is None:
+                abort(404)
+            filename_stem = f"sprzedaz_{doc['sale']['sale_date']}_id{sale_id}"
+            return document_response(
+                "sale", doc, fmt="html", filename_stem=filename_stem,
+                download=request.args.get("pobierz") == "1")
+        finally:
+            conn.close()
+
+    @app.get("/sales/<int:sale_id>/dokument.pdf")
+    def sale_document_pdf(sale_id: int):
+        """E10, Etap 4: to samo co `sale_document_html`, w PDF (WeasyPrint) —
+        patrz `exports/pdf.py` dla strategii degradacji, gdy silnik
+        niedostępny w tym buildzie."""
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            doc = sale_document(conn, cfg, sale_id)
+            if doc is None:
+                abort(404)
+            filename_stem = f"sprzedaz_{doc['sale']['sale_date']}_id{sale_id}"
+            return document_response(
+                "sale", doc, fmt="pdf", filename_stem=filename_stem,
+                html_fallback_url=url_for('sale_document_html', sale_id=sale_id))
         finally:
             conn.close()
 

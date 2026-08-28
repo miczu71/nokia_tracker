@@ -1,0 +1,163 @@
+{% extends "doc_base.html" %}
+{% from "_doc_macros.html" import doc_trace, doc_trace_failures %}
+{% from "_macros.html" import LOT_TYPE_LABELS, POLICY_LABELS %}
+
+{% block doc_content %}
+{% set active_data = report.policies[meta.active_policy] %}
+
+<section class="doc-section">
+  <h2>Do wpisania w deklarację (wg aktywnej polityki: {{ POLICY_LABELS.get(meta.active_policy, meta.active_policy) }})</h2>
+  <div class="doc-stats">
+    <div class="doc-stat"><span class="doc-stat-label">Poz. C — przychód</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(active_data.revenue_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Poz. C — koszt</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(active_data.cost_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Poz. C — dochód</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(active_data.income_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Poz. C — podatek</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(active_data.tax_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Sekcja G — dopłata w PL</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.section_g.pl_tax_due_pln) }} PLN</span></div>
+    <div class="doc-stat highlight"><span class="doc-stat-label">RAZEM DO ZAPŁATY</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.total_due_pln) }} PLN</span></div>
+  </div>
+</section>
+
+<section class="doc-section">
+  <h2>Polityka kosztu — porównanie</h2>
+  {% if override_summary.overridden %}
+  <div class="doc-callout">
+    {% set sprzedaz_slowo = 'sprzedaż' if override_summary.overridden == 1 else 'sprzedaże' %}
+    {% set ma_slowo = 'ma' if override_summary.overridden == 1 else 'mają' %}
+    {{ override_summary.overridden }} z {{ override_summary.total }} sprzedaży
+    ({{ override_summary.sale_dates|join(', ') }}) {{ ma_slowo }} ręcznie wpisaną
+    zgłoszoną wartość — ta sama kwota kosztu wchodzi wtedy do
+    {{ 'każdej polityki' if override_summary.flattens_comparison else 'tej sprzedaży w każdej polityce' }},
+    bo ręczny arkusz nie ma trzech wariantów kosztu jak silnik. Ślad per sprzedaż w
+    załączniku pokazuje realny FIFO niezależnie od nadpisania.
+  </div>
+  {% endif %}
+  <table class="doc-table">
+    <thead>
+      <tr>
+        <th>Polityka</th><th class="num">Przychód PLN</th><th class="num">Koszt PLN</th>
+        <th class="num">Dochód PLN</th><th class="num">Podatek PLN</th><th>Podstawa prawna</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for name, data in report.policies.items() %}
+      <tr>
+        <td>{{ POLICY_LABELS.get(name, name) }}{% if name == meta.active_policy %} (aktywna){% endif %}</td>
+        <td class="num">{{ '%.2f'|format(data.revenue_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(data.cost_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(data.income_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(data.tax_pln) }}</td>
+        <td class="muted">{{ data.legal_basis_pl }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="doc-section">
+  <h2>Straty z lat ubiegłych ({{ POLICY_LABELS.get(meta.active_policy, meta.active_policy) }})</h2>
+  {% if report.loss_carryforward.items %}
+  <div class="doc-stats">
+    <div class="doc-stat"><span class="doc-stat-label">Dostępna strata</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.loss_carryforward.total_remaining_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Odliczone w tym roku</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.loss_carryforward.total_used_this_year_pln) }} PLN</span></div>
+    <div class="doc-stat highlight"><span class="doc-stat-label">Podatek po odliczeniu</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.loss_carryforward.tax_after_loss_pln) }} PLN</span></div>
+  </div>
+  {% else %}
+  <p class="muted">Brak dostępnych strat z ostatnich 5 lat w tej polityce.</p>
+  {% endif %}
+</section>
+
+<section class="doc-section">
+  <h2>Sekcja G — dywidendy zagraniczne (PIT/ZG)
+    {% if report.section_g.has_estimated %}<span class="muted">(zawiera szacunki)</span>{% endif %}</h2>
+  {% if report.section_g.dividend_count %}
+  <div class="doc-stats">
+    <div class="doc-stat"><span class="doc-stat-label">Dywidendy brutto</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.section_g.gross_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Pobrane u źródła (Finlandia)</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.section_g.withholding_paid_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Dopłata w PL</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.section_g.pl_tax_due_pln) }} PLN</span></div>
+    <div class="doc-stat"><span class="doc-stat-label">Do odzyskania z Vero</span>
+      <span class="doc-stat-value">{{ '%.2f'|format(report.section_g.reclaimable_from_finland_pln) }} PLN</span></div>
+  </div>
+  <p class="muted">
+    Zaliczenie traktatowe {{ '%.2f'|format(report.section_g.credit_pln) }} PLN ·
+    Belka (19%) {{ '%.2f'|format(report.section_g.belka_pln) }} PLN ·
+    {{ report.section_g.dividend_count }} dywidend w {{ year }} roku · PIT/ZG:
+    {{ report.pit_zg.country }} (dochód zagraniczny = brutto powyżej, podatek
+    zapłacony za granicą = pobrane u źródła powyżej).
+  </p>
+  {% else %}
+  <p class="muted">Brak dywidend w {{ year }} roku — brak pozycji PIT/ZG do wpisania.</p>
+  {% endif %}
+</section>
+
+<section class="doc-section">
+  <h2>Załącznik — rejestr sprzedaży ze śladem per lot</h2>
+  {% if sales %}
+  <table class="doc-table">
+    <thead>
+      <tr><th>Data</th><th class="num">Ilość</th><th class="num">Przychód PLN</th>
+          <th class="num">Koszt PLN</th><th class="num">Dochód PLN</th>
+          <th class="num">Podatek PLN</th><th class="num">Na rękę PLN</th></tr>
+    </thead>
+    <tbody>
+      {% for item in sales %}
+      {% set d = item.detail.policies[item.detail.active_policy] %}
+      <tr>
+        <td>#{{ item.sale.id }} · {{ item.sale.sale_date }}
+          {% if item.detail.is_reported_override %}<span class="muted">(zgłoszono)</span>{% endif %}</td>
+        <td class="num">{{ '%.4f'|format(item.sale.quantity) }}</td>
+        <td class="num">{{ '%.2f'|format(item.detail.revenue_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(d.cost_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(d.income_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(d.tax_pln) }}</td>
+        <td class="num">{{ '%.2f'|format(item.detail.net_pln) }}</td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td><strong>Razem</strong></td>
+        <td class="num"></td>
+        <td class="num"><strong>{{ '%.2f'|format(sales_totals.revenue_pln) }}</strong></td>
+        <td class="num"><strong>{{ '%.2f'|format(sales_totals.cost_pln) }}</strong></td>
+        <td class="num"><strong>{{ '%.2f'|format(sales_totals.income_pln) }}</strong></td>
+        <td class="num"><strong>{{ '%.2f'|format(sales_totals.tax_pln) }}</strong></td>
+        <td class="num"><strong>{{ '%.2f'|format(sales_totals.net_pln) }}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+
+  {% if include_sale_traces %}
+  {% for item in sales %}
+  <div class="doc-section">
+    <h3>Sprzedaż #{{ item.sale.id }} — {{ item.sale.sale_date }}, {{ '%.4f'|format(item.sale.quantity) }} szt.</h3>
+    {{ doc_trace_failures(item.trace_failures) }}
+    {{ doc_trace(item.traces.get('sprzedaz.revenue_pln')) }}
+    {{ doc_trace(item.traces.get('sprzedaz.cost')) }}
+    {{ doc_trace(item.traces.get('sprzedaz.reported_override')) }}
+  </div>
+  {% endfor %}
+  {% else %}
+  <div class="doc-callout">
+    <strong>Pełny ślad FIFO per sprzedaż pominięty w tym dokumencie.</strong>
+    Ten rok ma {{ allocation_count }} alokacji sprzedaży-lotu — zbyt wiele, żeby
+    pokazać pełne rozbicie każdej z nich w jednym dossier bez uczynienia go
+    nieczytelnym. Tabela zbiorcza powyżej pokazuje sumy per sprzedaż. Pełny ślad
+    per lot łącznie z prowenniencją dla KAŻDEJ sprzedaży jest dostępny osobno —
+    przycisk „Dokument"/„PDF" przy danej sprzedaży w rejestrze /sales.
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="muted">Brak sprzedaży w {{ year }} roku.</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,76 @@
+{#
+  Makra współdzielone przez trzy dokumenty dowodowe (E10, docs/PLAN_E10_dokumenty.md).
+  Świadomie ODRĘBNE od `_macros.html` (macro `traced()`/`trace_body()`) —
+  tamte renderują ślad jako `<details>` ZWINIĘTY domyślnie (`.trace-body`
+  ma `no-print` w app.css), bo to widok EKRANOWY. Dokument dowodowy ma
+  odwrotną potrzebę: ślad ma być ZAWSZE widoczny, bez JS/`<details>`, żeby
+  wydrukowana/zapisana strona pokazywała rozbicie bez kliknięcia, którego
+  nikt na papierze nie wykona. Ten sam `breakdown.Breakdown` w środku,
+  inny render.
+#}
+
+{#
+  Etap 5 (docs/PLAN_E10_dokumenty.md): `breakdown.py::provenance()` zwraca
+  „Plik wyciągu nieznany (import sprzed 0.23.0…)” dla KAŻDEGO lotu bez
+  dopasowania w `statement_index` — poprawne, ale powtórzone trzydzieści
+  razy w kolumnie Źródło jednego śladu czyta się jak trzydzieści ostrzeżeń,
+  nie jak jeden fakt o retencji danych. Zliczane tutaj (namespace, bo Jinja
+  nie ma zmiennych mutowalnych w pętli) i zwijane do JEDNEJ przypisowej
+  notki pod tabelą — liczba pozycji zostaje widoczna, nie ukryta.
+#}
+{% macro doc_trace(bd) %}
+{% if bd %}
+{% set bd_decimals = 4 if bd.unit == 'szt.' else 2 %}
+{% set ns = namespace(unknown_source_count=0) %}
+<div class="doc-trace">
+  <div class="doc-trace-title">{{ bd.label }}: {{ '%.*f'|format(bd_decimals, bd.amount) }} {{ bd.unit }}</div>
+  <table class="doc-table">
+    <thead><tr><th>Składnik</th><th class="num">Wartość</th><th>Źródło</th></tr></thead>
+    <tbody>
+      {% for c in bd.components %}
+      {% set unit = c.unit or bd.unit %}
+      {% set decimals = 4 if unit == 'szt.' else 2 %}
+      <tr>
+        <td>{{ c.label }}{% if c.detail %}<div class="muted">{{ c.detail }}</div>{% endif %}</td>
+        <td class="num">
+          {%- if c.value is not none -%}
+            {{ '%+.*f'|format(decimals, c.value) }} {{ unit }}
+          {%- else -%}&mdash;{%- endif -%}
+        </td>
+        <td class="muted">
+          {%- for s in c.sources -%}
+            {%- if s.kind == 'statement' and s.label.startswith('Plik wyciągu nieznany') -%}
+              {% set ns.unknown_source_count = ns.unknown_source_count + 1 %}
+              plik nieznany*
+            {%- else -%}
+              {{ s.label }}{% if s.ref %} ({{ s.ref }}){% endif %}
+            {%- endif -%}
+            {% if not loop.last %}<br>{% endif %}
+          {%- endfor -%}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="doc-trace-formula">Formuła: {{ bd.formula }}</p>
+  {% if bd.note %}<p class="doc-trace-note">{{ bd.note }}</p>{% endif %}
+  {% if ns.unknown_source_count %}
+  <p class="doc-trace-note">* {{ ns.unknown_source_count }} poz. — plik wyciągu źródłowego
+    nieznany (import sprzed retencji snapshotów wyciągów, wersja 0.23.0, albo natural_key
+    spoza zapisanych snapshotów). Same kwoty, kursy NBP i typ lotu są poprawne i pochodzą
+    wprost z bazy — brakuje wyłącznie odniesienia do konkretnego pliku PDF wyciągu.</p>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}
+
+{% macro doc_trace_failures(failures) %}
+{% for f in failures %}
+<div class="doc-fail">
+  ⚠ Ślad dla pozycji „{{ f.key }}” nie domknął się do grosza — wyświetlane
+  {{ '%.2f'|format(f.shown) }}, przeliczone {{ '%.2f'|format(f.recomputed) }}.
+  Kwota pochodzi z silnika; rozbicie wymaga sprawdzenia (patrz karta „Spójność
+  danych" w aplikacji).
+</div>
+{% endfor %}
+{% endmacro %}

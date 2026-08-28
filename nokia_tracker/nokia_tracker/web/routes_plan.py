@@ -9,15 +9,80 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from flask import Flask, render_template, request
+from flask import Flask, Response, render_template, request, url_for
 
 from ._context import AppContext
+from ._documents import document_response
 from .. import __version__
 from .. import advisor as advisorm
 from .. import settings as settingsm
+from ..views.documents import simulation_document
 from ..views.market_context import latest_eurpln_rate, latest_price_and_rate
 from ..views.plan import espp_scenario, exit_scenario, timing_scenario
 from ..views.withdrawal import withdrawal_view
+
+
+def _wyplata_params(request, cfg: dict, default_price_eur: float | None) -> tuple[dict, str | None]:
+    """Parsowanie/wartości domyślne formularza `/wyplata` — wydzielone z
+    `wyplata_get` (E10, docs/PLAN_E10_dokumenty.md), żeby dokument symulacji
+    (`GET /wyplata/dokument.html`) parsował TE SAME parametry zapytania tą
+    samą funkcją, zamiast drugiej kopii tej logiki. Przy okazji naprawia
+    błąd w dotychczasowym `?print=1` na `/wyplata` (`templates/withdrawal.html`),
+    który budował link bez ceny/opłaty/daty/celu — pusty formularz zamiast
+    wyniku (złapane przy projektowaniu dokumentu symulacji, docs/PLAN_E10_dokumenty.md).
+
+    Zwraca zawsze `direction`/`price_eur`/`fee_pct`/`sale_date`/`has_input`
+    (do wypełnienia formularza nawet bez wejścia), plus `target_net_pln` XOR
+    `quantity` TYLKO gdy `has_input` i parsowanie się powiodło. Świadomie NIE
+    dotyka `/api/preview/wyplata` — ten endpoint ma inne reguły walidacji
+    (brak fallbacku na `default_price_eur`, inne komunikaty błędów), więc
+    współdzielenie by je pomieszało, nie uprościło."""
+    direction = request.args.get("direction") or "target"
+    if direction not in ("target", "quantity"):
+        direction = "target"
+
+    price_raw = request.args.get("wyplata_price")
+    fee_raw = request.args.get("wyplata_fee_pct")
+    date_raw = request.args.get("wyplata_date")
+    target_raw = request.args.get("wyplata_target")
+    qty_raw = request.args.get("wyplata_qty")
+    sale_date = date_raw or datetime.now().strftime("%Y-%m-%d")
+
+    price_eur = default_price_eur
+    fee_pct = cfg["broker_fee_pct"]
+    has_input = bool(
+        (direction == "target" and target_raw) or (direction == "quantity" and qty_raw))
+
+    params = {
+        "direction": direction, "sale_date": sale_date,
+        "price_eur": price_eur, "fee_pct": fee_pct,
+        "wyplata_target": target_raw, "wyplata_qty": qty_raw,
+        "has_input": has_input,
+    }
+    if not has_input:
+        return params, None
+
+    try:
+        if price_raw:
+            price_eur = float(price_raw)
+        if fee_raw:
+            fee_pct = float(fee_raw)
+        if not price_eur or price_eur <= 0:
+            raise ValueError("Brak aktualnej ceny rynkowej — podaj cenę ręcznie.")
+        if direction == "target":
+            target_net_pln = float(target_raw)
+        else:
+            quantity = float(qty_raw)
+    except ValueError as e:
+        return params, str(e)
+
+    params["price_eur"] = price_eur
+    params["fee_pct"] = fee_pct
+    if direction == "target":
+        params["target_net_pln"] = target_net_pln
+    else:
+        params["quantity"] = quantity
+    return params, None
 
 
 def register_plan_routes(app: Flask, ctx: AppContext) -> None:
@@ -207,51 +272,78 @@ def register_plan_routes(app: Flask, ctx: AppContext) -> None:
         try:
             cfg = settingsm.get_settings(conn)
             default_price_eur, _default_eurpln_rate = latest_price_and_rate(conn)
-
-            direction = request.args.get("direction") or "target"
-            if direction not in ("target", "quantity"):
-                direction = "target"
-
-            price_raw = request.args.get("wyplata_price")
-            fee_raw = request.args.get("wyplata_fee_pct")
-            date_raw = request.args.get("wyplata_date")
-            target_raw = request.args.get("wyplata_target")
-            qty_raw = request.args.get("wyplata_qty")
-            sale_date = date_raw or datetime.now().strftime("%Y-%m-%d")
+            params, error = _wyplata_params(request, cfg, default_price_eur)
 
             result = None
-            error = None
-            price_eur = default_price_eur
-            fee_pct = cfg["broker_fee_pct"]
-
-            has_input = (
-                (direction == "target" and target_raw) or (direction == "quantity" and qty_raw))
-            if has_input:
-                try:
-                    if price_raw:
-                        price_eur = float(price_raw)
-                    if fee_raw:
-                        fee_pct = float(fee_raw)
-                    if not price_eur or price_eur <= 0:
-                        raise ValueError(
-                            "Brak aktualnej ceny rynkowej — podaj cenę ręcznie.")
-                    if direction == "target":
-                        result, error = withdrawal_view(
-                            conn, cfg, "target", price_eur, fee_pct, sale_date,
-                            target_net_pln=float(target_raw))
-                    else:
-                        result, error = withdrawal_view(
-                            conn, cfg, "quantity", price_eur, fee_pct, sale_date,
-                            quantity=float(qty_raw))
-                except ValueError as e:
-                    error = str(e)
+            if error is None and params["has_input"]:
+                if params["direction"] == "target":
+                    result, error = withdrawal_view(
+                        conn, cfg, "target", params["price_eur"], params["fee_pct"],
+                        params["sale_date"], target_net_pln=params["target_net_pln"])
+                else:
+                    result, error = withdrawal_view(
+                        conn, cfg, "quantity", params["price_eur"], params["fee_pct"],
+                        params["sale_date"], quantity=params["quantity"])
 
             return render_template(
                 "withdrawal.html", active="wyplata", version=__version__,
-                direction=direction, result=result, error=error,
-                price_eur=price_eur, default_price_eur=default_price_eur, fee_pct=fee_pct,
-                sale_date=sale_date, wyplata_target=target_raw, wyplata_qty=qty_raw,
+                direction=params["direction"], result=result, error=error,
+                price_eur=params["price_eur"], default_price_eur=default_price_eur,
+                fee_pct=params["fee_pct"], sale_date=params["sale_date"],
+                wyplata_target=params["wyplata_target"], wyplata_qty=params["wyplata_qty"],
                 print_mode=request.args.get("print") == "1")
+        finally:
+            conn.close()
+
+    def _simulation_doc_or_error(conn):
+        """Wspólne dla `.html`/`.pdf`: parsowanie parametrów + zbudowanie
+        dokumentu. Zwraca `(doc, filename_stem, None)` albo `(None, None,
+        Response błędu 400)`."""
+        cfg = settingsm.get_settings(conn)
+        default_price_eur, _default_eurpln_rate = latest_price_and_rate(conn)
+        params, error = _wyplata_params(request, cfg, default_price_eur)
+        if error is None and not params["has_input"]:
+            error = ("Brak parametrów symulacji do udokumentowania — wróć na "
+                     "/wyplata, policz wynik, dopiero wtedy pobierz dokument.")
+        if error:
+            return None, None, Response(error, status=400, mimetype="text/plain; charset=utf-8")
+
+        doc, error = simulation_document(conn, cfg, params)
+        if error:
+            return None, None, Response(error, status=400, mimetype="text/plain; charset=utf-8")
+
+        filename_stem = f"symulacja_{params['sale_date']}_{doc['meta']['data_hash'][:8]}"
+        return doc, filename_stem, None
+
+    @app.get("/wyplata/dokument.html")
+    def wyplata_document_html():
+        """E10 (docs/PLAN_E10_dokumenty.md): dokument dowodowy symulacji —
+        te same parametry zapytania co `/wyplata`, żeby wynik dało się
+        odtworzyć pod tym samym adresem później (patrz zastrzeżenie w
+        `doc_simulation.html`: stan lotów może się do tego czasu zmienić)."""
+        conn = _conn()
+        try:
+            doc, filename_stem, error_resp = _simulation_doc_or_error(conn)
+            if error_resp:
+                return error_resp
+            return document_response(
+                "simulation", doc, fmt="html", filename_stem=filename_stem,
+                download=request.args.get("pobierz") == "1")
+        finally:
+            conn.close()
+
+    @app.get("/wyplata/dokument.pdf")
+    def wyplata_document_pdf():
+        """E10, Etap 4: to samo co `wyplata_document_html`, w PDF."""
+        conn = _conn()
+        try:
+            doc, filename_stem, error_resp = _simulation_doc_or_error(conn)
+            if error_resp:
+                return error_resp
+            return document_response(
+                "simulation", doc, fmt="pdf", filename_stem=filename_stem,
+                html_fallback_url=url_for('wyplata_document_html') + '?' +
+                request.query_string.decode())
         finally:
             conn.close()
 

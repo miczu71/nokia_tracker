@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import stat, tax_disclaimer, LOT_TYPE_LABELS, POLICY_LABELS %}
+{% from "_macros.html" import stat, tax_disclaimer, traced, LOT_TYPE_LABELS, POLICY_LABELS %}
 {% block title %}Sprzedaże — Nokia Tracker{% endblock %}
 {% block content %}
 
@@ -52,13 +52,41 @@
           <td class="nowrap" data-label="Data">{{ item.sale.sale_date }}
             {% if item.detail.is_reported_override %}<span class="badge" title="Kwoty poniżej to wartość zgłoszona, nie wyliczenie silnika">zgłoszono</span>{% endif %}
           </td>
-          <td class="num" data-label="Ilość">{{ '%.4f'|format(item.sale.quantity) }}</td>
-          <td class="num" data-label="Przychód PLN">{{ '%.2f'|format(item.detail.revenue_pln) }}</td>
-          <td class="num" data-label="Koszt PLN">{{ '%.2f'|format(active_data.cost_pln) }}</td>
-          <td class="num" data-label="Dochód PLN">{{ '%.2f'|format(active_data.income_pln) }}</td>
-          <td class="num" data-label="Podatek PLN">{{ '%.2f'|format(active_data.tax_pln) }}</td>
-          <td class="num" data-label="Na rękę PLN">{{ '%.2f'|format(item.detail.net_pln) }}</td>
+          <td class="num" data-label="Ilość">
+            {% call traced(item.traces.get('sprzedaz.quantity')) %}
+            {{ '%.4f'|format(item.sale.quantity) }}
+            {% endcall %}
+          </td>
+          <td class="num" data-label="Przychód PLN">
+            {% call traced(item.traces.get('sprzedaz.revenue_pln')) %}
+            {{ '%.2f'|format(item.detail.revenue_pln) }}
+            {% endcall %}
+          </td>
+          <td class="num" data-label="Koszt PLN">
+            {% call traced(item.traces.get('sprzedaz.cost')) %}
+            {{ '%.2f'|format(active_data.cost_pln) }}
+            {% endcall %}
+          </td>
+          <td class="num" data-label="Dochód PLN">
+            {% call traced(item.traces.get('sprzedaz.income')) %}
+            {{ '%.2f'|format(active_data.income_pln) }}
+            {% endcall %}
+          </td>
+          <td class="num" data-label="Podatek PLN">
+            {% call traced(item.traces.get('sprzedaz.tax')) %}
+            {{ '%.2f'|format(active_data.tax_pln) }}
+            {% endcall %}
+          </td>
+          <td class="num" data-label="Na rękę PLN">
+            {% call traced(item.traces.get('sprzedaz.net')) %}
+            {{ '%.2f'|format(item.detail.net_pln) }}
+            {% endcall %}
+          </td>
           <td class="no-print">
+            <a class="btn small" href="{{ url_for('sale_document_html', sale_id=item.sale.id) }}"
+               target="_blank" onclick="event.stopPropagation();">Dokument</a>
+            <a class="btn small" href="{{ url_for('sale_document_pdf', sale_id=item.sale.id) }}"
+               target="_blank" onclick="event.stopPropagation();">PDF</a>
             <form method="post" action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
                   onclick="event.stopPropagation();"
                   onsubmit="return confirm('Cofnąć tę sprzedaż? Przywróci ilość akcji do lotów i usunie wpis nieodwracalnie.');">

@@ -6,7 +6,15 @@
 <div class="page-head">
   <h1>Wypłata</h1>
   <div class="form-actions no-print">
-    <a class="btn" href="{{ url_for('wyplata_get', direction=direction, print=1) }}" target="_blank">Widok do druku</a>
+    {#- E10 (docs/PLAN_E10_dokumenty.md): link budowany z PEŁNEGO query stringu
+        żądania + print=1/`document_html`, nie z samych direction/print — dawny
+        link (`direction=direction, print=1`) gubił cenę/opłatę/datę/cel/ilość,
+        więc „Widok do druku" pokazywał pusty formularz zamiast wyniku. #}
+    <a class="btn" href="{{ url_for('wyplata_get') }}?{{ request.query_string.decode() }}{% if request.query_string %}&{% endif %}print=1" target="_blank">Widok do druku</a>
+    {% if result %}
+    <a class="btn" href="{{ url_for('wyplata_document_html') }}?{{ request.query_string.decode() }}" target="_blank">Dokument (HTML)</a>
+    <a class="btn" href="{{ url_for('wyplata_document_pdf') }}?{{ request.query_string.decode() }}" target="_blank">Dokument (PDF)</a>
+    {% endif %}
   </div>
 </div>
 

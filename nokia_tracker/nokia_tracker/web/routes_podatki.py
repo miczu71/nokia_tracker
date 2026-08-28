@@ -10,6 +10,7 @@ from datetime import datetime
 from flask import Flask, Response, redirect, render_template, request, url_for
 
 from ._context import AppContext
+from ._documents import document_response
 from ._helpers import _is_future_date
 from .. import __version__
 from .. import cash as cashm
@@ -22,6 +23,7 @@ from ..tax import losses as taxlosses
 from ..tax import pit38 as taxpit38
 from ..tax import policy as taxpolicy
 from ..views.cash import cash_view
+from ..views.documents import year_dossier
 from ..views.pit38 import waterfall
 
 
@@ -102,6 +104,39 @@ def register_podatki_routes(app: Flask, ctx: AppContext) -> None:
                 xlsx_bytes,
                 mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 headers={"Content-Disposition": f"attachment; filename={filename}"})
+        finally:
+            conn.close()
+
+    @app.get("/pit38/dokumentacja.html")
+    def pit38_dossier_html():
+        """E10 (docs/PLAN_E10_dokumenty.md): pełne dossier PIT-38 za rok —
+        samodzielny HTML z Poz. C (trzy polityki), Sekcją G, PIT/ZG, stratą
+        z lat ubiegłych i załącznikiem — rejestrem sprzedaży ze śladem per
+        lot łącznie z prowenniencją."""
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            year = request.args.get("year", type=int) or cfg.get("tax_year") or datetime.now().year
+            doc = year_dossier(conn, cfg, year)
+            filename_stem = f"pit38_dokumentacja_{year}"
+            return document_response(
+                "dossier", doc, fmt="html", filename_stem=filename_stem,
+                download=request.args.get("pobierz") == "1")
+        finally:
+            conn.close()
+
+    @app.get("/pit38/dokumentacja.pdf")
+    def pit38_dossier_pdf():
+        """E10, Etap 4: to samo co `pit38_dossier_html`, w PDF."""
+        conn = _conn()
+        try:
+            cfg = settingsm.get_settings(conn)
+            year = request.args.get("year", type=int) or cfg.get("tax_year") or datetime.now().year
+            doc = year_dossier(conn, cfg, year)
+            filename_stem = f"pit38_dokumentacja_{year}"
+            return document_response(
+                "dossier", doc, fmt="pdf", filename_stem=filename_stem,
+                html_fallback_url=url_for('pit38_dossier_html', year=year))
         finally:
             conn.close()
 

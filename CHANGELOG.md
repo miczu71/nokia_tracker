@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.29.0] - 2026-08-28
+
+Dokumenty dowodowe HTML/PDF dla symulacji i zrealizowanych sprzedaży — patrz
+`docs/PLAN_E10_dokumenty.md`. Cel: móc wynieść z aplikacji to, co dziś widać tylko na
+ekranie — pełny ślad FIFO do numeru tabeli NBP łącznie z prowenniencją (skąd dana liczba
+w bazie pochodzi) — jako samodzielny plik, na dowód do urzędu skarbowego albo do
+własnego archiwum.
+
+### Dodano
+- **`breakdown.sale_traces()` — ślad „skąd ta liczba" dla zrealizowanych sprzedaży
+  (8 kwot, symetrycznie do `withdrawal_traces()` na `/wyplata`).** W odróżnieniu od
+  `/wyplata` (dane z formularza) sprzedaż jest w pełni odtwarzalna z bazy — awarie
+  domykania są ZBIERANE, nie tylko pomijane, i `integrity.py::_breakdown_not_closed`
+  powtarza je co noc dla bieżącego roku podatkowego, tak jak dziś robi to dla `/`.
+  Nadpisanie „Zgłoszonej wartości" (krok 20) przechodzi z cichego `close_sum` (który by
+  zawsze wybuchał) na `close_formula` z jawnym składnikiem „korekta do wartości
+  zgłoszonej" — realny ślad FIFO per lot zostaje widoczny mimo nadpisania. `/sales`
+  dostaje przy okazji te same rozwijane ślady co `/` i `/wyplata` (`sales_view(...,
+  with_traces=True)`).
+- **Trzy dokumenty dowodowe, HTML i PDF, na trzech nowych trasach**:
+  `GET /sales/<id>/dokument.{html,pdf}` (jedna zrealizowana sprzedaż), `GET
+  /wyplata/dokument.{html,pdf}` (symulacja — te same parametry co `/wyplata`, z blokiem
+  „Parametry symulacji" i query stringiem do odtworzenia wyniku), `GET
+  /pit38/dokumentacja.{html,pdf}` (pełne dossier roczne: Poz. C w trzech politykach,
+  Sekcja G, PIT/ZG, strata z lat ubiegłych, załącznik — rejestr sprzedaży ze śladem per
+  lot). Każdy dokument niesie nagłówek (wersja aplikacji, schemat bazy, aktywna polityka
+  kosztu z podstawą prawną, suma kontrolna SHA-256 licząca się z danych, nie z
+  wyrenderowanego pliku — ten sam skrót dla HTML i PDF tej samej pozycji) i jest w pełni
+  samodzielny: bez nawigacji aplikacji, bez `url_for`, CSS wklejony inline — otwiera się
+  identycznie za rok, na innym komputerze, bez dostępu do dodatku.
+- **PDF przez WeasyPrint** (`exports/pdf.py`), instalowany jako osobny
+  `requirements-pdf.txt` z `--only-binary=:all:` — brak gotowego koła (np. architektura
+  bez wsparcia) degraduje build do HTML-only zamiast wielominutowej kompilacji pod QEMU;
+  brak biblioteki w runtime degraduje trasę `.pdf` do 503 z odnośnikiem do `.html`,
+  zamiast wywalać cały dodatek. Jeden render naraz (`Semaphore`) — WeasyPrint trzyma
+  całe drzewo layoutu w pamięci.
+- **Zbiorcza notka zamiast powtórzeń, gdy plik wyciągu źródłowego nieznany.** Loty z
+  importu sprzed retencji snapshotów (0.23.0) dostają w śladzie kompaktowy znacznik
+  zamiast pełnego zdania powtórzonego w każdym wierszu tabeli — jedna notka z liczbą
+  dotkniętych pozycji pod tabelą.
+- **Strażnik rozmiaru dla rocznego dossier.** Powyżej 200 alokacji sprzedaży-lotu w
+  jednym roku dokument pokazuje tylko tabelę zbiorczą (sumy per sprzedaż), nie pełny
+  ślad FIFO każdej z nich — z jawną notką i odnośnikiem do dokumentu pojedynczej
+  sprzedaży, gdzie pełny ślad zostaje zawsze dostępny.
+
+### Naprawiono
+- **`/wyplata?print=1` gubił parametry symulacji.** Link do widoku druku budował się z
+  samego `direction`+`print=1` — cena/opłata/data/cel/ilość znikały, więc „Widok do
+  druku" pokazywał pusty formularz zamiast policzonego wyniku. Parsowanie parametrów
+  wydzielone do `_wyplata_params()`, współdzielone teraz przez stronę, oba dokumenty i
+  link do druku.
+
 ## [0.28.0] - 2026-08-28
 
 Cztery zgłoszenia użytkownika w jednym wydaniu — patrz `docs/PLAN_0_28_0_ui_porzadki.md`.

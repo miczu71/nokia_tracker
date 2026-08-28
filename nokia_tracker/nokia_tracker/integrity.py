@@ -19,6 +19,7 @@ from . import settings as settingsm
 from .tax import pit38 as taxpit38
 from .views.account import account_view
 from .views.market_context import instrument_ids as _instrument_ids
+from .views.sales import sales_view
 
 _QTY_EPSILON = 0.001
 _MONEY_EPSILON_PLN = 0.02  # grosz + margines na zaokrąglenia pośrednie
@@ -351,14 +352,20 @@ def _statement_mismatch(conn: sqlite3.Connection) -> list[Finding]:
 
 
 def _breakdown_not_closed(conn: sqlite3.Connection, cfg: dict, today: str) -> list[Finding]:
-    """Krok E8 (docs/PLAN_E8_slad.md): powtarza DOKŁADNIE to samo wywołanie, którego
-    używa `/` (`views/account.py::account_view`), i zgłasza każdy ślad, który nie
-    domknął się do grosza (`breakdown.BreakdownNotClosedError`, zebrane tam jako
-    `trace_failures` zamiast po cichu połknięte). `warning`, nie `error` — strona
-    już się z tym poprawnie degraduje (kwota renderuje się bez `<details>`), to
-    znalezisko jest sygnałem do zbadania, nie dowodem korupcji danych.
+    """Krok E8 (docs/PLAN_E8_slad.md), rozszerzone w E10 (docs/PLAN_E10_dokumenty.md):
+    powtarza DOKŁADNIE te same wywołania, których używają `/` (`views/account.py::
+    account_view`) i `/sales` (`views/sales.py::sales_view(..., with_traces=True)`),
+    i zgłasza każdy ślad, który nie domknął się do grosza (`breakdown.
+    BreakdownNotClosedError`, zebrane tam jako `trace_failures` zamiast po cichu
+    połknięte). `warning`, nie `error` — strona już się z tym poprawnie degraduje
+    (kwota renderuje się bez `<details>`), to znalezisko jest sygnałem do zbadania,
+    nie dowodem korupcji danych.
 
-    Świadomie WYŁĄCZNIE `/` — ślady `/wyplata` zależą od wejścia z formularza
+    Sprzedaże: tylko bieżący rok podatkowy (`cfg["tax_year"]`), tak jak `/sales`
+    domyślnie filtruje — powtarzanie WSZYSTKICH lat co noc rosłoby liniowo z
+    historią i nie odpowiada niczemu, co ktokolwiek dziś ogląda na jedno kliknięcie.
+
+    Świadomie NIE obejmuje `/wyplata` — ślady tam zależą od wejścia z formularza
     (cena, data, ilość), więc nie ma ustalonego „dzisiejszego" zestawu do
     powtórzenia poza samym żądaniem (patrz `breakdown.withdrawal_traces`
     docstring)."""
@@ -373,6 +380,18 @@ def _breakdown_not_closed(conn: sqlite3.Connection, cfg: dict, today: str) -> li
             f"{failure.shown} != przeliczone {failure.recomputed}",
             1, [{"key": failure.key, "shown": failure.shown,
                  "recomputed": failure.recomputed}]))
+
+    sales = sales_view(conn, cfg, year, with_traces=True)
+    for item in sales["sales"]:
+        sale_id = item["sale"]["id"]
+        for failure in item.get("trace_failures", []):
+            findings.append(Finding(
+                f"breakdown_not_closed:{failure.key}", "warning",
+                f"Ślad „skąd ta liczba” dla sprzedaży #{sale_id}, pozycja "
+                f"'{failure.key}' się nie domyka — wyświetlane {failure.shown} "
+                f"!= przeliczone {failure.recomputed}",
+                1, [{"key": failure.key, "sale_id": sale_id, "shown": failure.shown,
+                     "recomputed": failure.recomputed}]))
     return findings
 
 

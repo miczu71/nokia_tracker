@@ -3,6 +3,9 @@ sprzedaży, podatek PIT-38 vs zapłacony, dywidendy bezgotówkowe. Fixture
 `client` w conftest.py."""
 from __future__ import annotations
 
+from nokia_tracker import db as dbm
+from nokia_tracker.web import create_app
+
 
 def test_cash_page_empty_state_200(client):
     resp = client.get("/gotowka")
@@ -81,3 +84,26 @@ def test_delete_tax_payment(client):
 def test_dividend_flow_shown_as_cashless(client):
     html = client.get("/gotowka").get_data(as_text=True)
     assert "bezgotówk" in html.lower()
+
+
+def test_cash_page_shows_cumulative_proceeds_for_year_without_sales(tmp_path):
+    # Regresja 0.27.1: kafelek „Łącznie (wszystkie lata)" musi pokazać sumę
+    # sprzedaży z ROKU POPRZEDNIEGO, nawet gdy wybrany rok nie ma żadnej —
+    # przed fixem ledger() filtrował sale_proceeds() przez wybrany rok, więc
+    # oba kafelki („W {rok}" i „Łącznie") pokazywały to samo (0 dla roku bez
+    # sprzedaży) mimo że karta wcale nie powinna być pusta.
+    db_path = str(tmp_path / "cash_cumulative.db")
+    conn = dbm.get_conn(db_path)
+    dbm.migrate(conn)
+    conn.execute(
+        "INSERT INTO sales (sale_date, quantity, price_eur, fee_eur, nbp_rate, "
+        "nbp_rate_date, revenue_pln) VALUES ('2024-03-01', 10.0, 5.0, 0.0, 4.0, "
+        "'2024-03-01', 200.0)")
+    conn.commit()
+    conn.close()
+    app = create_app(db_path)
+    app.config["TESTING"] = True
+    with app.test_client() as c:
+        html = c.get("/gotowka?year=2025").get_data(as_text=True)
+        assert "Brak sprzedaży." not in html
+        assert "200" in html  # kafelek „Łącznie (wszystkie lata)"

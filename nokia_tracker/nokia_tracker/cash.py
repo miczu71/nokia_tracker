@@ -236,9 +236,16 @@ def record_broker_balance(conn: sqlite3.Connection, as_of_date: str, amount: flo
 
 def ledger(conn: sqlite3.Connection, cfg: dict, year: int) -> dict:
     """Spina wszystko powyższe w jeden słownik — konsument: `views/cash.py`
-    (E4) i `views/account.py` — „Stan konta" (E5)."""
+    (E4) i `views/account.py` — „Stan konta" (E5).
+
+    `sale_proceeds` jest celowo NIEfiltrowane rokiem (0.27.1 fix) — strona
+    pokazuje kafelek „W {rok}" (`by_year[str(year)]`) obok kafelka „Łącznie
+    (wszystkie lata)" (`total_pln`/`total_eur`) naraz, więc filtr roku
+    należy do konsumenta czytającego `by_year[year]`, nie do tego
+    wywołania. Wołanie z `year=` dawałoby `by_year` z jednym kluczem i
+    `total_pln` równe temu samemu rokowi — kafelek „Łącznie" kłamałby."""
     return {
-        "sale_proceeds": sale_proceeds(conn, year=year),
+        "sale_proceeds": sale_proceeds(conn),
         "dividend_flow": dividend_flow(conn, cfg, year=year),
         "tax_liability": tax_liability(conn, cfg, year),
         "broker_balance": broker_balance(conn),

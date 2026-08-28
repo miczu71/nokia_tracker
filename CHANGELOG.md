@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.27.1] - 2026-08-28
+
+Znalezione przy odpowiadaniu na pytanie „skąd wartość podatku na ekranie Gotówka za
+2026, skoro nie było sprzedaży" (odpowiedź: to podatek od 3 dywidend — sekcja G
+PIT-38, DRIP nie zwalnia z podatku mimo że gotówka nigdy nie ląduje na koncie).
+
+### Naprawiono
+- **`cash.py::ledger()` — kafelek „Łącznie (wszystkie lata)" na `/gotowka` pokazywał
+  sumę tylko WYBRANEGO roku, nie wszystkich lat.** `ledger()` wołał
+  `sale_proceeds(conn, year=year)` z filtrem roku, więc `total_pln`/`total_eur` (pole
+  podpisane w szablonie jako „wszystkie lata") wychodziło identyczne z kafelkiem
+  „W {rok}" obok. Fix: `ledger()` woła `sale_proceeds(conn)` bez filtra — `by_year`
+  dostarcza rok wybrany, `total_pln`/`total_eur` prawdziwą sumę narastającą. Efekt
+  uboczny (zamierzony): karta „Wpływy ze sprzedaży" przestaje pokazywać stan pusty
+  dla roku bez sprzedaży, jeśli sprzedaże były w latach wcześniejszych.
+
 ## [0.27.0] - 2026-08-28
 
 Fix znaleziony po imporcie wyciągu 2026-08-27 (uwolnienie 4 transz dopasowania ESPP za

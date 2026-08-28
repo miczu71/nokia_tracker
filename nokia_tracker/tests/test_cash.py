@@ -228,3 +228,17 @@ def test_ledger_shape(conn):
     result = cash.ledger(conn, cfg, 2026)
     assert set(result) == {
         "sale_proceeds", "dividend_flow", "tax_liability", "broker_balance"}
+
+
+def test_ledger_sale_proceeds_covers_all_years_not_just_selected(conn):
+    # Regresja: ledger() woła sale_proceeds() BEZ filtra roku, żeby karta
+    # „Gotówka" mogła pokazać jednocześnie kafelek „W {rok}" (by_year[rok])
+    # i „Łącznie (wszystkie lata)" (total_pln) — filtrowanie sale_proceeds()
+    # przez ledger() zawężałoby oba do tego samego roku (0.27.1 fix).
+    _add_sale(conn, "2024-03-01", 10.0, 5.0, revenue_pln=200.0)
+    _add_sale(conn, "2025-03-01", 10.0, 6.0, revenue_pln=240.0)
+    cfg = {"cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0}
+    result = cash.ledger(conn, cfg, 2025)
+    assert set(result["sale_proceeds"]["by_year"]) == {"2024", "2025"}
+    assert result["sale_proceeds"]["by_year"]["2025"]["pln"] == pytest.approx(240.0)
+    assert result["sale_proceeds"]["total_pln"] == pytest.approx(440.0)

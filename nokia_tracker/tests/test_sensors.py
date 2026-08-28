@@ -630,8 +630,22 @@ def test_advisor_values_all_three_keys_present(conn):
 
 
 def test_advisor_values_money_keys_none_without_price_but_qty_present(
-        conn, _fake_nbp_rate_for_pit38):
+        conn, _fake_nbp_rate_for_pit38, monkeypatch):
+    from datetime import datetime
+
     from nokia_tracker.tax import grants as grantsm
+    # Bez tego test jest bombą zegarową: `available_from` musi zostać nie-zaległe (patrz
+    # `tax/grants.py::vesting_timeline` - zaległe transze świadomie wypadają z `this_year`),
+    # a bez ustalonego "dziś" przestaje to być prawdą samo z siebie, gdy kalendarz
+    # dogoni 2026-08-27 (dokładnie to, co się stało - ten sam wzorzec co
+    # `test_grants_values_unvested_qty_sums_all_pending_regardless_of_date` powyżej).
+    fixed_now = datetime(2026, 7, 28)
+    fixed_datetime = type("FixedDatetime", (), {
+        "now": staticmethod(lambda tz=None: fixed_now),
+        "strptime": staticmethod(datetime.strptime),
+    })
+    monkeypatch.setattr("nokia_tracker.advisor.datetime", fixed_datetime)
+    monkeypatch.setattr("nokia_tracker.tax.grants.datetime", fixed_datetime)
 
     grant_id = grantsm.add_grant(conn, "espp", "2026-01-01", 75.0, "espp_grant:x")
     grantsm.add_vest(

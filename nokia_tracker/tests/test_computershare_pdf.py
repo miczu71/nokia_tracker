@@ -358,6 +358,31 @@ def test_parse_restricted_units_total_basic():
     assert cp.parse_restricted_units_total(text) == 1360.89909
 
 
+def test_parse_restricted_units_total_whole_number_without_decimal_point():
+    # Regresja 0.27.0: gdy jedyne transze RSU pozostałe na dzień wyciągu sumują się do
+    # okrągłej liczby (tu: dwie transze LTI po 633.00 = 1266), Computershare drukuje ją
+    # BEZ kropki dziesiętnej ("1 266", nie "1 266.00") — dokładnie ta sama klasa błędu co
+    # naprawiona w 0.17.1 dla "Entitled Quantity". `_NUM` (kropka WYMAGANA) zwracał wtedy
+    # `None` zamiast 1266.0, mimo że sekcja realnie istnieje.
+    text = (
+        " 1 266                                                               2 741.81916\n"
+        " Restricted stock units                     49 461.86 PLN            Restricted "
+        "Shares                           48 734.74 PLN\n"
+    )
+    assert cp.parse_restricted_units_total(text) == 1266.0
+
+
+def test_parse_shares_total_whole_number_without_decimal_point():
+    # Symetria testu powyżej — ten sam regex (`_LEADING_NUM_RE`) obsługuje obie funkcje,
+    # więc ten sam bug byłby możliwy tu, gdyby Akcje kiedyś wypadły okrągło.
+    text = (
+        " 3 030                                                               2 741.81916\n"
+        " Shares                                    118 483.32 PLN            Vested  "
+        "Shares                             105 546.47 PLN\n"
+    )
+    assert cp.parse_shares_total(text) == 3030.0
+
+
 def test_parse_restricted_units_total_ignores_wider_indent_variant_far_in_document():
     # "Restricted stock units" pojawia się też jako nagłówek kolumny w tabelach dalej
     # w dokumencie ("Locked" / "Available"), z większym wcięciem i inną spacją między

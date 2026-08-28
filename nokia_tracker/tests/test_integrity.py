@@ -359,6 +359,62 @@ def test_allocation_written_by_record_sale_never_flagged(conn):
     assert not any(f.check == "allocation_predates_its_lot" for f in findings)
 
 
+# --- 0.27.0: to samo uwolnienie dopasowania ESPP zaksięgowane dwa razy (lot snapshotu
+# "Vested Matching Shares" + lot puli Withhold-to-Cover na tę samą datę) ---
+
+def test_duplicate_match_release_detected(conn):
+    matching_id = taxlots.add_lot(
+        conn, "2026-08-27", "matched", 19.29, 8.82, source="pdf_import",
+        natural_key="vested_matching:2026-08-27:8.82:19.29")
+    pool_id = taxlots.add_lot(
+        conn, "2026-08-27", "matched", 94.89909, 8.82, source="pdf_import",
+        natural_key="vested_release:2026-08-27:8.82:94.89909")
+
+    findings = integrity.check_all(conn)
+
+    f = next(f for f in findings if f.check == "duplicate_match_release")
+    assert f.severity == "error"
+    assert f.count == 1
+    assert f.details[0]["matching_lot_id"] == matching_id
+    assert f.details[0]["release_lot_id"] == pool_id
+
+
+def test_duplicate_match_release_not_flagged_when_only_matching_lot_exists(conn):
+    # Historyczny wzorzec (2023/2024 w danych produkcyjnych) — data bez wiersza WTC tego
+    # samego dnia, snapshot zostaje jedynym źródłem, to jest poprawny, nie duplikat.
+    taxlots.add_lot(
+        conn, "2023-08-30", "matched", 7.33, 3.65, source="pdf_import",
+        natural_key="vested_matching:2023-08-30:3.65:7.33")
+
+    findings = integrity.check_all(conn)
+
+    assert not any(f.check == "duplicate_match_release" for f in findings)
+
+
+def test_duplicate_match_release_not_flagged_when_only_release_lot_exists(conn):
+    # Stan PO naprawie 0.27.0 - tylko lot puli, snapshot zdedupowany na etapie importu.
+    taxlots.add_lot(
+        conn, "2026-08-27", "matched", 94.89909, 8.82, source="pdf_import",
+        natural_key="vested_release:2026-08-27:8.82:94.89909")
+
+    findings = integrity.check_all(conn)
+
+    assert not any(f.check == "duplicate_match_release" for f in findings)
+
+
+def test_duplicate_match_release_ignores_different_dates(conn):
+    taxlots.add_lot(
+        conn, "2025-08-28", "matched", 0.48, 3.71, source="pdf_import",
+        natural_key="vested_matching:2025-08-28:3.71:0.48")
+    taxlots.add_lot(
+        conn, "2026-08-27", "matched", 94.89909, 8.82, source="pdf_import",
+        natural_key="vested_release:2026-08-27:8.82:94.89909")
+
+    findings = integrity.check_all(conn)
+
+    assert not any(f.check == "duplicate_match_release" for f in findings)
+
+
 # --- new: rozjazd uzgodnienia z wyciągiem (E7) — jeden Finding per pozycja mismatch ---
 
 def test_statement_mismatch_detected_when_snapshot_disagrees_with_database(conn):

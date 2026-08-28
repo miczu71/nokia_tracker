@@ -50,6 +50,10 @@ from ..tax import lots as taxlots
 logger = logging.getLogger(__name__)
 
 _EPS = 1e-9
+# Tolerancja dla porównania Σ wierszy "Vested Matching Shares" z jednego dnia z ilością
+# lotu puli tego dnia (Withhold-to-Cover Typ A) — te wiersze drukowane z zaokrągleniem
+# do 2 m.d. (patrz `_VESTED_MATCHING_RE`), pula ma pełną precyzję z transakcji.
+_MATCHING_POOL_TOLERANCE = 0.02
 
 # --- prymitywy liczbowe/datowe, wspólne dla wszystkich kształtów wierszy ---
 _DATE = r"\d{1,2}\s*[A-Za-z]{3}\s*\d{4}"
@@ -361,7 +365,11 @@ def parse_withhold_to_cover(text: str) -> tuple[list[dict], list[dict]]:
 # "Shares" (widok wg TYPU) celowo — "Assets by plan" pokazuje te same akcje jeszcze raz
 # z innej strony (per plan), sumowanie obu widoków podwoiłoby liczbę.
 _SHARES_LABEL_RE = re.compile(r"^\s{0,3}Shares\b")
-_LEADING_NUM_RE = re.compile(rf"^\s*({_NUM})")
+# 0.27.0: `_NUM` (kropka dziesiętna WYMAGANA) przepuszczał `None` dla sum całkowitych bez
+# części dziesiętnej (np. "1 266" gdy jedyne pozostałe transze RSU to 633+633) — ta sama
+# klasa błędu co naprawiona w 0.17.1 dla `Entitled Quantity`. `_INT` ma kropkę opcjonalną
+# i resztę wzoru identyczną, więc nie zmienia parsowania wartości Z kropką.
+_LEADING_NUM_RE = re.compile(rf"^\s*({_INT})")
 
 
 def parse_shares_total(text: str) -> float | None:
@@ -636,12 +644,53 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         elif _record_conflict(conn, import_id, "vest", vest_nk, dict(existing_vest), row):
             rows_conflict += 1
 
-    for row in parse_vested_matching_shares(text):
-        nk = f"vested_matching:{row['vested_date']}:{row['cost_basis_eur']}:{row['quantity']}"
+    # 0.27.0: "Vested Matching Shares" (snapshot stanu posiadania, per-transza, zaokrąglone
+    # do 2 m.d.) i Withhold-to-Cover Typ A (transakcja, ZBIORCZA dla całej kohorty
+    # dopasowań ESPP odblokowanych tego samego dnia — patrz `parse_withhold_to_cover`
+    # niżej) opisują TO SAMO zdarzenie, gdy daty się pokrywają. Do 0.26.0 obie strony
+    # tworzyły OSOBNE loty — podwójne księgowanie (94,89909 szt. na wyciągu 27.08.2026,
+    # 0,48 szt. na wyciągu 28.08.2025; drugie naprawiane dotąd ręcznie w `data_fixes.py`).
+    # `parse_withhold_to_cover()` sprowadzony tu wcześniej właśnie po to, żeby ta pętla
+    # znała `release_dates`/`release_pool_qty` PRZED utworzeniem jakiegokolwiek lotu.
+    type_a, type_b = parse_withhold_to_cover(text)
+    release_pool_qty: dict[str, float] = {}
+    for r in type_a:
+        release_pool_qty[r["execution_date"]] = (
+            release_pool_qty.get(r["execution_date"], 0.0) + r["quantity"])
+    release_dates = set(release_pool_qty)
+
+    vested_matching_rows = parse_vested_matching_shares(text)
+    matching_sum_by_date: dict[str, float] = {}
+    for r in vested_matching_rows:
+        matching_sum_by_date[r["vested_date"]] = (
+            matching_sum_by_date.get(r["vested_date"], 0.0) + r["quantity"])
+
+    for row in vested_matching_rows:
+        d = row["vested_date"]
+        nk = f"vested_matching:{d}:{row['cost_basis_eur']}:{row['quantity']}"
         existing = conn.execute("SELECT * FROM lots WHERE natural_key = ?", (nk,)).fetchone()
+
         if existing is None:
+            # Kohorta ma wiersz WTC tego samego dnia (ten import) LUB lot puli już
+            # istnieje (WTC-wiersz przyszedł z INNEGO, wcześniej zaimportowanego wyciągu
+            # — re-import starszego pliku bez transakcji spoza jego własnego okna) —
+            # w obu przypadkach ta transza jest JUŻ policzona w locie zbiorczym, nie
+            # dokładamy drugiego lotu na to samo zdarzenie.
+            pooled_elsewhere = d not in release_dates and conn.execute(
+                "SELECT 1 FROM lots WHERE lot_type = 'matched' AND natural_key LIKE ?",
+                (f"vested_release:{d}:%",)).fetchone() is not None
+            if d in release_dates or pooled_elsewhere:
+                pool_qty = release_pool_qty.get(d)
+                if pool_qty is not None and matching_sum_by_date[d] > pool_qty + _MATCHING_POOL_TOLERANCE:
+                    # Założenie "snapshot to podzbiór puli" złamane — to już nie jest
+                    # duplikat, tylko rozjazd wart ręcznego spojrzenia.
+                    if _record_conflict(conn, import_id, "lot", nk, {}, row):
+                        rows_conflict += 1
+                else:
+                    rows_unchanged += 1
+                continue
             taxlots.add_lot(
-                conn, row["vested_date"], "matched", row["quantity"], row["cost_basis_eur"],
+                conn, d, "matched", row["quantity"], row["cost_basis_eur"],
                 source="pdf_import", natural_key=nk)
             rows_inserted += 1
         elif (abs(existing["quantity"] - row["quantity"]) < _EPS
@@ -765,9 +814,9 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
                 else:
                     rows_unchanged += 1
 
-    vested_matching_dates = {row["vested_date"] for row in parse_vested_matching_shares(text)}
-
-    type_a, type_b = parse_withhold_to_cover(text)
+    # `type_a`/`type_b`/`release_dates` już policzone wyżej, przed pętlą "Vested Matching
+    # Shares" (0.27.0) — jedno źródło prawdy, żeby obie pętle patrzyły na te same daty.
+    vested_matching_dates = set(matching_sum_by_date)
     for row in type_a:
         # Realne uwolnienie akcji (RS Award/LTI lub, gdy data pokrywa się z "Vested
         # Matching Shares" z tego samego wyciągu, wspólna kohorta dopasowań ESPP) - zero
@@ -779,7 +828,7 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
         nk = f"vested_release:{row['execution_date']}:{row['sale_price_eur']}:{row['quantity']}"
         existing = conn.execute("SELECT * FROM lots WHERE natural_key = ?", (nk,)).fetchone()
         if existing is None:
-            taxlots.add_lot(
+            lot_id = taxlots.add_lot(
                 conn, row["execution_date"], lot_type, row["quantity"], row["sale_price_eur"],
                 source="pdf_import", natural_key=nk)
             rows_inserted += 1
@@ -788,9 +837,20 @@ def import_statement(conn: sqlite3.Connection, pdf_bytes: bytes, filename: str,
                 row["execution_date"], row["quantity"], row["sale_price_eur"], lot_type)
         elif (abs(existing["quantity"] - row["quantity"]) < _EPS
               and abs(existing["price_eur"] - row["sale_price_eur"]) < _EPS):
+            lot_id = existing["id"]
             rows_unchanged += 1
         elif _record_conflict(conn, import_id, "lot", nk, dict(existing), row):
+            lot_id = None
             rows_conflict += 1
+        else:
+            lot_id = None
+
+        if lot_type == "matched" and lot_id is not None:
+            # 0.27.0 (uogólnienie E9, docs/PLAN_E9_transza_w_puli.md): transze ESPP
+            # odblokowane tego samego dnia nigdy nie dostają WŁASNEGO lotu — cała kohorta
+            # jest już policzona w tym locie zbiorczym. Bez tego wrócą na 'pending' i po
+            # 30 dniach `integrity.py::_stale_pending_vest` zgłosi fałszywy błąd.
+            grantsm.link_pooled_release(conn, row["execution_date"], lot_id)
     for row in type_b:
         # Prawdziwa sprzedaż gotówkowa — NIGDY nie księgowana automatycznie.
         nk = f"wtc:{row['execution_date']}:{row['quantity']}:{row['net_proceeds_eur']}"

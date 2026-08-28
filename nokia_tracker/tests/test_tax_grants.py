@@ -242,6 +242,129 @@ def test_reconcile_vesting_is_idempotent_on_already_vested(conn):
     assert second == 0
 
 
+# --- link_pooled_release (0.27.0, uogólnienie E9) ---
+
+def test_link_pooled_release_links_single_pending_vest(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:x")
+    vest_id = grants.add_vest(
+        conn, grant_id, "2025-08-01", 24.42, "espp_vest:x", available_from="2025-08-28")
+    pool_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 101.396662, 3.71, source="pdf_import")
+
+    linked = grants.link_pooled_release(conn, "2025-08-28", pool_lot_id)
+
+    assert linked == 1
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "vested"
+    assert vest["lot_id"] is None
+    assert vest["pooled_lot_id"] == pool_lot_id
+
+
+def test_link_pooled_release_links_all_matching_vests_in_one_call(conn):
+    from nokia_tracker.tax import lots as taxlots
+    pool_lot_id = taxlots.add_lot(
+        conn, "2026-08-27", "matched", 94.89909, 8.82, source="pdf_import")
+    vest_ids = []
+    for i, qty in enumerate((19.29, 29.24, 17.37, 28.99)):
+        grant_id = grants.add_grant(conn, "espp", "2026-01-01", qty, f"espp_grant:{i}")
+        vest_ids.append(grants.add_vest(
+            conn, grant_id, "2026-08-01", qty, f"espp_vest:{i}", available_from="2026-08-27"))
+
+    linked = grants.link_pooled_release(conn, "2026-08-27", pool_lot_id)
+
+    assert linked == 4
+    for vest_id in vest_ids:
+        vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+        assert vest["status"] == "vested"
+        assert vest["pooled_lot_id"] == pool_lot_id
+
+
+def test_link_pooled_release_ignores_vests_on_different_date(conn):
+    from nokia_tracker.tax import lots as taxlots
+    pool_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 101.396662, 3.71, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2024-01-01", 5.0, "espp_grant:x")
+    vest_id = grants.add_vest(
+        conn, grant_id, "2025-08-01", 5.0, "espp_vest:x", available_from="2025-09-01")
+
+    linked = grants.link_pooled_release(conn, "2025-08-28", pool_lot_id)
+
+    assert linked == 0
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "pending"
+    assert vest["pooled_lot_id"] is None
+
+
+def test_link_pooled_release_refuses_when_sum_exceeds_pool(conn):
+    # Strażnik: Σ transz pasujących datą (30.0) > ilość lotu puli (24.42) + tolerancja —
+    # założenie "transze to podzbiór puli" złamane, nic nie podpinamy.
+    from nokia_tracker.tax import lots as taxlots
+    pool_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 24.42, 3.71, source="pdf_import")
+    grant_id = grants.add_grant(conn, "espp", "2024-01-01", 30.0, "espp_grant:x")
+    vest_id = grants.add_vest(
+        conn, grant_id, "2025-08-01", 30.0, "espp_vest:x", available_from="2025-08-28")
+
+    linked = grants.link_pooled_release(conn, "2025-08-28", pool_lot_id)
+
+    assert linked == 0
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "pending"
+
+
+def test_link_pooled_release_ignores_lti_program(conn):
+    # Pooling jest zjawiskiem WYŁĄCZNIE ESPP (Computershare nigdy nie łączy transz LTI w
+    # jeden wiersz WTC — patrz 2026-07-09, dwa osobne wiersze dla 634 i 2100) — transza LTI
+    # z tą samą datą nie powinna zostać przypadkiem podpięta.
+    from nokia_tracker.tax import lots as taxlots
+    pool_lot_id = taxlots.add_lot(
+        conn, "2026-07-09", "lti", 634.0, 10.22, source="pdf_import")
+    grant_id = grants.add_grant(conn, "lti", "2025-07-07", None, "lti_grant:g1")
+    vest_id = grants.add_vest(
+        conn, grant_id, "2026-07-05", 634.0, "lti_vest:g1", available_from="2026-07-09")
+
+    linked = grants.link_pooled_release(conn, "2026-07-09", pool_lot_id)
+
+    assert linked == 0
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "pending"
+
+
+def test_link_pooled_release_is_idempotent(conn):
+    from nokia_tracker.tax import lots as taxlots
+    grant_id = grants.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:x")
+    grants.add_vest(
+        conn, grant_id, "2025-08-01", 24.42, "espp_vest:x", available_from="2025-08-28")
+    pool_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 101.396662, 3.71, source="pdf_import")
+
+    first = grants.link_pooled_release(conn, "2025-08-28", pool_lot_id)
+    second = grants.link_pooled_release(conn, "2025-08-28", pool_lot_id)
+
+    assert first == 1
+    assert second == 0  # już 'vested', nie ma czego drugi raz podpiąć
+
+
+def test_link_pooled_release_returns_zero_when_no_pending_vests(conn):
+    from nokia_tracker.tax import lots as taxlots
+    pool_lot_id = taxlots.add_lot(
+        conn, "2025-08-28", "matched", 101.396662, 3.71, source="pdf_import")
+    assert grants.link_pooled_release(conn, "2025-08-28", pool_lot_id) == 0
+
+
+def test_link_pooled_release_returns_zero_when_pool_lot_missing(conn):
+    grant_id = grants.add_grant(conn, "espp", "2024-10-21", 24.42, "espp_grant:x")
+    vest_id = grants.add_vest(
+        conn, grant_id, "2025-08-01", 24.42, "espp_vest:x", available_from="2025-08-28")
+
+    linked = grants.link_pooled_release(conn, "2025-08-28", 999999)
+
+    assert linked == 0
+    vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+    assert vest["status"] == "pending"
+
+
 # --- due_for_reminder / mark_reminder_sent (krok 14) ---
 
 def test_due_for_reminder_returns_vest_within_window(conn):

@@ -171,9 +171,20 @@ def test_import_all_five_real_files_covers_the_784_share_sale(conn, monkeypatch)
 def test_reconcile_vesting_resolves_exactly_the_provable_tranches(conn, monkeypatch):
     """Krok 14 (docs/PLAN_KROK_14_vesting_reconcile.md): po pełnym imporcie 5 realnych plików,
     reconcile_vesting() musi rozwiązać DOKŁADNIE te transze, dla których dopasowanie ilości
-    jest jednoznaczne (7.33 i 33.36 z ESPP Matching Shares, 634 i 2100 z LTI RS Award) —
-    24.42/29.24/28.99/17.37 (ESPP) i 633/633 (LTI 2027/2028) muszą zostać 'pending', bo albo
-    nie mają dokładnego odpowiednika w saldzie (24.42), albo ich data jeszcze nie nadeszła."""
+    jest jednoznaczne (7.33 i 33.36 z ESPP Matching Shares, 634 i 2100 z LTI RS Award) — 4,
+    nie 5, mimo że w bazie jest 5 lotów 'vested'/wynik.
+
+    24.42 (grant 2024-10-21) jest od 0.27.0 WYJĄTKIEM od reguły "dokładne dopasowanie ilości":
+    ta transza nigdy nie dostanie WŁASNEGO lotu (Computershare łączy w jeden wiersz WTC całą
+    kohortę dopasowań ESPP z 2025-08-28 — dowód arytmetyczny w `data_fixes.py::
+    revert_phantom_espp_match_lot_2025_08`), więc `import_statement()` sam podpina ją do lotu
+    puli przez `pooled_lot_id` (`tax/grants.py::link_pooled_release`, wołane z WTC Typ A
+    PODCZAS importu, przed jakimkolwiek wywołaniem `reconcile_vesting()`) — stąd 'vested' z
+    `lot_id IS NULL`, poza czterema, które `reconcile_vesting()` faktycznie rozwiązuje tu.
+
+    29.24/28.99/17.37 (ESPP) i 633/633 (LTI 2027/2028) zostają 'pending' — ich data jeszcze
+    nie nadeszła (2026-08-01/2027/2028 > `today="2026-07-28"` tego testu; wyciąg z ich własnym
+    uwolnieniem, 27.08.2026, nie jest jednym z tych 5 plików)."""
     monkeypatch.setattr(
         "nokia_tracker.tax.lots.fx_nbp.rate_for_event",
         lambda conn, event_date: (4.30, "stub"))
@@ -188,17 +199,23 @@ def test_reconcile_vesting_resolves_exactly_the_provable_tranches(conn, monkeypa
     resolved = grantsm.reconcile_vesting(conn, today="2026-07-28")
     assert resolved == 4
 
-    vested_qty = {
-        r["quantity"] for r in conn.execute(
-            "SELECT quantity FROM vests WHERE status = 'vested'").fetchall()
+    vested = {
+        (r["quantity"], r["lot_id"] is not None, r["pooled_lot_id"] is not None)
+        for r in conn.execute(
+            "SELECT quantity, lot_id, pooled_lot_id FROM vests "
+            "WHERE status = 'vested'").fetchall()
     }
-    assert vested_qty == {7.33, 33.36, 634.0, 2100.0}
+    assert vested == {
+        (7.33, True, False), (33.36, True, False),
+        (634.0, True, False), (2100.0, True, False),
+        (24.42, False, True),
+    }
 
     pending_rows = conn.execute(
         "SELECT quantity FROM vests WHERE status = 'pending'").fetchall()
     still_pending_qty = [r["quantity"] for r in pending_rows]
     # 633.0 występuje DWA razy (transze LTI 2027 i 2028, obie wciąż w przyszłości)
-    assert sorted(still_pending_qty) == sorted([24.42, 29.24, 28.99, 17.37, 633.0, 633.0])
+    assert sorted(still_pending_qty) == sorted([29.24, 28.99, 17.37, 633.0, 633.0])
 
 
 def test_import_statement_full_pipeline_on_real_files_reimport_gives_zero_inserted(conn, monkeypatch):

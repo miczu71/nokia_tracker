@@ -176,6 +176,14 @@ def test_idempotent_on_second_call(conn):
 
 
 def test_integrity_clean_after_fix(conn):
+    """`fix_missing_espp_match_lot_2025_08` clears `stale_pending_vest` — ale za cenę
+    wprowadzenia DOKŁADNIE tego duplikatu, który 0.27.0 (`integrity.py::
+    _duplicate_match_release`) teraz łapie: lot `vested_matching:2025-08-28:...` na tę
+    samą datę co lot puli `vested_release:2025-08-28:...`. Ten nowy finding jest
+    retroaktywnym potwierdzeniem z kodu tego, co `revert_phantom_espp_match_lot_2025_08`
+    już udowodniło z danych — E1's założenie było błędne. Funkcja ta zostaje w pliku
+    jako ślad audytowy (`apply_all` jej już nie woła), test dalej dokumentuje jej
+    realny efekt."""
     from nokia_tracker import integrity
 
     _setup_pre_fix_state(conn)
@@ -185,7 +193,8 @@ def test_integrity_clean_after_fix(conn):
     data_fixes.fix_missing_espp_match_lot_2025_08(conn)
 
     post = integrity.check_all(conn, today="2026-08-22")
-    assert post == []
+    assert not any(f.check == "stale_pending_vest" for f in post)
+    assert any(f.check == "duplicate_match_release" for f in post)
 
 
 # --- 2026-08-24: cofnięcie naprawy powyżej (re-import 6 wyciągów odsłonił, że jej
@@ -412,3 +421,162 @@ def test_apply_all_links_pooled_vest_end_to_end(conn):
     assert conn.execute(
         "SELECT id FROM lots WHERE natural_key = 'vested_matching:2025-08-28:3.71:24.42'"
     ).fetchone() is None
+
+
+# --- 0.27.0: druga połowa tej samej kohorty z 2025-08-28. `_setup_pre_fix_state` już
+# bakuje `batch1_id` (lot `vested_matching:2025-08-28:3.71:0.48`) jako część stanu
+# produkcyjnego — dokładnie ta pozostałość ilościowa, którą ta naprawa usuwa. ---
+
+
+def test_remainder_revert_removes_the_0_48_lot(conn):
+    ids = _setup_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08_remainder(conn)
+
+    assert conn.execute("SELECT id FROM lots WHERE id = ?", (ids["batch1_id"],)).fetchone() is None
+
+
+def test_remainder_revert_reallocates_sale_without_the_lot(conn):
+    """Bez `batch1_id` w łańcuchu FIFO, jego 0.48 szt. musi trafić GDZIEŚ INDZIEJ w
+    tej samej alokacji — suma zostaje 784.0, tylko rozkład na loty się zmienia."""
+    ids = _setup_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08_remainder(conn)
+
+    allocs = {a["lot_id"]: a["quantity"] for a in conn.execute(
+        "SELECT lot_id, quantity FROM sale_allocations WHERE sale_id = 1").fetchall()}
+    assert ids["batch1_id"] not in allocs
+    assert sum(allocs.values()) == pytest.approx(784.0)
+
+
+def test_remainder_revert_leaves_reported_pit38_override_untouched(conn):
+    ids = _setup_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08_remainder(conn)
+
+    sale = conn.execute("SELECT * FROM sales WHERE id = ?", (ids["sale_id"],)).fetchone()
+    assert sale["reported_cost_pln"] == pytest.approx(7500.66)
+    assert sale["reported_revenue_pln"] == pytest.approx(17631.72)
+
+
+def test_remainder_revert_is_idempotent(conn):
+    ids = _setup_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08_remainder(conn)
+    data_fixes.revert_phantom_espp_match_lot_2025_08_remainder(conn)
+
+    assert conn.execute("SELECT id FROM lots WHERE id = ?", (ids["batch1_id"],)).fetchone() is None
+    total = conn.execute(
+        "SELECT SUM(quantity) FROM sale_allocations WHERE sale_id = 1").fetchone()[0]
+    assert total == pytest.approx(784.0)
+
+
+def test_remainder_revert_is_noop_when_lot_absent(conn):
+    ids = _setup_pre_fix_state(conn)
+    conn.execute(
+        "DELETE FROM sale_allocations WHERE sale_id = 1 AND lot_id = ?", (ids["batch1_id"],))
+    conn.execute("DELETE FROM lots WHERE id = ?", (ids["batch1_id"],))
+    conn.commit()
+
+    data_fixes.revert_phantom_espp_match_lot_2025_08_remainder(conn)  # nie ma wyjątku
+
+    total = conn.execute(
+        "SELECT SUM(quantity) FROM sale_allocations WHERE sale_id = 1").fetchone()[0]
+    assert total == pytest.approx(784.0 - 0.48)
+
+
+def test_apply_all_also_removes_the_0_48_remainder_lot(conn):
+    ids = _setup_pre_fix_state(conn)
+
+    data_fixes.apply_all(conn)
+
+    assert conn.execute("SELECT id FROM lots WHERE id = ?", (ids["batch1_id"],)).fetchone() is None
+    total = conn.execute(
+        "SELECT SUM(quantity) FROM sale_allocations WHERE sale_id = 1").fetchone()[0]
+    assert total == pytest.approx(784.0)
+
+
+# --- 0.27.0: 27.08.2026 uwolniło cztery transze dopasowania ESPP (29.24+28.99+17.37+
+# 19.29) — dokładnie ten sam duplikat co 2025-08-28, tym razem BEZ alokacji FIFO (loty
+# nabyte 2026-08-27, jedyna sprzedaż jest z 2025-10-27, FIFO nigdy nie sięga w przyszłość)
+# i z transzami JUŻ podpiętymi 1:1 przez `reconcile_vesting()` (dopasowanie było
+# jednoznaczne po ilości, tylko fałszywe — lot nie powinien istnieć). ---
+
+
+def _setup_2026_08_pre_fix_state(conn):
+    """Odtwarza stan produkcyjny sprzed tej naprawy: cztery fantomowe loty 'matched'
+    (odpowiedniki realnych id 59-62) podpięte 1:1 do transz przez `lot_id`, plus lot puli
+    (odpowiednik realnego id 63) z WTC Typ A."""
+    phantom_ids = {}
+    for qty in (19.29, 29.24, 17.37, 28.99):
+        phantom_ids[qty] = taxlots.add_lot(
+            conn, "2026-08-27", "matched", qty, 8.82, source="pdf_import",
+            natural_key=f"vested_matching:2026-08-27:8.82:{qty}")
+    pool_id = taxlots.add_lot(
+        conn, "2026-08-27", "matched", 94.89909, 8.82, source="pdf_import",
+        natural_key="vested_release:2026-08-27:8.82:94.89909")
+
+    vest_ids = {}
+    for i, qty in enumerate((19.29, 29.24, 17.37, 28.99)):
+        grant_id = grants.add_grant(conn, "espp", "2026-01-01", qty, f"espp_grant:2026-{i}")
+        vest_ids[qty] = grants.add_vest(
+            conn, grant_id, "2026-08-01", qty, f"espp_vest:2026-{i}",
+            status="vested", available_from="2026-08-27")
+        conn.execute(
+            "UPDATE vests SET lot_id = ? WHERE id = ?", (phantom_ids[qty], vest_ids[qty]))
+    conn.commit()
+    return {"phantom_ids": phantom_ids, "pool_id": pool_id, "vest_ids": vest_ids}
+
+
+def test_2026_08_revert_removes_all_four_phantom_lots(conn):
+    ids = _setup_2026_08_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lots_2026_08(conn)
+
+    for lot_id in ids["phantom_ids"].values():
+        assert conn.execute("SELECT id FROM lots WHERE id = ?", (lot_id,)).fetchone() is None
+    assert conn.execute(
+        "SELECT id FROM lots WHERE id = ?", (ids["pool_id"],)).fetchone() is not None
+
+
+def test_2026_08_revert_links_all_four_vests_via_pooled_lot_id(conn):
+    ids = _setup_2026_08_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lots_2026_08(conn)
+
+    for qty, vest_id in ids["vest_ids"].items():
+        vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+        assert vest["status"] == "vested"
+        assert vest["lot_id"] is None
+        assert vest["pooled_lot_id"] == ids["pool_id"]
+
+
+def test_2026_08_revert_is_idempotent(conn):
+    ids = _setup_2026_08_pre_fix_state(conn)
+
+    data_fixes.revert_phantom_espp_match_lots_2026_08(conn)
+    data_fixes.revert_phantom_espp_match_lots_2026_08(conn)  # nic już nie ma do zrobienia
+
+    for lot_id in ids["phantom_ids"].values():
+        assert conn.execute("SELECT id FROM lots WHERE id = ?", (lot_id,)).fetchone() is None
+    for vest_id in ids["vest_ids"].values():
+        vest = conn.execute("SELECT * FROM vests WHERE id = ?", (vest_id,)).fetchone()
+        assert vest["status"] == "vested"
+        assert vest["pooled_lot_id"] == ids["pool_id"]
+
+
+def test_2026_08_revert_is_noop_on_state_that_was_never_broken(conn):
+    data_fixes.revert_phantom_espp_match_lots_2026_08(conn)  # baza pusta, brak wyjątku
+    assert conn.execute("SELECT COUNT(*) c FROM lots").fetchone()["c"] == 0
+
+
+def test_apply_all_cleans_up_2026_08_duplicates_end_to_end(conn):
+    from nokia_tracker import integrity
+
+    ids = _setup_2026_08_pre_fix_state(conn)
+
+    data_fixes.apply_all(conn)
+
+    assert integrity.check_all(conn, today="2026-08-27") == []
+    for lot_id in ids["phantom_ids"].values():
+        assert conn.execute("SELECT id FROM lots WHERE id = ?", (lot_id,)).fetchone() is None

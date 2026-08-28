@@ -173,6 +173,54 @@ def reconcile_vesting(conn: sqlite3.Connection, today: str | None = None) -> int
     return resolved
 
 
+_POOLED_RELEASE_TOLERANCE = 0.02
+
+
+def link_pooled_release(conn: sqlite3.Connection, release_date: str, pooled_lot_id: int,
+                        tolerance: float = _POOLED_RELEASE_TOLERANCE) -> int:
+    """Podpina transze ESPP wciąż `pending`, których `COALESCE(available_from, vest_date)`
+    wypada dokładnie na `release_date`, do LOTU ZBIORCZEGO `pooled_lot_id` — zamiast
+    (jak `reconcile_vesting` powyżej) szukać dla każdej z osobna WŁASNEGO, dokładnie
+    pasującego lotu. Uogólnienie E9 (docs/PLAN_E9_transza_w_puli.md, 2026-08-24, dotąd
+    ręczna jednorazowa naprawa w `data_fixes.py` dla jednej konkretnej daty).
+
+    Powód, dla którego to w ogóle potrzebne: Computershare łączy w JEDEN wiersz
+    Withhold-to-Cover wszystkie transze dopasowania ESPP odblokowane tego samego dnia
+    (`importers/computershare_pdf.py::import_statement`, sekcja 0.27.0) — żadna z nich
+    nigdy nie dostanie WŁASNEGO lotu, więc `reconcile_vesting`'s dokładne 1:1 dopasowanie
+    ilości nigdy ich nie znajdzie. Bez tej funkcji zostałyby `pending` na zawsze i po
+    `_STALE_PENDING_VEST_DAYS` `integrity.py::_stale_pending_vest` zgłosiłby fałszywy błąd
+    (dokładnie problem, z powodu którego powstało E9).
+
+    Strażnik: `Σ quantity` pasujących transz musi mieścić się w `pooled_lot_id.quantity +
+    tolerance` — inaczej NIC nie robi (zero UPDATE), zamiast podpiąć więcej transz niż
+    faktycznie mieści się w locie. Zero zmian w `lots`/`sale_allocations`/`sales` — wartość
+    tych transz jest już policzona w locie zbiorczym, tu tylko domyka się ślad audytowy w
+    `vests`. Zwraca liczbę podpiętych transz (0 gdy nic nie pasuje albo strażnik odmówił)."""
+    pending = conn.execute(
+        "SELECT v.id AS id, v.quantity AS quantity FROM vests v "
+        "JOIN grants g ON g.id = v.grant_id "
+        "WHERE g.program = 'espp' AND v.status = 'pending' AND v.lot_id IS NULL "
+        "AND COALESCE(v.available_from, v.vest_date) = ?", (release_date,)).fetchall()
+    if not pending:
+        return 0
+
+    pool = conn.execute("SELECT quantity FROM lots WHERE id = ?", (pooled_lot_id,)).fetchone()
+    if pool is None:
+        return 0
+
+    total = sum(p["quantity"] for p in pending)
+    if total > pool["quantity"] + tolerance:
+        return 0
+
+    for p in pending:
+        conn.execute(
+            "UPDATE vests SET status = 'vested', pooled_lot_id = ? WHERE id = ?",
+            (pooled_lot_id, p["id"]))
+    conn.commit()
+    return len(pending)
+
+
 def valuation(conn: sqlite3.Connection, current_price_eur: float | None,
              current_eurpln: float | None) -> dict[int, dict]:
     """Wartość każdej transzy vestingu (krok 16, docs/PLAN_KROK_16_transparentnosc.md),

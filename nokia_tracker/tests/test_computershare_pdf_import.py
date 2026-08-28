@@ -279,6 +279,164 @@ def test_import_statement_withhold_type_a_creates_matched_lot_when_date_coincide
     assert lot is not None
     assert lot["lot_type"] == "matched"
     assert lot["acquired_date"] == "2025-08-28"
+    # 0.27.0: "Vested Matching Shares" (0.48 szt.) i Withhold Typ A (101.396662 szt.)
+    # opisują TO SAMO uwolnienie — musi powstać JEDEN lot 'matched', nie dwa (do 0.26.0
+    # oba tworzyły osobne loty, podwójne księgowanie naprawione w tym kroku).
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'matched'").fetchone()["c"] == 1
+
+
+def test_vested_matching_shares_row_without_same_day_withhold_still_creates_own_lot(
+        conn, monkeypatch):
+    # Kontrola negatywna dla powyższego: gdy WTC Typ A tego dnia NIE istnieje w wyciągu
+    # (historyczne dopasowania sprzed wzorca "jeden zbiorczy wiersz" - np. 2023/2024 w
+    # danych produkcyjnych), "Vested Matching Shares" zostaje jedynym źródłem i lot
+    # musi powstać tak jak dziś (test_import_statement_creates_matched_lot_from_
+    # vested_matching_shares_row musi przejść bez zmian - to jest ten sam scenariusz).
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _VESTED_MATCHING_LINE)
+
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    lot = conn.execute("SELECT * FROM lots WHERE lot_type = 'matched'").fetchone()
+    assert lot is not None
+    assert lot["quantity"] == 0.48
+
+
+def test_multiple_vested_matching_rows_same_day_all_deduped_against_one_pool_lot(
+        conn, monkeypatch):
+    # Realny wzorzec produkcyjny (27.08.2026): CZTERY wiersze "Vested Matching Shares"
+    # tego samego dnia (jedna transza każdy, kwoty zaokrąglone do 2 m.d.) + JEDEN wiersz
+    # Withhold Typ A będący ich sumą (pełna precyzja) - wszystkie cztery muszą zostać
+    # pominięte, powstaje wyłącznie lot puli.
+    rows = [(19.29, 170.15), (29.24, 257.99), (17.37, 153.28), (28.99, 255.79)]
+    matching_lines = "".join(
+        f"Vested  Matching   Shares                                             27 Aug  2026"
+        f"                        8.82 EUR                      1.40 EUR                               "
+        f"{qty}                       {val} PLN\n"
+        for qty, val in rows)
+    pool_line = (
+        "27 Aug2026                                            Nokia  Share                            "
+        "94.89909                 8.82 EUR                 0.00 EUR                   0.00 EUR             "
+        "94.89909\n"
+    )
+    text = _HEADER + matching_lines + pool_line
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    report = cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    matched_lots = conn.execute("SELECT * FROM lots WHERE lot_type = 'matched'").fetchall()
+    assert len(matched_lots) == 1
+    assert matched_lots[0]["quantity"] == 94.89909
+    assert report["rows_conflict"] == 0
+
+
+def test_reimporting_older_statement_without_withhold_row_skips_when_pool_lot_exists(
+        conn, monkeypatch):
+    # Re-import scenariusza: NAJPIERW wyciąg z pełnym WTC (tworzy lot puli), POTEM inny
+    # (np. wcześniej wygenerowany) wyciąg, którego okno transakcji nie obejmuje tej daty,
+    # więc pokazuje WYŁĄCZNIE snapshot "Vested Matching Shares" bez wiersza WTC - nie może
+    # dołożyć drugiego lotu na to samo zdarzenie.
+    same_day_withhold_a = (
+        "28 Aug 2025                                            Nokia  Share                            "
+        "101.396662                 3.71 EUR                 0.00 EUR                   0.00 EUR             "
+        "101.396662\n"
+    )
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _VESTED_MATCHING_LINE + same_day_withhold_a)
+    cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+    count_after_first = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'matched'").fetchone()["c"]
+
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + _VESTED_MATCHING_LINE)
+    report2 = cp.import_statement(conn, b"fake-pdf-bytes", "test2.pdf")
+
+    assert count_after_first == 1
+    count_after_second = conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'matched'").fetchone()["c"]
+    assert count_after_second == 1
+    assert report2["rows_inserted"] == 0
+
+
+def test_vested_matching_sum_exceeding_pool_records_conflict_instead_of_silent_skip(
+        conn, monkeypatch):
+    # Założenie "Vested Matching Shares to podzbiór puli WTC" złamane - Σ wierszy (100.00)
+    # przekracza pulę (94.89909) o więcej niż tolerancja zaokrąglenia druku - to nie jest
+    # duplikat do cichego pominięcia, tylko rozjazd wart zgłoszenia.
+    oversized_matching_line = (
+        "Vested  Matching   Shares                                             27 Aug  2026"
+        "                        8.82 EUR                      1.40 EUR                               "
+        "100.00                       882.00 PLN\n"
+    )
+    pool_line = (
+        "27 Aug2026                                            Nokia  Share                            "
+        "94.89909                 8.82 EUR                 0.00 EUR                   0.00 EUR             "
+        "94.89909\n"
+    )
+    text = _HEADER + oversized_matching_line + pool_line
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: text)
+
+    report = cp.import_statement(conn, b"fake-pdf-bytes", "test.pdf")
+
+    assert report["rows_conflict"] >= 1
+    conflicts = conn.execute(
+        "SELECT * FROM import_conflicts WHERE entity_type = 'lot' AND resolved = 0").fetchall()
+    assert any("vested_matching:2026-08-27" in c["natural_key"] for c in conflicts)
+    # Lot puli mimo to powstaje normalnie - konflikt dotyczy tylko snapshotu, nie
+    # blokuje zaksięgowania transakcji WTC samej w sobie.
+    assert conn.execute(
+        "SELECT COUNT(*) c FROM lots WHERE lot_type = 'matched'").fetchone()["c"] == 1
+
+
+def test_withhold_type_a_matched_release_links_pending_espp_vests_via_pooled_lot_id(
+        conn, monkeypatch):
+    # Integracja z tax/grants.py::link_pooled_release - transze ESPP z ta samą
+    # available_from co data uwolnienia muszą dostać pooled_lot_id, inaczej wracają
+    # 'pending' na zawsze i integrity.py::_stale_pending_vest zgłosi fałszywy błąd (E9).
+    matching_line = (
+        "Vested  Matching   Shares                                             27 Aug  2026"
+        "                        8.82 EUR                      1.40 EUR                               "
+        "19.29                       170.15 PLN\n"
+    )
+    pool_line = (
+        "27 Aug2026                                            Nokia  Share                            "
+        "19.29                 8.82 EUR                 0.00 EUR                   0.00 EUR             "
+        "19.29\n"
+    )
+    # Grant/transza ESPP z available_from == 27 Aug 2026 (kształt "Matching Shares" - jak
+    # dziś w harmonogramie, przed uwolnieniem) - dodana w EARLIER (osobnym) imporcie, tak
+    # jak w produkcji (transza była widoczna w harmonogramie zanim zvestowała).
+    schedule_line = (
+        f"Matching   Shares                                                      27 Jul 2026                      "
+        f"1 Aug  2026                  27 Aug  2026                             19.29                     742.69  PLN\n"
+    )
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + schedule_line)
+    cp.import_statement(conn, b"fake-pdf-bytes", "test0.pdf")
+
+    monkeypatch.setattr(
+        "nokia_tracker.importers.computershare_pdf.extract_layout_text",
+        lambda pdf_bytes: _HEADER + matching_line + pool_line)
+    cp.import_statement(conn, b"fake-pdf-bytes", "test1.pdf")
+
+    vest = conn.execute(
+        "SELECT v.* FROM vests v JOIN grants g ON g.id = v.grant_id "
+        "WHERE g.natural_key = 'espp_grant:2026-07-27:19.29'").fetchone()
+    assert vest["status"] == "vested"
+    assert vest["lot_id"] is None
+    pooled_lot = conn.execute(
+        "SELECT * FROM lots WHERE natural_key = 'vested_release:2026-08-27:8.82:19.29'"
+    ).fetchone()
+    assert vest["pooled_lot_id"] == pooled_lot["id"]
 
 
 def test_reimporting_withhold_type_a_lot_is_idempotent(conn, _fake_pdf):

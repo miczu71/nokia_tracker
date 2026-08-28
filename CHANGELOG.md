@@ -1,5 +1,58 @@
 # Changelog
 
+## [0.27.0] - 2026-08-28
+
+Fix znaleziony po imporcie wyciągu 2026-08-27 (uwolnienie 4 transz dopasowania ESPP za
+poprzedni okres) — trzeci raz z rzędu ten sam mechanizm produkuje rozjazd (0.24.2 —
+2025-08-28, E9/0.25.0, ten), tym razem naprawiony **w kodzie**, nie tylko w danych.
+`/imports` pokazywał: Akcje 3 030,4097 (wyciąg) vs 3 123,6880 (baza), +93,2782 szt.;
+„Transze oczekujące (RSU)" i „Suma" na „brak danych".
+
+### Naprawiono
+- **`importers/computershare_pdf.py::import_statement` — podwójne księgowanie
+  uwolnienia dopasowań ESPP.** „Vested Matching Shares" (snapshot stanu posiadania,
+  per-transza, zaokrąglone do 2 m.d.) i Withhold-to-Cover Typ A (transakcja, ZBIORCZA
+  dla całej kohorty odblokowanej tego samego dnia) opisują TO SAMO zdarzenie, gdy daty
+  się pokrywają — kod już to wiedział (używał tego do etykietowania `lot_type`), ale
+  księgował oba jako osobne loty. Teraz pętla "Vested Matching Shares" pomija wiersz,
+  gdy jego data ma odpowiadający lot puli (z tego importu albo już wcześniej
+  zaimportowany), ze strażnikiem: gdy Σ wierszy snapshotu przekracza pulę o więcej niż
+  zaokrąglenie druku, to nie duplikat — konflikt do kolejki, nie ciche pominięcie.
+- **`_LEADING_NUM_RE` (kontrola krzyżowa „Assets by type")** — wymagał kropki
+  dziesiętnej, więc sumy całkowite bez części dziesiętnej (np. „1 266" gdy jedyne
+  pozostałe transze RSU sumują się do 633+633) dawały `None` zamiast liczby — ta sama
+  klasa błędu co naprawiona w 0.17.1 dla „Entitled Quantity", w nowym miejscu.
+- **`tax/grants.py::link_pooled_release()` (nowa, uogólnienie E9)** — transze ESPP
+  odblokowane tego samego dnia co lot puli dostają `pooled_lot_id` automatycznie, przy
+  KAŻDYM imporcie, zamiast czekać na ręczną jednorazową naprawę per data (jak
+  `link_pooled_espp_match_2025_08` w 0.25.0). Strażnik: Σ transz musi mieścić się w
+  ilości puli + tolerancja, inaczej nic nie podpina.
+- **Dane produkcyjne** (`data_fixes.py`, wołane przy starcie): usunięte 4 fantomowe
+  loty `matched` z 2026-08-27 (19,29+29,24+17,37+28,99 szt., podwójnie liczone
+  względem lotu puli 94,89909 szt.) i drugi, mniejszy egzemplarz tego samego bugu z
+  2025-08-28 (lot 0,48 szt., pozostałość ilościowa duplikatu wobec puli 101,396662
+  szt. — odkryty przy okazji uogólniania naprawy w kodzie). Drugi wymaga przeliczenia
+  FIFO sprzedaży #1 (2025-10-27) — suma alokacji zostaje 784,0 szt., zmienia się tylko
+  rozkład na loty; `reported_cost_pln`/`reported_revenue_pln` (nadpisania PIT-38)
+  nietknięte.
+- **`integrity.py` — nowy niezmiennik `duplicate_match_release`** (`error`): lot
+  `vested_matching` i lot puli `vested_release` na tę samą datę uwolnienia. Gdyby ta
+  para kiedykolwiek znowu powstała, złapie to od razu, zamiast czekać na kolejny
+  rozjazd salda przy następnym imporcie.
+
+### Zbadano (bez zmiany kodu)
+- Rozjazd -1,6118 szt. (znany od E9/0.25.0, przyczyna nadal nieznana) tą naprawą
+  **nie** znika — po usunięciu lotu 0,48 szt. wynosi -2,0918 szt. To poprawka w dobrą
+  stronę: usuwamy nieistniejące akcje, więc odsłaniamy realny brak zamiast go maskować.
+  Tolerancja **nie** została podniesiona.
+
+### Zweryfikowano
+1414 testów (1374 → 1414, ~40 nowych: parser liczb całkowitych, dedup importera,
+`link_pooled_release`, obie naprawy danych, nowy niezmiennik), zero regresji. Przy
+okazji naprawiony niezależny, przedawniony test (`test_sensors.py` — asertował na
+sztywno wpisanej dacie 2026-08-27, kalendarz go dogonił). Weryfikacja Playwright na
+produkcji po wdrożeniu, z re-importem wyciągu 2026-08-27/28.
+
 ## [0.26.0] - 2026-08-24
 
 Konsensus cen docelowych analityków obok prognozy AI (`docs/PLAN_0_26_0_konsensus.md`) —

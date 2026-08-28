@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 
+from .tax import grants as grantsm
 from .tax import lots as taxlots
 
 logger = logging.getLogger(__name__)
@@ -215,6 +216,89 @@ def link_pooled_espp_match_2025_08(conn: sqlite3.Connection) -> None:
         "sale_allocations/sales", vest["id"], pooled_lot["id"])
 
 
+_PHANTOM_MATCH_LOT_2025_08_REMAINDER_KEY = "vested_matching:2025-08-28:3.71:0.48"
+
+
+def revert_phantom_espp_match_lot_2025_08_remainder(conn: sqlite3.Connection) -> None:
+    """0.27.0: sam bug klasy `revert_phantom_espp_match_lot_2025_08` powyżej, znaleziony
+    przy okazji uogólniania tamtej naprawy w kodzie (`importers/computershare_pdf.py`,
+    sekcja 0.27.0) — druga połowa tej samej kohorty z 2025-08-28. Lot #29 (0,48 szt.,
+    `natural_key='vested_matching:2025-08-28:3.71:0.48'`) to POZOSTAŁOŚĆ ilościowa tego
+    samego duplikatu: „Vested Matching Shares" tego wyciągu pokazywał już zmniejszony,
+    bieżący stan posiadania kohorty (patrz docstring `revert_phantom_espp_match_lot_2025_08`
+    o tej tabeli jako SNAPSHOTIE, nie harmonogramie), nie 101,396662 szt. z transakcji
+    Withhold-to-Cover (lot #32, `vested_release:2025-08-28:3.71:101.396662`) — te same
+    akcje, dwa loty.
+
+    Lot MA alokacje FIFO (sprzedaż #1, 2025-10-27) — identyczna procedura jak w
+    `revert_phantom_espp_match_lot_2025_08`: przywróć/usuń/przelicz od zera. Suma alokacji
+    zostaje 784,0, zmienia się tylko rozkład na loty. `reported_cost_pln`/
+    `reported_revenue_pln` (nadpisania PIT-38, krok 20) NIE są tu ruszane."""
+    existing = conn.execute(
+        "SELECT id FROM lots WHERE natural_key = ?",
+        (_PHANTOM_MATCH_LOT_2025_08_REMAINDER_KEY,)).fetchone()
+    if existing is None:
+        return
+
+    _restore_sale_allocations(conn, sale_id=1)
+    conn.execute("DELETE FROM lots WHERE id = ?", (existing["id"],))
+    _apply_fifo_allocation(conn, sale_id=1)
+    conn.commit()
+    logger.warning(
+        "Naprawa danych (0.27.0): usunięto fantomowy lot matched (id=%d, 0,48 szt., "
+        "2025-08-28) — pozostałość ilościowa duplikatu względem lotu "
+        "'vested_release:2025-08-28:3.71:101.396662', przeliczono alokację sprzedaży #1",
+        existing["id"])
+
+
+_PHANTOM_MATCH_QTYS_2026_08 = (19.29, 29.24, 17.37, 28.99)
+_POOLED_RELEASE_LOT_2026_08_KEY = "vested_release:2026-08-27:8.82:94.89909"
+_POOLED_RELEASE_DATE_2026_08 = "2026-08-27"
+
+
+def revert_phantom_espp_match_lots_2026_08(conn: sqlite3.Connection) -> None:
+    """0.27.0: wyciąg z 27.08.2026 uwolnił cztery transze dopasowania ESPP za poprzedni
+    okres (29,24 + 28,99 + 17,37 + 19,29 szt.) — dokładnie ten sam mechanizm co E9
+    (2025-08-28), trzeci raz z rzędu (0.24.2, E9/0.25.0, ten), tym razem naprawiony w
+    KODZIE (`importers/computershare_pdf.py::import_statement`, sekcja 0.27.0), nie tylko
+    w danych — ta funkcja sprząta dane zaimportowane PRZED tą naprawą.
+
+    Cztery loty `vested_matching:2026-08-27:8.82:{19.29,29.24,17.37,28.99}` dublują lot
+    puli `vested_release:2026-08-27:8.82:94.89909` (Σ = 94,89 ≈ 94,89909, różnica
+    zaokrąglenie druku PDF do 2 m.d. — ten sam wzorzec dowodowy co E9). Różnica względem
+    2025-08-28: `reconcile_vesting()` już podpięło te cztery loty 1:1 do transz po
+    dokładnej ilości (żadnego `pooled_lot_id` do zrobienia było — dopasowanie było
+    JEDNOZNACZNE, tylko fałszywe, bo lot nie powinien istnieć). Żaden z lotów nie ma
+    alokacji FIFO (`acquired_date=2026-08-27` > jedyna sprzedaż z 2025-10-27, FIFO nigdy
+    nie sięga w przyszłość — `tax/lots.py::open_lots`), więc bez `_restore_sale_allocations`/
+    `_apply_fifo_allocation`: cofnij transzę na `pending`/`lot_id=NULL`, usuń lot, na końcu
+    podepnij WSZYSTKIE cztery przez `pooled_lot_id` do lotu puli jedną naprawą."""
+    removed_lot_ids = []
+    for qty in _PHANTOM_MATCH_QTYS_2026_08:
+        nk = f"vested_matching:{_POOLED_RELEASE_DATE_2026_08}:8.82:{qty}"
+        lot = conn.execute("SELECT id FROM lots WHERE natural_key = ?", (nk,)).fetchone()
+        if lot is None:
+            continue
+        conn.execute(
+            "UPDATE vests SET status = 'pending', lot_id = NULL WHERE lot_id = ?",
+            (lot["id"],))
+        conn.execute("DELETE FROM lots WHERE id = ?", (lot["id"],))
+        removed_lot_ids.append(lot["id"])
+    if not removed_lot_ids:
+        return
+    conn.commit()
+
+    pooled_lot = conn.execute(
+        "SELECT id FROM lots WHERE natural_key = ?",
+        (_POOLED_RELEASE_LOT_2026_08_KEY,)).fetchone()
+    linked = (grantsm.link_pooled_release(conn, _POOLED_RELEASE_DATE_2026_08, pooled_lot["id"])
+             if pooled_lot is not None else 0)
+    logger.warning(
+        "Naprawa danych (0.27.0): usunięto %d fantomowych lotów 'matched' z 2026-08-27 "
+        "(podwójnie liczonych względem lotu 'vested_release:2026-08-27:8.82:94.89909') "
+        "i podpięto %d transz przez pooled_lot_id", len(removed_lot_ids), linked)
+
+
 def apply_all(conn: sqlite3.Connection) -> None:
     """Wołane raz przy starcie (main.py) — bezpieczne przy każdym restarcie,
     każda naprawa jest idempotentna.
@@ -229,6 +313,11 @@ def apply_all(conn: sqlite3.Connection) -> None:
 
     Kolejność ma znaczenie: `link_pooled_espp_match_2025_08` idzie PO revert —
     revert cofa transzę do `pending`/`lot_id=NULL`, dopiero wtedy jest co
-    domykać przez `pooled_lot_id`."""
+    domykać przez `pooled_lot_id`. `revert_phantom_espp_match_lots_2026_08` sama
+    domyka `pooled_lot_id` na końcu, więc nie potrzebuje osobnego kroku `link_*` po
+    sobie (w przeciwieństwie do 2025-08, gdzie revert i link są dwiema oddzielnymi,
+    historycznie osobno napisanymi funkcjami)."""
     revert_phantom_espp_match_lot_2025_08(conn)
     link_pooled_espp_match_2025_08(conn)
+    revert_phantom_espp_match_lot_2025_08_remainder(conn)
+    revert_phantom_espp_match_lots_2026_08(conn)

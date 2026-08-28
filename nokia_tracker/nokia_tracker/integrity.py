@@ -302,6 +302,30 @@ def _allocation_predates_its_lot(conn: sqlite3.Connection) -> Finding | None:
         len(rows), [dict(r) for r in rows])
 
 
+def _duplicate_match_release(conn: sqlite3.Connection) -> Finding | None:
+    """0.27.0: niezmiennik odpowiadający naprawie w `importers/computershare_pdf.py`
+    (dedup "Vested Matching Shares" vs Withhold-to-Cover Typ A tego samego dnia — patrz
+    docstring `import_statement`, sekcja 0.27.0). Gdyby ta para lotów kiedykolwiek znowu
+    powstała (regresja parsera, ręczny import z obejściem `import_statement`), pozycja
+    „Akcje" na `/imports` zawyży się o całą kohortę — dokładnie trzeci raz z rzędu tego
+    samego błędu (0.24.2, E9/0.25.0, ten). `error`, nie `warning` — to zawsze korupcja
+    danych, nigdy uzasadniony, trwały stan."""
+    rows = conn.execute(
+        "SELECT m.id AS matching_lot_id, m.acquired_date AS release_date, "
+        "m.quantity AS matching_qty, r.id AS release_lot_id, r.quantity AS release_qty "
+        "FROM lots m JOIN lots r "
+        "ON r.lot_type = 'matched' AND r.natural_key LIKE 'vested_release:' || m.acquired_date || ':%' "
+        "WHERE m.lot_type = 'matched' AND m.natural_key LIKE 'vested_matching:%'"
+    ).fetchall()
+    if not rows:
+        return None
+    return Finding(
+        "duplicate_match_release", "error",
+        "Lot 'vested_matching' i lot puli 'vested_release' na tę samą datę uwolnienia "
+        "dopasowań ESPP — to samo zdarzenie zaksięgowane dwa razy",
+        len(rows), [dict(r) for r in rows])
+
+
 def _statement_mismatch(conn: sqlite3.Connection) -> list[Finding]:
     """Krok E7: jeden `Finding` na pozycję uzgodnienia z wyciągiem o statusie
     `mismatch` (`reconcile.reconcile()` na najnowszym `statement_snapshots`).
@@ -367,6 +391,7 @@ def check_all(
         _dividend_arithmetic_mismatch,
         _missing_or_future_nbp_rate,
         _allocation_predates_its_lot,
+        _duplicate_match_release,
     ):
         f = check(conn)
         if f:

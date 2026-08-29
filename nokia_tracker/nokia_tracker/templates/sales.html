@@ -84,9 +84,9 @@
           </td>
           <td class="no-print">
             <a class="btn small" href="{{ url_for('sale_document_html', sale_id=item.sale.id) }}"
-               target="_blank" onclick="event.stopPropagation();">Dokument</a>
+               onclick="event.stopPropagation();">Dokument</a>
             <a class="btn small" href="{{ url_for('sale_document_pdf', sale_id=item.sale.id) }}"
-               target="_blank" onclick="event.stopPropagation();">PDF</a>
+               onclick="event.stopPropagation();">PDF</a>
             <form method="post" action="{{ url_for('sales_delete', sale_id=item.sale.id) }}"
                   onclick="event.stopPropagation();"
                   onsubmit="return confirm('Cofnąć tę sprzedaż? Przywróci ilość akcji do lotów i usunie wpis nieodwracalnie.');">

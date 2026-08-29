@@ -184,3 +184,45 @@ def test_nav_contains_asystent_link(client):
     assert 'href="/asystent"' in html
 
 
+# --- 5. target="_blank" na linkach wewnętrznych gubi sesję ingressu w
+# aplikacji Companion (401: Unauthorized) — WebView nie implementuje
+# onCreateWindow/setSupportMultipleWindows, więc nowe okno nie niesie
+# ciasteczka `ingress_session`. Złapane na żywo: „Widok do druku" (istnieje
+# od dawna, przed E10) i dokumenty dowodowe (E10) dawały 401 na telefonie,
+# podczas gdy zwykłe pobrania (Eksport CSV/XLSX, bez target="_blank") w tej
+# samej ramce działały poprawnie. Kryterium jest ostre: `href` budowany
+# przez `url_for(` to zawsze adres pod ingressem — takie tagi NIE MOGĄ mieć
+# `target="_blank"`. Linki zewnętrzne (nbp.pl, newsy, źródła doradcze) mają
+# `target="_blank"` celowo i zostają nietknięte.
+
+_ANCHOR_RE = re.compile(r"<a\b[^>]*>", re.DOTALL)
+
+
+def _internal_blank_anchors() -> list[tuple[str, str]]:
+    out = []
+    for tpl in (_PKG / "templates").glob("*.html"):
+        src = tpl.read_text(encoding="utf-8")
+        for tag in _ANCHOR_RE.findall(src):
+            if "url_for(" in tag and 'target="_blank"' in tag:
+                out.append((tpl.name, tag))
+    return out
+
+
+def test_internal_links_do_not_open_new_window():
+    bad = [f"{tpl}: {tag}" for tpl, tag in _internal_blank_anchors()]
+    assert not bad, (
+        "linki wewnętrzne (url_for) z target=\"_blank\" gubią sesję ingressu "
+        "w Companion (401) — patrz komentarz nad tym testem: " + " | ".join(bad))
+
+
+def test_anchor_scan_is_not_vacuous():
+    """Strażnik strażnika (konwencja tego pliku): gdyby regex przestał
+    cokolwiek znajdować, test wyżej przechodziłby PUSTY i nic by nie
+    sprawdzał."""
+    count = sum(
+        1 for tpl in (_PKG / "templates").glob("*.html")
+        for tag in _ANCHOR_RE.findall(tpl.read_text(encoding="utf-8"))
+        if "url_for(" in tag)
+    assert count >= 30
+
+

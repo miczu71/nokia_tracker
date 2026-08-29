@@ -13,11 +13,11 @@
   {#- Krok 28.3: selektor roku przeniesiony do nagłówku (base.html) — patrz
       _inject_nav_tax_year() w web.py. #}
   <div class="form-actions no-print">
-    <a class="btn" href="{{ url_for('pit38_get', year=year, print=1) }}" target="_blank">Widok do druku</a>
+    <a class="btn" href="{{ url_for('pit38_get', year=year, print=1) }}">Widok do druku</a>
     <a class="btn" href="{{ url_for('pit38_export_csv', year=year) }}">Eksport CSV</a>
     <a class="btn" href="{{ url_for('pit38_export_xlsx', year=year) }}">Eksport XLSX</a>
-    <a class="btn" href="{{ url_for('pit38_dossier_html', year=year) }}" target="_blank">Dokumentacja (HTML)</a>
-    <a class="btn" href="{{ url_for('pit38_dossier_pdf', year=year) }}" target="_blank">Dokumentacja (PDF)</a>
+    <a class="btn" href="{{ url_for('pit38_dossier_html', year=year) }}">Dokumentacja (HTML)</a>
+    <a class="btn" href="{{ url_for('pit38_dossier_pdf', year=year) }}">Dokumentacja (PDF)</a>
   </div>
 </div>
 

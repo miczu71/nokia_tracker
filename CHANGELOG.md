@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.29.1] - 2026-08-29
+
+Znalezione przy zgłoszeniu „401 unauthorized przy otwieraniu dokumentu/PDF sprzedaży w
+aplikacji Companion na telefonie" — na komputerze te same linki działały.
+
+### Naprawiono
+- **10 linków wewnętrznych z `target="_blank"` gubiło sesję ingressu w aplikacji
+  Companion (401: Unauthorized).** WebView Companion nie implementuje
+  `onCreateWindow`/`setSupportMultipleWindows` — nawigacja do nowego okna trafia poza
+  ramkę, która niesie ciasteczko `ingress_session`; Supervisor odrzuca żądanie zanim
+  dotrze do dodatku. Dotyczyło NIE TYLKO dokumentów dowodowych (E10: „Dokument"/„PDF"
+  na `/sales`, „Dokumentacja (HTML)"/„(PDF)" na `/pit38`, „Dokument (HTML)"/„(PDF)" na
+  `/wyplata`) — ten sam problem miało „Widok do druku" na `/pit38`, `/plan`, `/wyniki`
+  i `/wyplata`, sprzed wielu wersji. Sam dodatek nigdy nie zwracał 401 (brak jakiejkolwiek
+  warstwy auth w kodzie) — potwierdzone, że zwykłe pobrania w tej samej ramce (Eksport
+  CSV/XLSX na `/pit38`) zawsze działały poprawnie na tym telefonie. Fix: usunięty
+  `target="_blank"` z tych 10 linków — otwierają się teraz w tej samej ramce, powrót
+  przyciskiem wstecz (działa identycznie w Companion i w przeglądarce). Linki zewnętrzne
+  (nbp.pl, źródła newsów, BofA Private Bank) zostają w nowej karcie bez zmian. Nowy
+  strażnik (`tests/test_web_routing.py::test_internal_links_do_not_open_new_window`)
+  łapie statycznie każdy przyszły `<a href="{{ url_for(...) }}" target="_blank">`.
+
 ## [0.29.0] - 2026-08-28
 
 Dokumenty dowodowe HTML/PDF dla symulacji i zrealizowanych sprzedaży — patrz

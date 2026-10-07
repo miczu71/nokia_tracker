@@ -118,11 +118,21 @@ def _format_digest(values: dict, briefing: sqlite3.Row | None) -> str:
         mv_pln = values.get("market_value_pln")
         pln_part = f" / {mv_pln:,.0f} PLN".replace(",", " ") if mv_pln is not None else ""
         lines.append(f"\nPortfel: {mv_eur:,.0f} EUR{pln_part}".replace(",", " "))
-        pnl_eur = values.get("unrealized_pnl_eur")
-        pnl_pct = values.get("total_return_pct")
-        if pnl_eur is not None:
-            pct_part = f" ({pnl_pct:+.1f}%)" if pnl_pct is not None else ""
-            lines.append(f"Wynik: {pnl_eur:+,.0f} EUR{pct_part}".replace(",", " "))
+        change_abs = values.get("change_abs_day")
+        qty = values.get("position_qty")
+        if change_abs is not None and qty:
+            day_eur = change_abs * qty
+            rate = values.get("eurpln_rate")
+            pln_part = f" / {day_eur * rate:+,.0f} PLN" if rate else ""
+            lines.append(f"Dziś: {day_eur:+,.0f} EUR{pln_part}".replace(",", " "))
+        # Wynik od wartości przy nabyciu WSZYSTKICH lotów (main.py::daily_digest_job), nie
+        # od polityki podatkowej — przy own_only LTI/dokładka mają koszt 0 i wynik wychodził
+        # w tysiącach procent.
+        acq_pnl = values.get("acq_pnl_eur")
+        if acq_pnl is not None:
+            acq_pct = values.get("acq_pnl_pct")
+            pct_part = f" ({acq_pct:+.1f}%)" if acq_pct is not None else ""
+            lines.append(f"Wynik od nabycia: {acq_pnl:+,.0f} EUR{pct_part}".replace(",", " "))
 
     if briefing:
         lines.append(f"\n{briefing['text']}")

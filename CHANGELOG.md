@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.29.2] - 2026-10-07
+
+### Naprawiono
+- **Dzienny digest pokazywał „Wynik” rzędu +8000%.** Linia liczyła koszt według aktywnej
+  polityki podatkowej (`own_only`), w której akcje LTI, dokładka i DRIP mają koszt 0. Gdy
+  z otwartych lotów zostaje niewiele własnych zakupów, koszt bazowy spada do kilkuset EUR
+  i wynik traci sens, a nawet znak (wynik od wartości przy nabyciu był ujemny). Digest
+  pokazuje teraz dwie linie:
+  - `Dziś: ±X EUR / ±Y PLN`: dzisiejsza zmiana wartości posiadanych akcji
+    (zmiana kursu × liczba akcji),
+  - `Wynik od nabycia: ±X EUR (±Z%)`: wartość rynkowa minus wartość wszystkich otwartych
+    lotów w dniu nabycia (polityka `all_at_acquisition`).
+  Polityka podatkowa, sensory (`unrealized_pnl_*`, `total_return_pct`), pulpit i PIT-38
+  bez zmian.
+
 ## [0.29.1] - 2026-08-29
 
 Znalezione przy zgłoszeniu „401 unauthorized przy otwieraniu dokumentu/PDF sprzedaży w

@@ -147,6 +147,47 @@ def test_digest_with_briefing_includes_recommendation_and_risks(conn, monkeypatc
     assert "Ryzyko A" in message
 
 
+def _digest_message(conn, monkeypatch, values):
+    calls = []
+    monkeypatch.setattr(ha_client, "notify",
+                        lambda service, title, message, data=None: calls.append(message) or True)
+    notifier.send_daily_digest(conn, _cfg(), values)
+    return calls[0]
+
+
+def test_digest_shows_day_change_and_result_since_acquisition(conn, monkeypatch):
+    """Wynik w digeście liczony od wartości przy nabyciu, nie od polityki podatkowej
+    own_only (przy LTI/dokładce z kosztem 0 dawała +8000%)."""
+    message = _digest_message(conn, monkeypatch, {
+        "price_eur": 9.544, "change_pct_day": -0.604, "change_abs_day": -0.058,
+        "eurpln_rate": 4.3764, "position_qty": 2750.32,
+        "market_value_eur": 26249.03, "market_value_pln": 114877.06,
+        "unrealized_pnl_eur": 25933.01, "total_return_pct": 8254.88,
+        "acq_pnl_eur": -1638.7, "acq_pnl_pct": -5.88})
+    assert "Dziś: -160 EUR / -698 PLN" in message
+    assert "Wynik od nabycia: -1 639 EUR (-5.9%)" in message
+    assert "8254" not in message
+    assert "25 933" not in message
+
+
+def test_digest_omits_result_lines_without_data(conn, monkeypatch):
+    message = _digest_message(conn, monkeypatch, {
+        "price_eur": 9.544, "change_pct_day": None, "change_abs_day": None,
+        "position_qty": 10.0, "market_value_eur": 95.44, "market_value_pln": None,
+        "acq_pnl_eur": None, "acq_pnl_pct": None})
+    assert "Dziś:" not in message
+    assert "Wynik" not in message
+    assert "None" not in message
+
+
+def test_digest_day_change_without_fx_rate_shows_eur_only(conn, monkeypatch):
+    message = _digest_message(conn, monkeypatch, {
+        "price_eur": 10.0, "change_abs_day": 0.1, "position_qty": 100.0,
+        "market_value_eur": 1000.0, "acq_pnl_eur": 200.0, "acq_pnl_pct": 25.0})
+    assert "Dziś: +10 EUR\n" in message
+    assert "Wynik od nabycia: +200 EUR (+25.0%)" in message
+
+
 def test_digest_empty_notify_service_does_not_send(conn, monkeypatch):
     calls = []
     monkeypatch.setattr(ha_client, "notify", lambda *a, **k: calls.append(a) or True)

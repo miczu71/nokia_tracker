@@ -629,6 +629,12 @@ def main() -> None:
                     c, cfg, values.get("price_eur"), values.get("eurpln_rate"),
                     dividends_net_total_eur=dividends["dividends_net_eur"]))
                 values.update(dividends)
+                if taxlots.open_lots(c):
+                    acq = portfolio.lots_based_position_values(
+                        c, {**cfg, "cost_basis_policy": "all_at_acquisition"},
+                        values.get("price_eur"), values.get("eurpln_rate"))
+                    values["acq_pnl_eur"] = acq["unrealized_pnl_eur"]
+                    values["acq_pnl_pct"] = acq["unrealized_pnl_pct"]
                 notifier.send_daily_digest(c, cfg, values)
             except Exception:
                 logger.exception("Dzienny digest nieudany")

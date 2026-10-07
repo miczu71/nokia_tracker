@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.30.0] - 2026-10-07
+
+### Usunięto
+- **Gemini i Anthropic jako dostawcy AI.** Dodatek woła już tylko lokalny router `freellmapi`,
+  który sam przełącza się między dostawcami. Usunięte moduły `ai/gemini.py` i
+  `ai/anthropic_api.py`, zależność `anthropic` oraz opcje konfiguracji `ai_fallback`,
+  `gemini_api_key`, `gemini_model`, `anthropic_api_key`, `anthropic_model` i
+  `ai_max_calls_per_day` (pula tylko dla płatnych dostawców). Supervisor odrzuca je przy
+  aktualizacji, więc zapisane klucze znikają z konfiguracji dodatku.
+- Na Ustawieniach: pola „Fallback”, „Model Gemini” i „Model Anthropic”.
+
+### Zmieniono
+- `ai_primary` przyjmuje `local` albo `off`. Stara wartość `gemini`/`anthropic` w bazie
+  dodatku jest traktowana jak `local`.
+- `sensor.nokia_tracker_ai_provider_active` pokazuje `local` albo `off`.
+
 ## [0.29.2] - 2026-10-07
 
 ### Naprawiono

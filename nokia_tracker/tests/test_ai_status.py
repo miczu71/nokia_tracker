@@ -21,12 +21,10 @@ class _FakeResponse:
 
 def _cfg(**overrides):
     base = {
-        "ai_primary": "local", "ai_fallback": "gemini",
+        "ai_primary": "local",
         "local_llm_base_url": "http://192.168.0.106:3003/v1",
         "local_llm_api_key": "lkey", "local_llm_model": "gemini-3.1-flash-lite",
-        "gemini_api_key": "gkey", "gemini_model": "gemini-3.1-flash-lite",
-        "anthropic_api_key": "", "anthropic_model": "claude-haiku-4-5-20251001",
-        "ai_max_calls_per_day": 40, "ai_max_calls_per_day_local": 500,
+        "ai_max_calls_per_day_local": 500,
     }
     base.update(overrides)
     return base
@@ -69,10 +67,7 @@ def test_snapshot_reports_calls_and_remaining_per_provider(conn, monkeypatch):
     assert local["max_per_day"] == 500
     assert local["remaining_today"] == 498
     assert local["key_present"] is True
-
-    anthropic = next(p for p in snap["providers"] if p["name"] == "anthropic")
-    assert anthropic["key_present"] is False
-    assert anthropic["calls_today"] == 0
+    assert [p["name"] for p in snap["providers"]] == ["local"]  # od 0.30.0 tylko router
 
 
 def test_snapshot_zero_limit_means_no_remaining_cap(conn, monkeypatch):
@@ -99,10 +94,10 @@ def test_snapshot_active_provider_reflects_last_successful_call(conn, monkeypatc
     _no_models(monkeypatch)
     _no_router(monkeypatch)
     from nokia_tracker.ai import provider
-    provider._active[0] = "gemini"
+    provider._active[0] = "local"
     try:
         snap = status.snapshot(conn, _cfg())
-        assert snap["active_provider"] == "gemini"
+        assert snap["active_provider"] == "local"
     finally:
         provider._active[0] = "off"
 

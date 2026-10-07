@@ -16,9 +16,8 @@ from nokia_tracker.web import create_app
 
 def test_settings_post_updates_and_redirects(client):
     resp = client.post("/settings", data={
-        "ai_primary": "gemini", "ai_fallback": "anthropic",
-        "local_llm_model": "custom-model", "gemini_model": "gemini-x",
-        "anthropic_model": "claude-x",
+        "ai_primary": "off",
+        "local_llm_model": "custom-model",
         "alert_sentiment_drop": "0.7", "alert_price_move_pct": "5.0",
         "alert_min_interval_minutes": "60", "notify_service": "notify.family",
         "cost_basis_policy": "own_plus_drip",
@@ -34,8 +33,8 @@ def test_settings_post_updates_and_redirects(client):
 def test_settings_checkbox_unchecked_when_omitted(client):
     # checkboxy HTML nie wysyłają nic, gdy odznaczone -> ustawienie=0
     client.post("/settings", data={
-        "ai_primary": "local", "ai_fallback": "gemini",
-        "local_llm_model": "m", "gemini_model": "m2", "anthropic_model": "m3",
+        "ai_primary": "local",
+        "local_llm_model": "m",
         "alert_sentiment_drop": "0.5", "alert_price_move_pct": "3.0",
         "alert_min_interval_minutes": "120", "notify_service": "",
         "cost_basis_policy": "own_only",
@@ -68,7 +67,7 @@ def test_analyze_now_failure_still_redirects(client, monkeypatch):
 
 def test_settings_post_saves_other_net_worth_and_threshold(client):
     resp = client.post("/settings", data={
-        "ai_primary": "local", "ai_fallback": "gemini",
+        "ai_primary": "local",
         "other_net_worth_pln": "150000.5", "concentration_alert_pct": "30.0",
     })
     assert resp.status_code == 302

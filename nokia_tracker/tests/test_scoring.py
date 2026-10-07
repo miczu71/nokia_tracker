@@ -20,11 +20,10 @@ def _insert_news(conn, n=3):
 
 
 def _cfg():
-    return {"ai_primary": "local", "ai_fallback": "gemini",
+    return {"ai_primary": "local",
            "local_llm_base_url": "http://x/v1", "local_llm_api_key": "k",
-           "local_llm_model": "m", "gemini_api_key": "", "gemini_model": "m2",
-           "anthropic_api_key": "", "anthropic_model": "m3",
-           "ai_max_tokens": 4000, "ai_max_calls_per_day": 40, "ai_news_batch_size": 15}
+           "local_llm_model": "m",
+           "ai_max_tokens": 4000, "ai_max_calls_per_day_local": 40, "ai_news_batch_size": 15}
 
 
 def test_score_pending_no_news_returns_zero_without_calling_ai(conn, monkeypatch):

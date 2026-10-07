@@ -8,7 +8,7 @@
   {% if saved %}<span class="badge saved">Zapisano</span>{% endif %}
 </div>
 
-{% set PROVIDER_LABELS = {"local": "local (freellmapi)", "gemini": "gemini", "anthropic": "anthropic"} %}
+{% set PROVIDER_LABELS = {"local": "local (freellmapi)"} %}
 <div class="card">
   <div class="card-title">Stan AI</div>
   <p class="muted">
@@ -67,24 +67,16 @@
 <form class="form" method="post" action="{{ url_for('settings_post') }}">
 
   <div class="card">
-    <div class="card-title">Łańcuch AI</div>
-    <p class="muted">Klucze API ustawia się w konfiguracji dodatku (panel Supervisora), nie tutaj.</p>
-    <div class="row2">
-      <label>Primary
-        <select name="ai_primary">
-          {% for opt in ("local", "gemini", "anthropic", "off") %}
-          <option value="{{ opt }}" {{ "selected" if cfg.ai_primary == opt }}>{{ opt }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Fallback
-        <select name="ai_fallback">
-          {% for opt in ("gemini", "anthropic", "none") %}
-          <option value="{{ opt }}" {{ "selected" if cfg.ai_fallback == opt }}>{{ opt }}</option>
-          {% endfor %}
-        </select>
-      </label>
-    </div>
+    <div class="card-title">AI (router freellmapi)</div>
+    <p class="muted">Klucz API routera ustawia się w konfiguracji dodatku (panel Supervisora), nie tutaj.
+      Fallback między dostawcami robi sam router.</p>
+    <label>AI
+      <select name="ai_primary">
+        {% for opt, label in (("local", "włączone (freellmapi)"), ("off", "wyłączone")) %}
+        <option value="{{ opt }}" {{ "selected" if (cfg.ai_primary != "off") == (opt == "local") }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <label>Model lokalny (freellmapi)
       {% if local_models %}
       <select name="local_llm_model">
@@ -99,14 +91,6 @@
       <span class="muted">Nie udało się pobrać listy modeli z routera — wpisz nazwę ręcznie.</span>
       {% endif %}
     </label>
-    <div class="row2">
-      <label>Model Gemini
-        <input type="text" name="gemini_model" value="{{ cfg.gemini_model }}">
-      </label>
-      <label>Model Anthropic
-        <input type="text" name="anthropic_model" value="{{ cfg.anthropic_model }}">
-      </label>
-    </div>
     <label class="check">
       <input type="checkbox" name="ai_recommendations_enabled" {{ "checked" if cfg.ai_recommendations_enabled }}>
       Dzienna analiza (prognozy + rekomendacja) włączona
@@ -120,7 +104,7 @@
       Narracja AI w odpowiedziach asystenta (wyłącz, żeby zejść z 2 do 1 wywołania AI na pytanie —
       liczby i tak zawsze pochodzą z silnika, nie z modelu)
     </label>
-    <label>Dzienny limit wywołań AI — lokalny router freellmapi (darmowy, osobna pula od Gemini/Anthropic)
+    <label>Dzienny limit wywołań AI — lokalny router freellmapi
       <input type="number" step="1" min="0" name="ai_max_calls_per_day_local" value="{{ cfg.ai_max_calls_per_day_local }}">
       <span class="muted">0 = bez limitu.</span>
     </label>

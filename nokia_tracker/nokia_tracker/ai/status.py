@@ -32,10 +32,8 @@ _CACHE_TTL_SECONDS = 60
 # podwoiły ruchu do routera przy odświeżeniu strony w tej samej minucie.
 _cache: dict[str, tuple[float, dict]] = {}
 
-_PROVIDERS = ("local", "gemini", "anthropic")
-_KEY_FIELDS = {
-    "local": "local_llm_api_key", "gemini": "gemini_api_key", "anthropic": "anthropic_api_key",
-}
+_PROVIDERS = ("local",)
+_KEY_FIELDS = {"local": "local_llm_api_key"}
 
 
 def _admin_root(base_url: str) -> str:
@@ -83,7 +81,7 @@ def _cached_router_probe(base_url: str, api_key: str) -> dict:
 
 def _provider_snapshot(conn: sqlite3.Connection, name: str, cfg: dict) -> dict:
     calls = usage.calls_today(conn, name)
-    max_per_day = provider._max_calls_for(name, cfg)
+    max_per_day = provider._max_calls(cfg)
     remaining = None if max_per_day <= 0 else max(0, max_per_day - calls)
     return {
         "name": name,

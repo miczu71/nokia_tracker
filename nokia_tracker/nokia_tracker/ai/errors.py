@@ -1,3 +1,3 @@
 class AIProviderError(Exception):
-    """Błąd dowolnego backendu AI (openai_compat/gemini/anthropic) —
-    provider.py łapie to i przechodzi do następnego ogniwa łańcucha."""
+    """Błąd backendu AI (openai_compat) albo odmowa wywołania (AI wyłączone,
+    obwód otwarty, limit) — provider.py zapisuje porażkę i rzuca dalej."""

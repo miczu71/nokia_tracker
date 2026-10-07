@@ -22,11 +22,10 @@ def ids(conn):
     return primary, ericsson, omxh25, eurpln
 
 
-_CFG = {"ai_primary": "local", "ai_fallback": "gemini", "ai_max_tokens": 4000,
-       "ai_max_calls_per_day": 40, "position_qty": 100.0, "avg_cost_eur": 8.5,
+_CFG = {"ai_primary": "local", "ai_max_tokens": 4000,
+       "ai_max_calls_per_day_local": 40, "position_qty": 100.0, "avg_cost_eur": 8.5,
        "local_llm_base_url": "http://x/v1", "local_llm_api_key": "k",
-       "local_llm_model": "m", "gemini_api_key": "", "gemini_model": "m2",
-       "anthropic_api_key": "", "anthropic_model": "m3"}
+       "local_llm_model": "m"}
 
 _FAKE_RESULT = {
     "forecast_1w": {"predicted_price": 9.2, "ci_low": 8.8, "ci_high": 9.6, "confidence": 0.6},

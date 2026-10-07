@@ -209,14 +209,12 @@ Newsy i AI ciągną z zewnętrznych usług, których dostępność nie jest gwar
   wchodzi w 6-godzinny cooldown (jeden zapis do cache HTTP w SQLite, przeżywa restart dodatku) —
   kolejne cykle `fetch_news` pomijają je bez sięgania do sieci, aż cooldown wygaśnie samoistnie.
   Znane błędy providera logują się jako `WARNING`, nie jako `ERROR` z tracebackiem.
-- **Łańcuch AI** (`ai/provider.py`): każde ogniwo (`local`/`gemini`/`anthropic`) ma circuit breaker
-  — po 3 kolejnych porażkach z rzędu jest pomijane przez 30 minut zamiast wywoływane (i ponawiane)
-  w każdym cyklu ocen newsów. Po 30 minutach obwód sam się zamyka i ogniwo dostaje kolejną szansę.
-- **Dzienny limit AI per ogniwo** *(od 0.13.0)* — wcześniej jeden wspólny licznik oznaczał, że
-  wyczerpanie limitu płatnego `gemini`/`anthropic` blokowało też darmowy lokalny router
-  `freellmapi`, mimo osobnego klucza i osobnych pieniędzy. Teraz `local` ma własną pulę
-  (`ai_max_calls_per_day_local` na Ustawieniach), a wyczerpanie limitu jednego ogniwa pozwala
-  łańcuchowi przejść do następnego zamiast rzucać błąd od razu.
+- **AI tylko przez router `freellmapi`** *(od 0.30.0, `ai/provider.py`)*: dodatek nie trzyma
+  kluczy Gemini ani Anthropic. Fallback między dostawcami robi sam router. `ai_primary` = `local`
+  albo `off` (AI wyłączone). Router ma circuit breaker: po 3 kolejnych porażkach z rzędu jest
+  pomijany przez 30 minut zamiast wywoływany (i ponawiany) w każdym cyklu ocen newsów. Po 30
+  minutach obwód sam się zamyka.
+- **Dzienny limit AI** — `ai_max_calls_per_day_local` na Ustawieniach (0 = bez limitu).
 - **Konsensus analityków** *(od 0.26.0, `providers/yahoo_analyst.py`)* — Yahoo Finance
   `quoteSummary` wymaga pary cookie+crumb (w odróżnieniu od `providers/yahoo.py`, którego API
   cenowe działa bez autoryzacji); crumb wygasający w trakcie (HTTP 401) dostaje jeden ponowny
@@ -326,7 +324,7 @@ prefiks niezależnie od nazwy encji).
 | `sensor.nokia_tracker_forecast_1w_eur` / `_1m_eur` / `_12m_eur` | Prognozy cenowe; `ci_low`, `ci_high`, `confidence`, `model`, `generated_at` w atrybutach |
 | `sensor.nokia_tracker_forecast_accuracy_pct` | Trafność ostatnich rozliczonych prognoz AI (100 − MAPE) |
 | `sensor.nokia_tracker_analyst_target_mean_eur` *(od 0.26.0)* | Konsensus analityków — średnia cena docelowa (EUR); `low`, `high`, `n_analysts`, `rating`, `source` (yahoo/stockanalysis), `as_of_date` w atrybutach |
-| `sensor.nokia_tracker_ai_provider_active` | Aktywny provider AI w łańcuchu (local/gemini/anthropic/off) |
+| `sensor.nokia_tracker_ai_provider_active` | Stan AI: `local` (ostatnie wywołanie routera udane) albo `off` |
 | `sensor.nokia_tracker_ai_calls_today` | Liczba wywołań AI dzisiaj (licznik dzienny) |
 
 ### Portfel

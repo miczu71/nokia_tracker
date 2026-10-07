@@ -79,13 +79,9 @@ def main() -> None:
         "allow_scrape_fallback": "1" if _env("ALLOW_SCRAPE_FALLBACK") == "true" else "0",
         "avanza_live_price_enabled": "1" if _env("AVANZA_LIVE_PRICE_ENABLED", "true") == "true" else "0",
         "ai_primary": _env("AI_PRIMARY", "local"),
-        "ai_fallback": _env("AI_FALLBACK", "gemini"),
         "local_llm_base_url": _env("LOCAL_LLM_BASE_URL"),
         "local_llm_model": _env("LOCAL_LLM_MODEL"),
-        "gemini_model": _env("GEMINI_MODEL"),
-        "anthropic_model": _env("ANTHROPIC_MODEL"),
         "ai_max_tokens": _env("AI_MAX_TOKENS", "4000"),
-        "ai_max_calls_per_day": _env("AI_MAX_CALLS_PER_DAY", "40"),
         "ai_news_batch_size": _env("AI_NEWS_BATCH_SIZE", "15"),
         "ai_recommendations_enabled": "1" if _env("AI_RECOMMENDATIONS_ENABLED") == "true" else "0",
         "analysis_time": _env("ANALYSIS_TIME", "19:00"),
@@ -297,8 +293,6 @@ def main() -> None:
         sekretów w dwóch miejscach."""
         cfg = dict(settingsm.get_settings(c))
         cfg["local_llm_api_key"] = _env("LOCAL_LLM_API_KEY")
-        cfg["gemini_api_key"] = _env("GEMINI_API_KEY")
-        cfg["anthropic_api_key"] = _env("ANTHROPIC_API_KEY")
         return cfg
 
     def fetch_news() -> None:

@@ -31,11 +31,9 @@ def _fake_nbp_rate(monkeypatch):
 
 def _cfg(**overrides):
     base = {
-        "ai_primary": "local", "ai_fallback": "gemini",
+        "ai_primary": "local",
         "local_llm_base_url": "http://x/v1", "local_llm_api_key": "lkey",
-        "local_llm_model": "m", "gemini_api_key": "gkey", "gemini_model": "m",
-        "anthropic_api_key": "", "anthropic_model": "m",
-        "ai_max_calls_per_day": 40, "ai_max_calls_per_day_local": 500,
+        "local_llm_model": "m", "ai_max_calls_per_day_local": 500,
         "ai_chat_narration_enabled": 1,
         "cost_basis_policy": "own_only", "pl_capital_gains_tax_pct": 19.0,
         "treaty_withholding_pct": 15.0, "finnish_withholding_pct": 35.0,

@@ -24,6 +24,4 @@ def _ai_keys() -> dict:
     """Klucze API z ENV — NIE z tabeli settings (patrz settings.py)."""
     return {
         "local_llm_api_key": os.environ.get("LOCAL_LLM_API_KEY", ""),
-        "gemini_api_key": os.environ.get("GEMINI_API_KEY", ""),
-        "anthropic_api_key": os.environ.get("ANTHROPIC_API_KEY", ""),
     }

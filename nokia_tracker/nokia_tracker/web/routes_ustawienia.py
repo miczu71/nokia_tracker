@@ -37,10 +37,7 @@ def register_ustawienia_routes(app: Flask, ctx: AppContext) -> None:
         try:
             updates = {
                 "ai_primary": request.form.get("ai_primary", "local"),
-                "ai_fallback": request.form.get("ai_fallback", "gemini"),
                 "local_llm_model": request.form.get("local_llm_model", ""),
-                "gemini_model": request.form.get("gemini_model", ""),
-                "anthropic_model": request.form.get("anthropic_model", ""),
                 "ai_recommendations_enabled": 1 if request.form.get("ai_recommendations_enabled") else 0,
                 "ai_chat_enabled": 1 if request.form.get("ai_chat_enabled") else 0,
                 "ai_chat_narration_enabled": 1 if request.form.get("ai_chat_narration_enabled") else 0,

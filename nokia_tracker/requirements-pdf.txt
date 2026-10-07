@@ -7,5 +7,5 @@
 #
 # Tylko bezpośrednia zależność przypięta — transitywne (pydyf, cffi,
 # tinyhtml5, tinycss2, cssselect2, Pyphen, Pillow, fonttools) rozwiązują się
-# same, tak jak już dziś robi to anthropic==0.120.0 w requirements.txt.
+# same.
 weasyprint==69.0

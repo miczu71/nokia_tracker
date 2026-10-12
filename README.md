@@ -438,3 +438,5 @@ opcje konfiguracyjne Supervisora.
 ## Licencja
 
 Do ustalenia.
+
+Nazwa i logo Nokia są znakami towarowymi Nokia Corporation; ten add-on nie jest powiązany z Nokią ani przez nią wspierany.

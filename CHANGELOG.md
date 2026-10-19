@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.30.1] - 2026-10-19
+
+### Zmieniono
+
+- Zapytania do routera LLM niosą nagłówek `User-Agent: ha-nokia/<wersja>`, dzięki czemu panel LLM (:3004) pokazuje, który add-on używa którego modelu. Bez zmian w działaniu.
+
 ## [0.30.0] - 2026-10-07
 
 ### Usunięto

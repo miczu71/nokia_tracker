@@ -20,7 +20,7 @@ import logging
 
 import requests
 
-from .. import ratelimit
+from .. import __version__, ratelimit
 from .errors import AIProviderError
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ def list_models(base_url: str, api_key: str, timeout: int = 15) -> list[dict]:
 
 
 def _headers(api_key: str) -> dict[str, str]:
-    h = {"Content-Type": "application/json"}
+    h = {"Content-Type": "application/json", "User-Agent": f"ha-nokia/{__version__}"}
     if api_key:
         h["Authorization"] = f"Bearer {api_key}"
     return h

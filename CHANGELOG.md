@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.0] - 2026-11-09
+
+### Zmieniono
+
+- **Wersja 1.0.0** — uznana za stabilną; bez zmian w działaniu.
+
 ## [0.30.1] - 2026-10-19
 
 ### Zmieniono
